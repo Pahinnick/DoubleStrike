@@ -1,0 +1,69 @@
+import { useEffect, useState } from 'react'
+import { getCardsByIdentifiers } from '../api/scryfall'
+import { getSnapshots, isSnapshotStale, saveSnapshots, toSnapshot, type CardSnapshot } from '../storage/cardCache'
+
+// Module-level so a stale or missing card is only (re-)fetched once per session, even
+// though multiple components (DeckPanel, DeckStatsPanel, PlaytestView) call this hook.
+const refreshedIds = new Set<string>()
+
+export function useCardSnapshots(ids: string[]): Map<string, CardSnapshot> {
+  const [snapshots, setSnapshots] = useState<Map<string, CardSnapshot>>(new Map())
+  const idsKey = ids.join(',')
+
+  useEffect(() => {
+    let cancelled = false
+    if (ids.length === 0) {
+      setSnapshots(new Map())
+      return
+    }
+
+    getSnapshots(ids).then((results) => {
+      if (cancelled) return
+      const map = new Map<string, CardSnapshot>()
+      const idsToFetch: string[] = []
+      results.forEach((snapshot, index) => {
+        const id = ids[index]
+        if (snapshot) {
+          map.set(id, snapshot)
+          if (isSnapshotStale(snapshot) && !refreshedIds.has(id)) idsToFetch.push(id)
+        } else if (!refreshedIds.has(id)) {
+          // Never cached locally at all — e.g. an opponent's battlefield/graveyard/exile card
+          // in a multiplayer pod that isn't in your own deck, so your client has never seen it
+          // before. Previously this was silently dropped forever (never fetched, never
+          // retried), rendering as a placeholder showing the raw scryfallId instead of art.
+          idsToFetch.push(id)
+        }
+      })
+      setSnapshots(map)
+
+      if (idsToFetch.length === 0) return
+      idsToFetch.forEach((id) => refreshedIds.add(id))
+
+      // Fetch stale refreshes and never-cached ids together. Silently update the cache and
+      // re-render only if the fetch succeeds.
+      void getCardsByIdentifiers(idsToFetch.map((id) => ({ id }))).then(async (cards) => {
+        if (cards.length === 0 || cancelled) return
+        await saveSnapshots(cards)
+        if (cancelled) return
+        setSnapshots((prev) => {
+          const next = new Map(prev)
+          // Unconditional set: unlike the old stale-only refresh, a never-cached id has no
+          // existing entry to gate on — every id here was explicitly requested in idsToFetch.
+          for (const card of cards) {
+            next.set(card.id, toSnapshot(card))
+          }
+          return next
+        })
+      })
+    })
+
+    return () => {
+      cancelled = true
+    }
+    // idsKey is a stable serialization of `ids` used intentionally in place
+    // of the array reference, which changes every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idsKey])
+
+  return snapshots
+}

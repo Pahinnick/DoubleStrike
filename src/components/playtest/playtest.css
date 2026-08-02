@@ -1,0 +1,2257 @@
+.playtest {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
+  /* Anchors .playtest__hand, which floats over the battlefield's own row (see below) rather
+     than reserving a row of its own, so the board stays visible underneath it. */
+  position: relative;
+  /* Click-dragging to pan the camera (handleCanvasMouseDown) is a plain mouse drag, not a
+     native browser gesture — without this, dragging across card names/text fires the browser's
+     own text/image selection highlighting, which reads as a bug in a game UI where nothing is
+     meant to be copy-selected. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.playtest__topbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border-subtle);
+  background-color: var(--bg-panel);
+  flex-wrap: wrap;
+}
+
+.playtest__deck-name {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.playtest__turn {
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  min-width: 4.5em;
+}
+
+.playtest__spacer {
+  flex: 1;
+}
+
+.playtest__life-overlay {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 90px;
+  height: 77px;
+  z-index: 40;
+}
+
+.playtest__life-bubble {
+  position: absolute;
+  border-radius: 50%;
+  border-width: 2px;
+  /* Explicit: this used to be a <button>, which gets a default non-none border-style from the
+     UA stylesheet — border-width/color alone rendered nothing once it became a plain <div>. */
+  border-style: solid;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-weight: 700;
+  background-color: var(--bg-panel-raised);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  /* Kept small by default so a cluster of these doesn't dominate the view; hover/focus grows
+     the bubble back up (see below) so the click target is still comfortable when you mean to
+     use it. transform doesn't reflow layout, so neighbors don't jump when one grows. */
+  transition: transform 120ms ease;
+}
+
+/* :focus-visible (not :focus-within/:focus) deliberately — a click leaves the wedge button
+   focused in most browsers, and :focus-within would keep the bubble enlarged after the mouse
+   moved away until something else stole focus. :focus-visible only lights up for keyboard
+   navigation, so a click's lingering focus doesn't hold the grow open; :has(:focus-visible)
+   covers the wrapper div (life bubble's wedges are its children) and the bare :focus-visible
+   covers the poison/commander bubbles, which are buttons themselves with no children to check. */
+.playtest__life-bubble:hover,
+.playtest__life-bubble:focus-visible,
+.playtest__life-bubble:has(:focus-visible) {
+  transform: scale(1.5);
+  z-index: 1;
+}
+
+.playtest__life-bubble--life {
+  top: 0;
+  right: 16px;
+  width: 58px;
+  height: 58px;
+  font-size: 1.3rem;
+  color: var(--color-g);
+  border-color: var(--color-g);
+  /* Clips the four wedge buttons' corners (see .playtest__life-wedge) to the circle. Scoped to
+     --life specifically, not the shared .playtest__life-bubble base, since --commander's
+     .playtest__stat-chip-source corner tag deliberately overflows its circle. */
+  overflow: hidden;
+}
+
+/* Four full-size, clip-path-wedged buttons stacked inside a --life bubble (see HealthBubble.tsx):
+   two diagonals from center to each corner split the square into N/E/S/W triangles, which —
+   clipped to the circle by the parent's overflow: hidden — read as four pie-slice quadrants. */
+.playtest__life-wedge {
+  position: absolute;
+  inset: 0;
+  border: none;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.playtest__life-wedge:hover,
+.playtest__life-wedge:focus-visible {
+  background: rgba(255, 255, 255, 0.12);
+  outline: none;
+}
+
+.playtest__life-wedge--top {
+  clip-path: polygon(0 0, 100% 0, 50% 50%);
+}
+
+.playtest__life-wedge--bottom {
+  clip-path: polygon(0 100%, 100% 100%, 50% 50%);
+}
+
+.playtest__life-wedge--left {
+  clip-path: polygon(0 0, 0 100%, 50% 50%);
+}
+
+.playtest__life-wedge--right {
+  clip-path: polygon(100% 0, 100% 100%, 50% 50%);
+}
+
+/* Faint radial dividers along the two diagonals the wedges are clipped to (see above), so the
+   four click zones read as visible pie slices instead of an unmarked circle. Painted after the
+   wedge buttons in DOM order (so it draws on top of their hover highlight) but pointer-events:
+   none, so it never steals a click meant for the wedge beneath it. Hidden until hover/focus so
+   the bubble reads as a plain number the rest of the time — only shown once you're actually
+   about to use the click zones. */
+.playtest__life-bubble--life::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 120ms ease;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg 42deg,
+    rgba(220, 220, 225, 0.35) 42deg 48deg,
+    transparent 48deg 132deg,
+    rgba(220, 220, 225, 0.35) 132deg 138deg,
+    transparent 138deg 222deg,
+    rgba(220, 220, 225, 0.35) 222deg 228deg,
+    transparent 228deg 312deg,
+    rgba(220, 220, 225, 0.35) 312deg 318deg,
+    transparent 318deg 360deg
+  );
+}
+
+.playtest__life-bubble--life:hover::after,
+.playtest__life-bubble--life:has(:focus-visible)::after {
+  opacity: 1;
+}
+
+/* Small delta labels ("+1", "-10", …) inside each wedge, offset toward that wedge's own outer
+   edge so they sit clear of both the center life total and the diagonal dividers. Hidden until
+   hover/focus, same as the dividers above — a plain number the rest of the time. */
+.playtest__life-wedge-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font-size: 0.5rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.playtest__life-bubble--life:hover .playtest__life-wedge-label,
+.playtest__life-bubble--life:has(:focus-visible) .playtest__life-wedge-label {
+  opacity: 1;
+}
+
+.playtest__life-wedge-label--top {
+  left: 50%;
+  top: 18%;
+}
+
+.playtest__life-wedge-label--bottom {
+  left: 50%;
+  top: 82%;
+}
+
+.playtest__life-wedge-label--left {
+  left: 18%;
+  top: 50%;
+}
+
+.playtest__life-wedge-label--right {
+  left: 82%;
+  top: 50%;
+}
+
+.playtest__life-value {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  font: inherit;
+  color: inherit;
+}
+
+.playtest__life-bubble--commander {
+  top: 42px;
+  right: 60px;
+  width: 30px;
+  height: 30px;
+  font-size: 0.7rem;
+  color: #d9a92e;
+  border-color: #d9a92e;
+}
+
+.playtest__life-bubble--poison {
+  top: 42px;
+  right: 0;
+  width: 30px;
+  height: 30px;
+  font-size: 0.7rem;
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.playtest__table {
+  display: grid;
+  grid-template-columns: 1fr;
+  min-height: 0;
+  /* Anchors .playtest__zones, which floats over the battlefield rather than reserving a
+     column of its own, so the board stays visible underneath/around it. */
+  position: relative;
+}
+
+.playtest__battlefield {
+  position: relative;
+  overflow: hidden;
+  /* The darker "void" outside the play surface — panning past the felt lands here. */
+  background: var(--bg-app);
+}
+
+/* Depth layers behind the playmat — see the inline backgroundPosition in PlaytestView.tsx,
+   which drifts each at a fraction of the camera's pan. Tinted with the theme accent so they
+   stay subtle in calm themes and read as a proper neon parallax in Vaporwave. */
+.playtest__parallax {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.playtest__parallax--far {
+  background-image:
+    radial-gradient(circle 480px at 25% 30%, rgba(var(--accent-rgb), 0.12), transparent 65%),
+    radial-gradient(circle 420px at 75% 70%, rgba(var(--accent2-rgb, var(--accent-rgb)), 0.09), transparent 65%);
+  background-size: 1400px 1400px;
+}
+
+.playtest__parallax--near {
+  background-image: radial-gradient(circle 1.4px, rgba(var(--accent-rgb), 0.4) 1.4px, transparent 1.6px);
+  background-size: 30px 30px;
+  opacity: 0.3;
+}
+
+/* The play surface is a distinct, bounded "playmat": its felt fill contrasts with the darker
+   void around it (readable at any zoom), and the border + rounded corners mark the exact edge
+   where card placement stops (clampToCanvas). In a pod this felt sits under the seat quadrants. */
+.playtest__battlefield-surface {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  transform-origin: 0 0;
+  box-sizing: border-box;
+  border: 2px solid var(--border-subtle);
+  border-radius: 14px;
+  background:
+    radial-gradient(ellipse at center, rgba(var(--accent-rgb), 0.06), transparent 70%),
+    var(--bg-panel);
+  box-shadow: inset 0 0 140px -60px rgba(0, 0, 0, 0.65);
+}
+
+/* Click-triggered smoke-puff particle canvas — see BattlefieldParticles.tsx. A child of
+   .playtest__battlefield-surface (table-space, sized to match it exactly), not the fixed
+   viewport, so a burst stays pinned to the table point it was spawned at through
+   panning/zooming, the same way cards do. Sits above the playmat and cards but below
+   .playtest__drop-preview/marquee (z-index 40/45). */
+.playtest__particles {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 46;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .playtest__particles {
+    display: none;
+  }
+}
+
+/* Shared positioning for every canvas-based playmat "skin" (Triangle Glow Raw/Split, Ley Lines,
+   Runic Circle — see useBattlefieldSkin.ts). Each skin component sets its own canvas backing
+   store/draw loop; this class only handles placement. Rendered as the first child of
+   .playtest__battlefield-surface (or one per seat in a pod) so it paints behind quadrant
+   frames/cards (DOM-order stacking, no z-index needed) — see PlaytestView's skinLayers. */
+.playtest__skin-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+/* Ember Aura's ground layer (BattlefieldLavaGround.tsx) — a jittered grid of soft blobs drawn as
+   crisp-edged radial gradients; the blur is what merges them into a continuous molten field
+   instead of a cluster of visible circles. */
+.playtest__lava-ground {
+  filter: blur(16px) saturate(1.15);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Excludes the lava ground: unlike the other skins (pure decoration that can just disappear),
+     this is the table's own material for Ember Aura — hiding it would leave bare felt showing
+     through underneath instead. BattlefieldLavaGround draws one static (non-animated) frame of
+     its own when reduced motion is on, so this only needs to stop CSS from hiding that canvas. */
+  .playtest__skin-canvas:not(.playtest__lava-ground) {
+    display: none;
+  }
+}
+
+/* Prism Dust playmat "skin" — a purely ambient (not cursor/card-reactive, unlike the two
+   Triangle Glow skins) scatter of tiny colored dots across the mat, each fading in/out as an
+   animated noise texture drifts under a fixed dot-grid mask (mask-composite: intersect — a dot
+   only shows where BOTH masks are opaque). Pure CSS, GPU-compositor-driven (no per-frame JS at
+   all) — inspired by a user-supplied CodePen reference. The noise is an inline SVG feTurbulence
+   data URI rather than the reference's hotlinked PNG, so this has no external asset dependency. */
+.playtest__skin-fx--prism {
+  position: absolute;
+  /* top/left/width/height (not the `inset` shorthand) so a multiplayer instance can override
+     just the position/size inline (per-seat quadrant — see PlaytestView's skin layers) without
+     fighting a shorthand that also implicitly sets right/bottom. */
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  border-radius: inherit;
+  overflow: hidden;
+  --prism-dot: 22px;
+  opacity: 0.9;
+  background: conic-gradient(
+    from 180deg at 50% 70%,
+    hsla(0, 0%, 98%, 1) 0deg,
+    #eec32d 72deg,
+    #ec4b4b 144deg,
+    #709ab9 216deg,
+    #4dffbf 288deg,
+    hsla(0, 0%, 98%, 1) 360deg
+  );
+  /* No -webkit-mask fallback: in modern Chromium, -webkit-mask-composite is aliased to this
+     same underlying property, so declaring both is a footgun — whichever comes last silently
+     wins for BOTH layers (caught live: a trailing `-webkit-mask-composite: source-in` clobbered
+     this `intersect`, so the noise mask stopped actually masking anything and every dot rendered
+     at full brightness in a flat grid instead of the intended irregular shimmer).
+
+     The noise filter itself needed two live-tuning passes beyond that: baseFrequency 0.9 (a
+     reasonable-looking generic "static" value) turned out to average out to near-uniform gray at
+     the scale of a single 2px dot — the grain was finer than the dots sampling it, so every dot
+     ended up reading roughly the same mid-brightness regardless of position. Dropping to 0.015
+     (large, cloud-sized blotches instead of fine static) made blotches visible but still fairly
+     low-contrast; a feComponentTransfer linear ramp (slope 4, intercept -1.5) pushes the noise's
+     mid-gray range toward pure black/white so dots clearly switch between "lit" and "dark"
+     instead of dimming uniformly — that contrast step is what actually makes the mask read as
+     patches of visible/invisible dots rather than a flat translucent grid. */
+  mask:
+    radial-gradient(circle at 50% 50%, white 2px, transparent 2.5px) 50% 50% / var(--prism-dot) var(--prism-dot),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg'><filter id='n' color-interpolation-filters='sRGB'><feTurbulence type='fractalNoise' baseFrequency='0.015' numOctaves='3' stitchTiles='stitch' result='t'/><feComponentTransfer in='t'><feFuncR type='linear' slope='4' intercept='-1.5'/><feFuncG type='linear' slope='4' intercept='-1.5'/><feFuncB type='linear' slope='4' intercept='-1.5'/></feComponentTransfer></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>")
+      256px 50% / 256px 256px;
+  mask-composite: intersect;
+  animation: playtest-prism-flicker 20s linear infinite;
+}
+
+@keyframes playtest-prism-flicker {
+  to {
+    mask-position:
+      50% 50%,
+      0 50%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .playtest__skin-fx--prism {
+    animation: none;
+  }
+}
+
+.playtest__battlefield-hint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  pointer-events: none;
+  margin: 0;
+}
+
+.playtest__battlefield-card {
+  position: absolute;
+  width: var(--game-card-width, 90px);
+}
+
+/* Landing-spot preview while dragging a card over the battlefield — a dashed outline at
+   exactly the position the drop would use (see computeDropPreview in PlaytestView.tsx),
+   not just a vague cursor-follow, so there's no guessing where it'll actually land. */
+.playtest__drop-preview {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px dashed var(--accent);
+  border-radius: 5px;
+  background-color: color-mix(in srgb, var(--accent) 15%, transparent);
+  pointer-events: none;
+  z-index: 40;
+  animation: playtest-drop-preview-pulse 1s ease-in-out infinite;
+}
+
+@keyframes playtest-drop-preview-pulse {
+  0%,
+  100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* Shift+drag-on-empty-canvas selection box. */
+.playtest__marquee {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1.5px dashed var(--accent);
+  background-color: color-mix(in srgb, var(--accent) 12%, transparent);
+  pointer-events: none;
+  z-index: 45;
+}
+
+/* Counter piles overlap the card's left (generic) or right (power/toughness) edge at rest, high
+   enough to clear the name/mana title bar but low enough to stay out of the art's focal point,
+   and stack downward when a card carries more than one differently-colored pile. Each chip always
+   shows its color+value; hovering one reveals its +/- (and remove ×) via
+   playtest-card__counter-pile-controls below. Creating/deleting a pile is still
+   right-click-menu-only ("Add Counter" > color).
+   Anchored by the edge nearest the card (right for the left stack, left for the right stack),
+   pulled a little past the card's own edge so the chip rests overlapping the art, with align-items
+   pinning every chip to that same anchor edge — so hover-expanding a chip's controls still grows it
+   outward away from the card (never further in, never toward the opposite stack). */
+.playtest-card__counter-stack {
+  position: absolute;
+  top: 14%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  z-index: 2;
+}
+
+.playtest-card__counter-stack--left {
+  right: calc(100% - 18px);
+  align-items: flex-end;
+}
+
+.playtest-card__counter-stack--right {
+  left: calc(100% - 18px);
+  align-items: flex-start;
+}
+
+.playtest-card__counter-pile {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  background-color: rgba(20, 21, 24, 0.9);
+  border: 1px solid var(--pile-color, var(--accent));
+  border-radius: 8px;
+  padding: 1px 4px;
+}
+
+.playtest-card__counter-pile::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: var(--pile-color, var(--accent));
+  flex-shrink: 0;
+}
+
+.playtest-card__counter-pile-value {
+  white-space: nowrap;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1.2;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.playtest-card__counter-pile-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  width: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: width 0.12s ease, opacity 0.12s ease;
+}
+
+.playtest-card__counter-pile--interactive:hover .playtest-card__counter-pile-controls {
+  width: auto;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.playtest-card__counter-pile-controls button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background-color: color-mix(in srgb, var(--pile-color, var(--accent)) 35%, transparent);
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.playtest-card__counter-pile-controls button:hover {
+  background-color: var(--pile-color, var(--accent));
+}
+
+.playtest-card__counter-pile-controls button:active {
+  transform: scale(0.88);
+}
+
+.playtest-card__counter-pile-remove {
+  font-size: 0.75rem !important;
+}
+
+.playtest-card__token-badge {
+  position: absolute;
+  bottom: -4px;
+  left: -4px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background-color: var(--bg-panel-raised);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-size: 0.65rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.playtest-card {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  cursor: grab;
+  transition: transform 0.15s ease;
+  line-height: 0;
+}
+
+.playtest-card img {
+  width: 100%;
+  border-radius: 5px;
+  display: block;
+}
+
+/* Wraps the img (not the whole button) so FoilShine clips to the art's rounded corners without
+   touching the button's own overflow — the face-down "?" badge (below) sits just outside the
+   button's box and would get clipped if overflow:hidden lived there instead. */
+.playtest-card__art {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  border-radius: 5px;
+}
+
+.playtest-card.is-tapped {
+  transform: rotate(90deg);
+}
+
+/* Shift-click multi-select. A ring rather than a background tint so it stays legible over
+   any card art, and doesn't fight the tapped rotation (box-shadow follows the border-radius
+   regardless of the element's own transform). */
+.playtest-card.is-selected {
+  box-shadow:
+    0 0 0 3px var(--accent),
+    0 0 12px 2px color-mix(in srgb, var(--accent) 60%, transparent);
+  border-radius: 5px;
+}
+
+/* Your own face-down card still shows its real art to you (only opponents see a card-back —
+   see PlaytestCard's `hidden` prop) — this dashed outline + badge is the reminder that
+   everyone else can't see what this actually is. */
+.playtest-card.is-face-down {
+  outline: 2px dashed var(--text-dim);
+  outline-offset: 2px;
+}
+
+.playtest-card.is-face-down::after {
+  content: '?';
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background-color: var(--bg-panel-raised);
+  border: 1px solid var(--text-dim);
+  color: var(--text-dim);
+  font-size: 0.7rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.playtest-card--entering {
+  animation: playtest-card-enter 0.5s ease-out;
+  z-index: 30;
+}
+
+@keyframes playtest-card-enter {
+  0% {
+    transform: scale(0.6);
+    filter: brightness(1.7) drop-shadow(0 0 10px var(--accent));
+  }
+  55% {
+    transform: scale(1.08);
+    filter: brightness(1.3) drop-shadow(0 0 14px var(--accent));
+  }
+  100% {
+    transform: scale(1);
+    filter: brightness(1) drop-shadow(0 0 0 transparent);
+  }
+}
+
+.playtest-card__placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 5 / 7;
+  font-size: 0.6rem;
+  line-height: 1.2;
+  padding: 0.25rem;
+  background-color: var(--bg-panel-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 5px;
+  color: var(--text-dim);
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.playtest__battlefield-card .playtest-card:hover {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 5px;
+}
+
+/* Floats over the right edge of the battlefield instead of a full-height sidebar column, so
+   most of the board stays visible around it — a compact box, not a wall. */
+.playtest__zones {
+  position: absolute;
+  top: 50%;
+  right: 0.75rem;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 0.5rem;
+  max-height: calc(100% - 1.5rem);
+  overflow-y: auto;
+  background-color: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  z-index: 40;
+}
+
+.zone-pile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  width: 96px;
+}
+
+.zone-pile__slot {
+  width: 90px;
+  aspect-ratio: 5 / 7;
+  border-radius: 6px;
+}
+
+.zone-pile__slot.is-clickable {
+  cursor: pointer;
+}
+
+.zone-pile__empty {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 1px dashed var(--border-subtle);
+  border-radius: 6px;
+  box-sizing: border-box;
+}
+
+.zone-pile__card-back {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 2px solid #3d3768;
+  box-sizing: border-box;
+}
+
+.zone-pile__slot.is-clickable:hover .zone-pile__card-back {
+  border-color: var(--accent);
+}
+
+.zone-pile__label {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  text-align: center;
+}
+
+/* --- Commander tax --------------------------------------------------------- */
+
+/* Sits right under the Command ZonePile in .playtest__zones (one circle per commander, side by
+   side for partner decks) — see PlaytestView.tsx's `commanders` list and ADJUST_COMMANDER_TAX. */
+.playtest__commander-tax-row {
+  display: flex;
+  justify-content: center;
+  gap: 0.4rem;
+}
+
+.playtest__commander-tax {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  /* border-color/color are set inline per-badge (COMMANDER_TAX_COLORS in PlaytestView.tsx) so a
+     partner deck's second commander gets a visibly different color from the first. */
+  border-style: solid;
+  border-width: 2px;
+  background-color: var(--bg-panel-raised);
+  font-weight: 700;
+  font-size: 0.8rem;
+  padding: 0;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  transition: transform 120ms ease;
+}
+
+.playtest__commander-tax:hover,
+.playtest__commander-tax:focus-visible {
+  transform: scale(1.15);
+}
+
+.playtest__quickbar {
+  position: absolute;
+  /* .playtest__battlefield now spans the full table row (the hand overlays it instead of
+     reserving its own row — see .playtest__hand), so this sits just above the hand's
+     min-height (210px) + the original 12px clearance, instead of the battlefield's own edge. */
+  bottom: calc(210px + 12px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: flex-end;
+  gap: 0.3rem;
+  z-index: 50;
+}
+
+.playtest__quickbar-btn {
+  padding: 0.5em 1.1rem;
+  border-radius: 999px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--bg-app);
+  background-color: var(--accent);
+  border: 1px solid var(--accent);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+}
+
+.playtest__quickbar-btn:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.playtest__quickbar-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.playtest__actions-wrap {
+  /* Anchors the absolutely-positioned tray below (see .playtest__actions-tray) —
+     the tray is taken out of flow entirely so its ~10-icon content width can
+     never affect this wrapper's size and push Untap/Draw apart when it's a
+     flex sibling of them in .playtest__quickbar. */
+  position: relative;
+  display: flex;
+}
+
+.playtest__actions-tab {
+  padding: 0.5em 1.5rem;
+  border-radius: 999px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--bg-app);
+  background-color: var(--accent);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+}
+
+.playtest__actions-tab:hover,
+.playtest__actions-tab:focus-visible {
+  filter: brightness(1.1);
+}
+
+.playtest__actions-tray {
+  /* Out of flow (see .playtest__actions-wrap) so its content width never affects
+     surrounding layout; floats above the Actions tab regardless of open state. */
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  border-radius: 999px;
+  background-color: var(--bg-panel-raised);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  pointer-events: none;
+  white-space: nowrap;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.playtest__actions-tray.is-open {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(-50%) translateY(0);
+}
+
+.playtest__actions-icon {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 1.1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.playtest__actions-tooltip {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 8px;
+  padding: 0.3em 0.6em;
+  border-radius: 4px;
+  background-color: var(--bg-panel-raised);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-dim);
+  font-size: 0.7rem;
+  font-weight: 400;
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+  z-index: 60;
+}
+
+.playtest__actions-icon:hover .playtest__actions-tooltip,
+.playtest__actions-icon:focus-visible .playtest__actions-tooltip {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* Floats over the bottom of the battlefield instead of reserving its own row, so the board
+   stays visible behind it (only the fanned cards themselves occlude anything).
+   pointer-events: none here (re-enabled per-card below) is load-bearing, not cosmetic: this
+   div's own box is full-width and ~210px tall regardless of how few cards are in hand or how
+   little of that box their fanned art actually covers, and it sits above the battlefield in
+   both z-index and paint order. Without the override, any click/drag landing in the empty
+   padding/gap around the cards — or a battlefield-reposition drop whose target simply falls
+   in this strip — hits this div instead of the battlefield underneath: clicks silently do
+   nothing, and a dragged battlefield card gets routed to hand's own onDrop (MOVE_CARD to
+   hand) instead of repositioning where it was actually dropped. */
+.playtest__hand {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  min-height: 210px;
+  min-width: 0;
+  z-index: 40;
+  pointer-events: none;
+}
+
+.playtest__hand-label {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+}
+
+.playtest__hand-cards {
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  flex: 1;
+  min-width: 0;
+  padding: 1.25rem 0 0.25rem;
+}
+
+/* Fanned, overlapping hand: each card pivots about its bottom edge (the fan
+   angle/lift come from inline CSS vars set per index in PlaytestView). */
+.playtest__hand-card {
+  flex: 0 0 auto;
+  width: 130px;
+  margin-left: -38px;
+  transform: rotate(var(--fan-angle, 0deg)) translateY(var(--fan-lift, 0px));
+  transform-origin: bottom center;
+  transition: transform 0.16s ease;
+  /* Punches a hole back through .playtest__hand's pointer-events: none, scoped to just this
+     card's own rotated box (not the row's full-width flex container) — see .playtest__hand's
+     comment for why the parent is none in the first place. */
+  pointer-events: auto;
+}
+
+.playtest__hand-card:first-child {
+  margin-left: 0;
+}
+
+/* Hovered card straightens, lifts clear of its neighbors, and comes to the front. */
+.playtest__hand-card:hover {
+  transform: translateY(-36px) scale(1.05);
+  z-index: 100;
+}
+
+
+.zone-viewer {
+  width: min(440px, 92vw);
+}
+
+.zone-viewer__note {
+  margin: -0.5rem 0 0.75rem 0;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}
+
+.zone-viewer__search {
+  display: block;
+  width: 100%;
+  margin-bottom: 0.75rem;
+  box-sizing: border-box;
+}
+
+.zone-viewer__list {
+  list-style: none;
+  margin: 0 0 0.75rem 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  max-height: 55vh;
+  overflow-y: auto;
+}
+
+.zone-viewer__row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.zone-viewer__row img,
+.zone-viewer__img-placeholder {
+  width: 32px;
+  border-radius: 3px;
+}
+
+.zone-viewer__img-placeholder {
+  aspect-ratio: 5 / 7;
+  background-color: var(--bg-panel-raised);
+  display: block;
+}
+
+.zone-viewer__name {
+  flex: 1;
+  font-size: 0.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zone-viewer__row button {
+  font-size: 0.75rem;
+  padding: 0.25em 0.6em;
+}
+
+.zone-viewer__row button.is-selected {
+  border-color: var(--accent);
+  background-color: var(--accent);
+  color: var(--bg-app);
+}
+
+.token-picker {
+  width: min(680px, 94vw);
+}
+
+.token-picker__grid {
+  list-style: none;
+  margin: 0 0 0.75rem 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 0.6rem;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.token-picker__tile button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  width: 100%;
+  height: 100%;
+  padding: 0.5rem;
+  text-align: center;
+  background-color: var(--bg-panel-raised);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.token-picker__tile button:hover {
+  border-color: var(--accent);
+}
+
+.token-picker__tile img,
+.token-picker__img-placeholder {
+  width: 96px;
+  border-radius: 4px;
+}
+
+.token-picker__img-placeholder {
+  aspect-ratio: 5 / 7;
+  background-color: var(--bg-app);
+  display: block;
+}
+
+.token-picker__name {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.token-picker__type {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+
+.token-picker__sources {
+  font-size: 0.68rem;
+  color: var(--text-dim);
+  opacity: 0.8;
+}
+
+.peek-row__forced {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.peek-row__order {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-left: 0.4rem;
+  padding-left: 0.4rem;
+  border-left: 1px solid var(--border);
+}
+
+.peek-row__order-position {
+  min-width: 1.1em;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  text-align: center;
+}
+
+.peek-row__order-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+}
+
+.peek-row__order-buttons button {
+  font-size: 0.55rem;
+  line-height: 1;
+  padding: 0.1em 0.35em;
+}
+
+
+.number-input-prompt {
+  padding: 0.4rem;
+}
+
+.number-input-prompt form {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.number-input-prompt input {
+  width: 4rem;
+  padding: 0.3em 0.5em;
+  border: 1px solid var(--border-subtle);
+  border-radius: 5px;
+  background-color: var(--bg-panel);
+  color: inherit;
+  font-size: 0.85rem;
+}
+
+.number-input-prompt button {
+  padding: 0.4em 0.8em;
+  border: none;
+  border-radius: 5px;
+  background-color: var(--accent);
+  color: var(--bg-app);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.number-input-prompt button:hover,
+.number-input-prompt button:focus-visible {
+  filter: brightness(1.1);
+}
+
+/* --- Multiplayer shared table (step 4) ------------------------------------ */
+
+/* Seat quadrants on the table surface; your own is highlighted. Purely a
+   backdrop — never intercepts card drags. */
+.playtest__quadrant {
+  position: absolute;
+  box-sizing: border-box;
+  border: 3px solid var(--seat-color, var(--border-subtle));
+  border-radius: 10px;
+  pointer-events: none;
+  opacity: 1;
+  /* A colored glow on every quadrant, not just your own — a thin border line alone was
+     too easy to lose track of at a glance, especially for pale colors like white. */
+  box-shadow: inset 0 0 35px -16px var(--seat-color, transparent);
+}
+
+.playtest__quadrant.is-self {
+  border-width: 4px;
+  box-shadow: inset 0 0 60px -22px var(--seat-color);
+}
+
+/* Whose turn it is — a visual cue only (Pass Turn), independent of is-self so your own
+   quadrant can be both at once. Gold rather than a seat color so it never blends in. */
+.playtest__quadrant.is-active-turn {
+  border-color: #d9a92e;
+  border-width: 3px;
+  animation: playtest-turn-glow 1.8s ease-in-out infinite;
+}
+
+@keyframes playtest-turn-glow {
+  0%,
+  100% {
+    box-shadow: inset 0 0 40px -10px #d9a92e;
+  }
+  50% {
+    box-shadow: inset 0 0 75px -10px #d9a92e;
+  }
+}
+
+/* A life<=0 seat's border/glow goes dull grey instead of its usual color — still visible as a
+   frame, but reads as "out" rather than an active seat in the pod. */
+.playtest__quadrant.is-eliminated {
+  border-color: var(--border-subtle);
+  box-shadow: none;
+}
+
+/* Darkens/desaturates that whole quadrant's cards at a glance without blocking interaction with
+   them (pointer-events: none — an eliminated player's board stays visible and playable, only
+   their own turn is skipped from rotation, see PlaytestView's isEliminated). Rendered after every
+   card block so DOM order alone puts it visually on top, no z-index needed. */
+.playtest__quadrant-scrim {
+  position: absolute;
+  box-sizing: border-box;
+  pointer-events: none;
+  background: rgba(10, 10, 14, 0.55);
+  backdrop-filter: grayscale(0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.playtest__quadrant-scrim-label {
+  font-size: 1.4rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+/* Opponents' cards are display-only mirrors. */
+.playtest-card--readonly {
+  cursor: default;
+}
+
+/* A card controlled by someone other than its owner (given away): ring in the
+   owner's seat color so everyone can see whose card it is. */
+.playtest__battlefield-card.is-foreign {
+  border-radius: 6px;
+  box-shadow: 0 0 0 2px var(--owner-color), 0 0 8px -2px var(--owner-color);
+}
+
+/* Flash-highlight a specific card ("look at THIS card") — Alt+click on a card instead of
+   empty battlefield (see PlaytestView's sendHighlight), sibling to the "look here" ping above
+   but anchored to the card itself rather than a table point. Raised above neighbors for the
+   duration so the pulse isn't clipped by an overlapping card. */
+.playtest__battlefield-card.is-highlighted {
+  z-index: 20;
+  border-radius: 6px;
+  animation: playtest-card-highlight-pulse 0.8s ease-out 2;
+}
+
+@keyframes playtest-card-highlight-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0.9);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 16px 6px rgba(var(--accent-rgb), 0.55);
+    transform: scale(1.06);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0);
+    transform: scale(1);
+  }
+}
+
+/* Per-seat status cluster, positioned in viewport space so it stays a constant,
+   readable size at any zoom. */
+/* Fixed to the screen (top-left, one vertical strip) — never anchored to the table/camera, so
+   it can't read as part of the battlefield no matter how far you pan or zoom. Lists every
+   seat's status in one place instead of scattering a cluster near each seat's own quadrant.
+   Top-right was tried first but fought .playtest__zones (vertically centered on the right) for
+   space; top-left leaves .playtest__zones' usual centered spot alone entirely. */
+.playtest__player-panel {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: calc(100% - 24px);
+  overflow-y: auto;
+}
+
+.playtest__seat-overlay {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 168px;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  background-color: var(--bg-panel-raised);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
+/* One-click emoji reaction, popping up centered over the sender's board quadrant then fading —
+   see PlaytestView's reactionMarkers/REACTION_TTL_MS. Viewport-anchored like .playtest__ping
+   (constant size at any zoom), so the -50%/-50% centering has to be baked into every keyframe
+   rather than sitting in the base rule — a CSS animation's `transform` replaces the element's
+   whole computed transform each frame, it doesn't compose with a transform set outside it. */
+.playtest__reaction-marker {
+  position: absolute;
+  font-size: 2.6rem;
+  line-height: 1;
+  pointer-events: none;
+  z-index: 45;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.5));
+  animation: playtest-reaction-marker-pop 2s ease-out forwards;
+}
+
+@keyframes playtest-reaction-marker-pop {
+  0% {
+    transform: translate(-50%, calc(-50% + 10px)) scale(0.4);
+    opacity: 0;
+  }
+  15% {
+    transform: translate(-50%, calc(-50% - 8px)) scale(1.2);
+    opacity: 1;
+  }
+  30% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+  }
+  80% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 0;
+  }
+}
+
+/* Quickbar reaction tab + popover — same pattern as .playtest__actions-wrap/tab/tray, just its
+   own classes since the tray auto-closes on pick (see ReactionsTray) instead of staying open. */
+.playtest__reactions-wrap {
+  position: relative;
+  display: flex;
+}
+
+.playtest__reactions-tab {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 1.2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--bg-app);
+  background-color: var(--accent);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+}
+
+.playtest__reactions-tab:hover,
+.playtest__reactions-tab:focus-visible {
+  filter: brightness(1.1);
+}
+
+.playtest__reactions-tray {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  display: flex;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.5rem;
+  border-radius: 999px;
+  background-color: var(--bg-panel-raised);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  pointer-events: none;
+  white-space: nowrap;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.playtest__reactions-tray.is-open {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(-50%) translateY(0);
+}
+
+.playtest__reaction-btn {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 1.2rem;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.playtest__reaction-btn:hover {
+  background-color: var(--bg-panel);
+}
+
+.playtest__seat-overlay.is-self {
+  border-color: var(--seat-color, var(--accent));
+  box-shadow: 0 0 0 1px var(--seat-color, var(--accent)), 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
+/* Life <= 0: the whole row dims (life/poison/commander-damage chips stay legible — just
+   muted) so an eliminated seat reads as "out" at a glance in the panel list, matching the
+   table-side quadrant scrim. */
+.playtest__seat-overlay.is-eliminated {
+  opacity: 0.55;
+}
+
+.playtest__seat-tag--eliminated {
+  /* Matches the existing lethal-commander-damage accent (see .playtest__stat-chip--commander.is-lethal). */
+  color: #ff6b5e;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.playtest__seat-nameplate {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text);
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.playtest__seat-nameplate:hover .playtest__seat-name,
+.playtest__seat-nameplate:focus-visible .playtest__seat-name {
+  color: var(--accent);
+}
+
+.playtest__seat-color-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background-color: var(--seat-color, var(--text-dim));
+  box-shadow: 0 0 5px var(--seat-color);
+}
+
+.playtest__seat-name {
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.playtest__seat-tag {
+  color: var(--text-dim);
+  font-size: 0.62rem;
+}
+
+.playtest__seat-hand {
+  margin-left: auto;
+  color: var(--text-dim);
+  font-size: 0.66rem;
+}
+
+/* Commander(s) this seat is playing (from the public command zone — see PublicBoard.command)
+   as a row of small hoverable thumbnails (CommanderChip) — hovering shows the full card via
+   the shared hover-preview portal, same as any other card in Playtest. */
+.playtest__seat-commanders {
+  display: flex;
+  gap: 3px;
+}
+
+.playtest__seat-commander-chip {
+  display: block;
+  width: 20px;
+  aspect-ratio: 1 / 1;
+  border-radius: 3px;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+  cursor: help;
+}
+
+.playtest__seat-commander-chip img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.playtest__seat-commander-chip-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  background-color: var(--bg-panel);
+  color: var(--text-dim);
+  font-size: 0.6rem;
+  font-weight: 700;
+}
+
+/* Life/poison/commander-damage, now flat rounded-rect chips instead of circular "bubbles" —
+   there's no more table-center-comparison reason for the circle shape once this whole cluster
+   lives in a static sidebar list (see .playtest__player-panel). */
+.playtest__seat-stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+
+.playtest__seat-stat-group {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+/* Self-only, life: commander games start at 40, so a couple of quick ±10 buttons flanking the
+   usual click(+1)/right-click(-1) chip save a lot of clicking. */
+.playtest__stat-step {
+  padding: 1px 5px;
+  border-radius: 5px;
+  border: 1px solid var(--border-subtle);
+  background-color: var(--bg-panel-raised);
+  color: var(--text-dim);
+  font-size: 0.62rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.playtest__stat-step:hover,
+.playtest__stat-step:focus-visible {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.playtest__stat-chip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 5px;
+  border: 1px solid var(--border-subtle);
+  font-weight: 700;
+  font-size: 0.72rem;
+  background-color: var(--bg-panel-raised);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.playtest__stat-chip.is-readonly {
+  cursor: default;
+  opacity: 0.9;
+}
+
+.playtest__stat-chip--life {
+  color: var(--color-g);
+  border-color: var(--color-g);
+}
+
+.playtest__stat-chip--poison {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.playtest__stat-chip--commander {
+  color: #d9a92e;
+  border-color: #d9a92e;
+}
+
+/* 21 commander damage from a single source is lethal — call it out. */
+.playtest__stat-chip--commander.is-lethal {
+  color: #fff;
+  background-color: #b3261e;
+  border-color: #ff6b5e;
+}
+
+/* Clickable graveyard/exile chips on an opponent's overlay. */
+.playtest__seat-zones {
+  display: flex;
+  gap: 5px;
+}
+
+.playtest__seat-zone {
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  background-color: var(--bg-panel-raised);
+  color: var(--text);
+  font-size: 0.62rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.playtest__seat-zone:hover:not(:disabled),
+.playtest__seat-zone:focus-visible:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.playtest__seat-zone:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Which opponent a commander-damage chip belongs to. */
+.playtest__stat-chip-source {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 2px;
+  border-radius: 7px;
+  background-color: var(--bg-app);
+  border: 1px solid var(--border-subtle);
+  font-size: 0.52rem;
+  font-weight: 700;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* --- Multiplayer host/join (step 5) --------------------------------------- */
+
+/* Topbar status pill shown while a pod session is active. */
+.playtest__mp-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.playtest__mp-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--color-g);
+  box-shadow: 0 0 6px var(--color-g);
+}
+
+.mp-modal {
+  width: min(420px, 92vw);
+}
+
+.mp-modal__section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.mp-modal__intro {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.mp-modal__primary {
+  align-self: stretch;
+  padding: 0.6rem;
+  font-weight: 700;
+  background-color: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+}
+
+.mp-modal__divider {
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.mp-modal__join {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.mp-modal__code-input {
+  flex: 1;
+  min-width: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  font-weight: 700;
+  text-align: center;
+}
+
+.mp-modal__code-display {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background-color: var(--bg-panel-raised);
+}
+
+.mp-modal__code-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+}
+
+.mp-modal__code {
+  flex: 1;
+  font-size: 1.5rem;
+  font-weight: 800;
+  letter-spacing: 0.24em;
+  color: var(--accent);
+}
+
+.mp-modal__roster {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.mp-modal__seat {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+}
+
+.mp-modal__seat.is-self {
+  border-color: var(--accent);
+}
+
+.mp-modal__seat.is-open {
+  opacity: 0.5;
+}
+
+.mp-modal__seat-tag {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+}
+
+.mp-modal__seat-name {
+  font-weight: 600;
+}
+
+.mp-modal__leave {
+  align-self: stretch;
+  border-color: #b3261e;
+  color: #ff6b5e;
+}
+
+.mp-modal__error {
+  margin: 0;
+  color: #ff6b5e;
+}
+
+.mp-modal__close {
+  margin-top: 0.5rem;
+  align-self: flex-end;
+}
+
+/* --- Goldfish practice stat -------------------------------------------------- */
+
+/* Bottom-left — the one screen corner not already claimed by the roll log
+   (top-left), life overlay (top-right), or the zones panel (right edge). */
+.playtest__goldfish-panel {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  background-color: var(--bg-panel-raised);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  font-size: 0.75rem;
+  pointer-events: none;
+}
+
+.playtest__goldfish-title {
+  font-weight: 700;
+  color: var(--text-dim);
+}
+
+.playtest__goldfish-delta {
+  color: var(--accent);
+}
+
+/* --- Dice / coin roll log --------------------------------------------------- */
+
+/* Viewport-anchored (like the life overlay/actions tray), opposite corner from the
+   life overlay so it never collides with it. Newest roll on top. */
+.playtest__roll-log {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 210px;
+  pointer-events: none;
+}
+
+.playtest__roll-entry {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--seat-color, var(--border-subtle));
+  background-color: var(--bg-panel-raised);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  font-size: 0.72rem;
+}
+
+.playtest__roll-name {
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.playtest__roll-value {
+  color: var(--text-dim);
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+/* --- "Look here" ping ------------------------------------------------------- */
+
+/* Viewport-anchored like the roll log / seat overlays (constant marker size at any
+   zoom) — a zero-size point at the ping location, with the ring/label positioned
+   off of it. Self-removed from the DOM by PlaytestView after PING_TTL_MS. */
+.playtest__ping {
+  position: absolute;
+  width: 0;
+  height: 0;
+  z-index: 45;
+  pointer-events: none;
+}
+
+.playtest__ping-ring {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 22px;
+  height: 22px;
+  margin-left: -11px;
+  margin-top: -11px;
+  border-radius: 50%;
+  border: 3px solid var(--seat-color, var(--accent));
+  animation: playtest-ping-pulse 1s ease-out forwards;
+}
+
+.playtest__ping-ring--delay {
+  animation-delay: 0.3s;
+}
+
+.playtest__ping-label {
+  position: absolute;
+  left: 0;
+  top: -26px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--seat-color, var(--accent));
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+  opacity: 0;
+  animation: playtest-ping-label-fade 1.6s ease-out forwards;
+}
+
+@keyframes playtest-ping-pulse {
+  0% {
+    transform: scale(0.3);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+
+@keyframes playtest-ping-label-fade {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(4px);
+  }
+  15% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+  75% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* --- Shared table radio ------------------------------------------------------- */
+
+/* Viewport-fixed (a direct child of .playtest__battlefield, which starts right below the
+   topbar — see PlaytestView's placement), not table-space: deliberately off the felt and
+   reliably visible regardless of camera pan/zoom or window size, unlike a table-anchored
+   position would be. Shared state (same station for the whole pod), just presented as fixed
+   UI chrome rather than a spatial object on the table. */
+.table-radio {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+}
+
+.table-radio__body {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  font-size: 1.6rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--bg-panel-raised);
+  border: 2px solid var(--border-subtle);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+  position: relative;
+}
+
+.table-radio__body.is-playing {
+  border-color: var(--accent);
+}
+
+.table-radio__wave {
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  opacity: 0;
+  animation: table-radio-wave 2.4s ease-out infinite;
+  pointer-events: none;
+}
+
+@keyframes table-radio-wave {
+  0% {
+    transform: scale(0.85);
+    opacity: 0.7;
+  }
+  100% {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}
+
+/* Opens downward, unconditionally — the radio icon itself sits fixed near the top of the
+   viewport (see .table-radio), so there's always room below and never above. */
+.table-radio__panel {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.5rem;
+  min-width: 160px;
+  border-radius: 10px;
+  background-color: var(--bg-panel-raised);
+  border: 1px solid var(--border-subtle);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  white-space: nowrap;
+}
+
+.table-radio__option {
+  padding: 0.35em 0.6em;
+  border-radius: 6px;
+  text-align: left;
+  font-size: 0.85rem;
+}
+
+.table-radio__option:hover {
+  background-color: var(--bg-panel);
+}
+
+.table-radio__option.is-active {
+  background-color: var(--accent);
+  color: var(--bg-app);
+  font-weight: 600;
+}
+
+.table-radio__volume {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4em 0.6em 0.1em;
+  margin-top: 0.2rem;
+  border-top: 1px solid var(--border-subtle);
+  font-size: 0.85rem;
+}
+
+.table-radio__volume input {
+  flex: 1;
+}
+
+/* --- Deck-list scan tray ----------------------------------------------------- */
+
+/* Slide-out panel anchored to the left edge of the battlefield viewport (mirrors the roll
+   log/ping marker's viewport-space anchoring, not canvas-space). The tab and panel are one
+   wrapper so the tab can slide along with the panel via a single .is-open toggle. */
+.playtest__deck-tray {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+}
+
+.playtest__deck-tray-panel {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 260px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background-color: var(--bg-panel-raised);
+  border-right: 1px solid var(--border-subtle);
+  box-shadow: 4px 0 16px rgba(0, 0, 0, 0.4);
+  transform: translateX(-100%);
+  transition: transform 0.22s ease;
+  pointer-events: auto;
+}
+
+.playtest__deck-tray.is-open .playtest__deck-tray-panel {
+  transform: translateX(0);
+}
+
+/* Sits above the Sort by Cost tab (see .playtest__hand-sort-tab just below), which in turn
+   sits just above the hand tray (see .playtest__hand, bottom:0 / min-height:210px) — rather
+   than vertically centered, avoiding the collision with the player panel this used to have
+   (see mtg-deckbuilder-vtt-static-player-panel memory). */
+.playtest__deck-tray-tab {
+  position: absolute;
+  bottom: 388px;
+  left: 0;
+  padding: 0.6em 0.4em;
+  border-radius: 0 8px 8px 0;
+  background-color: var(--bg-panel-raised);
+  border: 1px solid var(--border-subtle);
+  border-left: none;
+  writing-mode: vertical-rl;
+  font-size: 0.8rem;
+  font-weight: 700;
+  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.35);
+  transition: transform 0.22s ease;
+  pointer-events: auto;
+}
+
+.playtest__deck-tray.is-open .playtest__deck-tray-tab {
+  transform: translateX(260px);
+}
+
+/* Second left-edge tab, stacked directly below Deck List (moved out of the hand row itself —
+   it used to sit inline with the fanned cards, see .playtest__hand-cards, which crowded it
+   as the hand grew). Same look as .playtest__deck-tray-tab, just a lower `bottom` so the two
+   stack instead of overlapping. */
+.playtest__hand-sort-tab {
+  position: absolute;
+  bottom: 214px;
+  left: 0;
+  padding: 0.6em 0.4em;
+  border-radius: 0 8px 8px 0;
+  background-color: var(--bg-panel-raised);
+  border: 1px solid var(--border-subtle);
+  border-left: none;
+  writing-mode: vertical-rl;
+  font-size: 0.8rem;
+  font-weight: 700;
+  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.35);
+  z-index: 50;
+  pointer-events: auto;
+}
+
+.playtest__hand-sort-tab:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.playtest__deck-tray-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.75rem 0.9rem 0.25rem;
+}
+
+.playtest__deck-tray-header h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.playtest__deck-tray-count {
+  color: var(--text-dim);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.playtest__deck-tray-hint {
+  margin: 0;
+  padding: 0 0.9rem 0.5rem;
+  color: var(--text-dim);
+  font-size: 0.7rem;
+  font-style: italic;
+}
+
+.playtest__deck-tray-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 0.5rem 0.75rem;
+}
+
+.playtest__deck-tray-group h4 {
+  margin: 0.6rem 0.4rem 0.25rem;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+
+.playtest__deck-tray-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.78rem;
+}
+
+.playtest__deck-tray-row:hover {
+  background-color: var(--bg-app);
+}
+
+.playtest__deck-tray-thumb-wrap {
+  position: relative;
+  width: 22px;
+  height: 31px;
+  flex-shrink: 0;
+}
+
+.playtest__deck-tray-thumb {
+  width: 22px;
+  height: 31px;
+  border-radius: 3px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background-color: var(--bg-app);
+}
+
+.playtest__deck-tray-thumb--placeholder {
+  border: 1px solid var(--border-subtle);
+}
+
+.playtest__deck-tray-qty {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.playtest__deck-tray-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shortcuts-modal {
+  width: min(440px, 92vw);
+}
+
+.shortcuts-modal h3 {
+  margin: 1rem 0 0.4rem 0;
+  font-size: 0.9rem;
+  color: var(--text-dim);
+}
+
+.shortcuts-modal h3:first-of-type {
+  margin-top: 0.5rem;
+}
+
+.shortcuts-modal__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.shortcuts-modal__list li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+}
+
+.shortcuts-modal__list kbd {
+  flex-shrink: 0;
+  min-width: 9em;
+  padding: 0.15em 0.5em;
+  border-radius: 4px;
+  border: 1px solid var(--border-subtle);
+  background-color: var(--bg-panel-raised);
+  font-family: inherit;
+  font-size: 0.78rem;
+  text-align: center;
+}
+
+.shortcuts-modal__list span {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}

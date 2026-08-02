@@ -1,0 +1,34 @@
+.export-deck-modal {
+  width: min(520px, 92vw);
+}
+
+.export-deck-modal__field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  margin-bottom: 0.5rem;
+}
+
+.export-deck-modal__field select {
+  flex: 1 1 auto;
+}
+
+.export-deck-modal__textarea {
+  width: 100%;
+  font-family: monospace;
+  font-size: 0.78rem;
+  background-color: var(--bg-panel-raised);
+  color: inherit;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 0.5rem;
+  resize: vertical;
+  margin-bottom: 0.5rem;
+}
+
+.export-deck-modal__actions {
+  display: flex;
+  gap: 0.5rem;
+}

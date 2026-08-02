@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MTG Deck Builder</title>
+    <!--
+      Locked down to exactly what this app talks to: Scryfall (card data + card art),
+      EDHREC (salt scores), and PeerJS's public broker + Google/PeerJS STUN/TURN (multiplayer
+      WebRTC signaling) — see src/api/scryfall.ts, src/api/edhrec.ts, and
+      node_modules/peerjs's CLOUD_HOST/iceServers defaults for where these came from.
+      Scryfall spans three hosts, and they are NOT interchangeable between directives:
+      api.scryfall.com (JSON API) and data.scryfall.io (bulk files, used by the Oracle Tags
+      index in src/storage/tagIndex.ts) both need connect-src, while cards.scryfall.io serves
+      card art via <img> and so only needs img-src.
+      style-src needs 'unsafe-inline' because this app sets React inline styles (card-size
+      CSS vars, popover positioning) extensively — refactoring that away wasn't worth the
+      much-lower-risk tradeoff (inline styles can't execute script on their own).
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self';
+        script-src 'self';
+        style-src 'self' 'unsafe-inline';
+        img-src 'self' https://cards.scryfall.io data:;
+        media-src 'self' https://ice6.somafm.com;
+        connect-src 'self' https://api.scryfall.com https://data.scryfall.io https://json.edhrec.com https://0.peerjs.com wss://0.peerjs.com stun:stun.l.google.com:19302 turn:eu-0.turn.peerjs.com:3478 turn:us-0.turn.peerjs.com:3478;
+        font-src 'self';
+        object-src 'none';
+        base-uri 'self';
+        form-action 'self';"
+    />
+    <script src="/theme-init.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

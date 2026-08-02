@@ -1,0 +1,33 @@
+const { contextBridge, ipcRenderer } = require('electron')
+
+contextBridge.exposeInMainWorld('electronStorage', {
+  loadAppData: () => ipcRenderer.invoke('storage:loadAppData'),
+  createProfile: (name) => ipcRenderer.invoke('storage:createProfile', name),
+  renameProfile: (id, name) => ipcRenderer.invoke('storage:renameProfile', id, name),
+  deleteProfile: (id) => ipcRenderer.invoke('storage:deleteProfile', id),
+  setDefaultProfile: (id) => ipcRenderer.invoke('storage:setDefaultProfile', id),
+  setActiveProfile: (id) => ipcRenderer.invoke('storage:setActiveProfile', id),
+  getProfileMeta: (profileId) => ipcRenderer.invoke('storage:getProfileMeta', profileId),
+  setLastOpenedDeckId: (profileId, deckId) => ipcRenderer.invoke('storage:setLastOpenedDeckId', profileId, deckId),
+  listDecks: (profileId) => ipcRenderer.invoke('storage:listDecks', profileId),
+  loadDeck: (profileId, deckId) => ipcRenderer.invoke('storage:loadDeck', profileId, deckId),
+  saveDeck: (profileId, deck) => ipcRenderer.invoke('storage:saveDeck', profileId, deck),
+  deleteDeck: (profileId, deckId) => ipcRenderer.invoke('storage:deleteDeck', profileId, deckId),
+  openDecksFolder: (profileId) => ipcRenderer.invoke('storage:openDecksFolder', profileId),
+  openBackupFolder: () => ipcRenderer.invoke('storage:openBackupFolder'),
+  getPaths: (profileId) => ipcRenderer.invoke('storage:getPaths', profileId),
+})
+
+contextBridge.exposeInMainWorld('electronNet', {
+  fetchArchidektDeck: (deckId) => ipcRenderer.invoke('net:fetchArchidektDeck', deckId),
+})
+
+contextBridge.exposeInMainWorld('electronPlaytest', {
+  open: () => ipcRenderer.invoke('playtest:open'),
+  switchToInline: () => ipcRenderer.invoke('playtest:switchToInline'),
+  onSwitchToInline: (callback) => {
+    const listener = () => callback()
+    ipcRenderer.on('playtest:openInline', listener)
+    return () => ipcRenderer.removeListener('playtest:openInline', listener)
+  },
+})

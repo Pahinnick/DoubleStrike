@@ -1,0 +1,52 @@
+/* Positions the chip (and its popover) relative to whichever thumbnail/tile it's dropped into —
+   self-contained so callers never need their own position:relative bookkeeping. */
+.card-mark-chip-wrap {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  z-index: 2;
+}
+
+.card-mark-chip {
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.7);
+  background-color: rgba(0, 0, 0, 0.35);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+  cursor: pointer;
+}
+
+.card-mark-chip.is-marked {
+  border-color: rgba(255, 255, 255, 0.9);
+}
+
+.card-mark-picker {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 5px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  background-color: var(--bg-panel-raised);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+  z-index: 50;
+}
+
+.card-mark-picker__swatch {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+}
+
+.card-mark-picker__swatch:hover {
+  transform: scale(1.15);
+}

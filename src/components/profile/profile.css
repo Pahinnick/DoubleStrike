@@ -1,0 +1,88 @@
+.profile-switcher {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.profile-manager {
+  width: min(480px, 92vw);
+}
+
+.profile-manager__hint {
+  margin: -0.5rem 0 0.75rem 0;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+.profile-manager-list {
+  list-style: none;
+  margin: 0 0 1rem 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.profile-manager-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.profile-manager-list li.is-active .profile-manager-list__name {
+  border-color: var(--accent);
+}
+
+.profile-manager-list li input[type='text'] {
+  flex: 1;
+}
+
+.profile-manager-list__name {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  text-align: left;
+}
+
+.profile-manager-list__badge {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 0.05rem 0.35rem;
+}
+
+.profile-manager-create {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+}
+
+.profile-manager-create input {
+  flex: 1;
+}
+
+.welcome-name {
+  width: min(380px, 90vw);
+}
+
+.welcome-name__hint {
+  margin: 0 0 0.75rem 0;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+.welcome-name input {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 0.75rem;
+}
+
+.welcome-name__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}

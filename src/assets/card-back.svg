@@ -1,0 +1,49 @@
+<svg viewBox="0 0 500 700" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="cardBackBg" cx="50%" cy="40%" r="75%">
+      <stop offset="0%" stop-color="#3a3166" />
+      <stop offset="55%" stop-color="#221c3d" />
+      <stop offset="100%" stop-color="#131024" />
+    </radialGradient>
+    <linearGradient id="cardBackFrame" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#a996ff" />
+      <stop offset="100%" stop-color="#4d3f99" />
+    </linearGradient>
+    <radialGradient id="cardBackGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#a996ff" stop-opacity="0.85" />
+      <stop offset="100%" stop-color="#a996ff" stop-opacity="0" />
+    </radialGradient>
+  </defs>
+
+  <rect x="0" y="0" width="500" height="700" rx="28" fill="url(#cardBackBg)" />
+
+  <rect x="14" y="14" width="472" height="672" rx="20" fill="none" stroke="url(#cardBackFrame)" stroke-width="6" />
+  <rect x="30" y="30" width="440" height="640" rx="14" fill="none" stroke="#6f62c9" stroke-width="2" opacity="0.6" />
+
+  <g stroke="#8b7cf6" stroke-width="2" fill="none" opacity="0.55">
+    <path d="M30 76 Q30 30 76 30" />
+    <path d="M470 76 Q470 30 424 30" />
+    <path d="M30 624 Q30 670 76 670" />
+    <path d="M470 624 Q470 670 424 670" />
+  </g>
+
+  <circle cx="250" cy="350" r="160" fill="url(#cardBackGlow)" />
+
+  <g transform="translate(250 350)">
+    <path
+      d="M0 -120 L20 -20 L120 0 L20 20 L0 120 L-20 20 L-120 0 L-20 -20 Z"
+      fill="none"
+      stroke="#c9beff"
+      stroke-width="3"
+    />
+    <path
+      d="M0 -85 L14 -14 L85 0 L14 14 L0 85 L-14 14 L-85 0 L-14 -14 Z"
+      fill="#4d3f99"
+      stroke="#c9beff"
+      stroke-width="2"
+      opacity="0.9"
+    />
+    <circle cx="0" cy="0" r="34" fill="#221c3d" stroke="#c9beff" stroke-width="3" />
+    <circle cx="0" cy="0" r="15" fill="#8b7cf6" />
+  </g>
+</svg>

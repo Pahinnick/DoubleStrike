@@ -1,0 +1,108 @@
+/* Registered as <number> (not <percentage>/<angle>) so a single pair of custom properties can
+   drive hue-rotate (deg) and mask-image position (%) via calc() below, and so @keyframes on
+   --foil-x/--foil-y (the idle swatch-preview sweep) interpolate smoothly instead of snapping
+   between keyframe stops.
+
+   The cursor drives COLOR, not geometry. On a real foil card the texture is physically fixed in
+   the cardstock — tilting it doesn't slide the pattern around, it changes which colors reflect off
+   which parts. So every gradient below is anchored (fixed center / no background-position), and
+   cursor movement instead hue-rotates the whole layer. The only thing that tracks the cursor
+   positionally is the mask, which is the highlight (where the light happens to be hitting), not
+   the texture itself. */
+@property --foil-x {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 50;
+}
+@property --foil-y {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 50;
+}
+
+.foil-shine {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  /* overlay reads as a sheen sitting on top of the art (darkens/lightens without ever fully
+     replacing a pixel's color) — color-dodge blew highlights out to solid white under anything
+     but the lowest opacities, which was the main source of the effect looking too aggressive.
+     soft-light (tried first) turned out too weak to read as foil at all against colorful art. */
+  mix-blend-mode: overlay;
+  /* Concentrates the shine in a soft pool around the cursor instead of tinting the entire card at
+     even strength — much closer to how light actually catches a physical foil card, and it means
+     the parts of the art away from the cursor stay fully legible. */
+  -webkit-mask-image: radial-gradient(circle at calc(var(--foil-x) * 1%) calc(var(--foil-y) * 1%), black 0%, black 35%, transparent 85%);
+  mask-image: radial-gradient(circle at calc(var(--foil-x) * 1%) calc(var(--foil-y) * 1%), black 0%, black 35%, transparent 85%);
+  /* The color shift itself. x is weighted heavier than y (240deg vs 120deg over the card's full
+     width/height) so horizontal movement dominates — that's the axis you'd naturally tilt a card
+     along — with vertical adding a secondary shift so the two axes never land on the same hue. */
+  filter: hue-rotate(calc((var(--foil-x) * 2.4 + var(--foil-y) * 1.2) * 1deg));
+  transition: opacity 0.2s ease;
+}
+
+/* repeating-linear-gradient (not a single banded linear-gradient) so the pattern tiles perfectly
+   edge to edge — an earlier version used a one-off band flanked by flat transparent, which left a
+   large dead gap with a visible hard edge where the tile repeated. Starting and ending each period
+   on the same red keeps the seam between repeats invisible. */
+.foil-shine--classic {
+  opacity: 0.6;
+  background: repeating-linear-gradient(
+    115deg,
+    #ff6b6b 0%,
+    #ffd166 6%,
+    #b6f27c 12%,
+    #4cc9f0 18%,
+    #b892ff 24%,
+    #ff6b6b 30%
+  );
+}
+
+.foil-shine--rainbow {
+  opacity: 0.55;
+  background: conic-gradient(
+    at 50% 50%,
+    #ff5f6d,
+    #ffc371,
+    #f9f871,
+    #7bed9f,
+    #70a1ff,
+    #a55eea,
+    #ff5f6d
+  );
+}
+
+/* Surge foil — concentric ripple rings, like the real treatment's rippled surface catching light.
+   Centered on the card (not the cursor) so the ripples read as texture pressed into the card
+   rather than something chasing the pointer. Ring spacing is in px (not %) so the ripples stay the
+   same physical size whether this renders on a ~90px battlefield card or the ~300px hover preview.
+   Cool blue/violet rather than a full spectrum keeps it clearly distinct from Rainbow. */
+.foil-shine--surge {
+  opacity: 0.6;
+  background: repeating-radial-gradient(
+    circle at 50% 50%,
+    rgba(255, 255, 255, 0.85) 0px,
+    rgba(125, 211, 252, 0.6) 7px,
+    rgba(10, 12, 45, 0.5) 13px,
+    rgba(196, 181, 253, 0.6) 19px,
+    rgba(255, 255, 255, 0.85) 26px
+  );
+}
+
+/* Picker swatches (SimilarCardsView's Foil row) have no cursor over them worth tracking — an
+   auto-sweeping idle animation sells the effect instead. */
+.foil-shine--preview {
+  animation: foil-shine-idle-sweep 3.5s ease-in-out infinite;
+}
+
+@keyframes foil-shine-idle-sweep {
+  0%,
+  100% {
+    --foil-x: 15;
+    --foil-y: 20;
+  }
+  50% {
+    --foil-x: 85;
+    --foil-y: 80;
+  }
+}

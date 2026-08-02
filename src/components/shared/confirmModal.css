@@ -1,0 +1,24 @@
+.confirm-modal {
+  width: min(360px, 90vw);
+}
+
+.confirm-modal p {
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.confirm-modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.confirm-modal__confirm {
+  border-color: #b23b3b;
+  color: #ff8080;
+}
+
+.confirm-modal__confirm:hover {
+  border-color: #ff8080;
+}

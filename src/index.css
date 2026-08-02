@@ -1,0 +1,248 @@
+:root {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color-scheme: dark;
+  color: rgba(255, 255, 255, 0.87);
+  background-color: #16171a;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  --color-w: #f8f6d8;
+  --color-u: #3b82c4;
+  --color-b: #4a4a4a;
+  --color-r: #d3542a;
+  --color-g: #3f7a45;
+  --color-c: #9a9a9a;
+
+  --bg-app: #16171a;
+  --bg-panel: #1f2023;
+  --bg-panel-raised: #26282c;
+  --border-subtle: #33353a;
+  --text: rgba(255, 255, 255, 0.87);
+  --text-dim: #9a9ca1;
+  --accent: #8b7cf6;
+  --accent-rgb: 139, 124, 246;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  color: #1b1c1f;
+  background-color: #f5f5f7;
+
+  --bg-app: #f5f5f7;
+  --bg-panel: #ffffff;
+  --bg-panel-raised: #ececef;
+  --border-subtle: #d8d8dd;
+  --text: #1b1c1f;
+  --text-dim: #5b5d63;
+  --accent: #6d5bd0;
+  --accent-rgb: 109, 91, 208;
+}
+
+/* Fun themes below, one per basic land type — colors echo the WUBRG mana identity. */
+
+:root[data-theme='plains'] {
+  color-scheme: light;
+  color: #3a2f1f;
+  background-color: #f4ecd8;
+
+  --bg-app: #f4ecd8;
+  --bg-panel: #fffdf6;
+  --bg-panel-raised: #ede0bf;
+  --border-subtle: #d9c9a0;
+  --text: #3a2f1f;
+  --text-dim: #8a7a5c;
+  --accent: #b8912a;
+  --accent-rgb: 184, 145, 42;
+}
+
+:root[data-theme='island'] {
+  color-scheme: dark;
+  color: #dbe9f7;
+  background-color: #0d1b2a;
+
+  --bg-app: #0d1b2a;
+  --bg-panel: #142639;
+  --bg-panel-raised: #1c3350;
+  --border-subtle: #2c4a6e;
+  --text: #dbe9f7;
+  --text-dim: #82a2bf;
+  --accent: #4fa3e0;
+  --accent-rgb: 79, 163, 224;
+}
+
+:root[data-theme='swamp'] {
+  color-scheme: dark;
+  color: #e6dcf0;
+  background-color: #150f1c;
+
+  --bg-app: #150f1c;
+  --bg-panel: #1d1626;
+  --bg-panel-raised: #281f34;
+  --border-subtle: #3a2d4a;
+  --text: #e6dcf0;
+  --text-dim: #9a87ad;
+  --accent: #9d5ce0;
+  --accent-rgb: 157, 92, 224;
+}
+
+:root[data-theme='mountain'] {
+  color-scheme: dark;
+  color: #f7e6d8;
+  background-color: #1f1210;
+
+  --bg-app: #1f1210;
+  --bg-panel: #2a1815;
+  --bg-panel-raised: #3a221c;
+  --border-subtle: #4d2e22;
+  --text: #f7e6d8;
+  --text-dim: #c19478;
+  --accent: #e0632f;
+  --accent-rgb: 224, 99, 47;
+}
+
+:root[data-theme='forest'] {
+  color-scheme: dark;
+  color: #e2f0e4;
+  background-color: #0f1a13;
+
+  --bg-app: #0f1a13;
+  --bg-panel: #16241a;
+  --bg-panel-raised: #1f3224;
+  --border-subtle: #2c4732;
+  --text: #e2f0e4;
+  --text-dim: #90ad98;
+  --accent: #4f9457;
+  --accent-rgb: 79, 148, 87;
+}
+
+:root[data-theme='vaporwave'] {
+  color-scheme: dark;
+  color: #f4e8ff;
+
+  --bg-app: #1a1025;
+  --bg-panel: #241733;
+  --bg-panel-raised: #341f52;
+  --border-subtle: #5a3480;
+  --text: #f4e8ff;
+  --text-dim: #c7a9e8;
+  --accent: #ff6ec7;
+  --accent-rgb: 255, 110, 199;
+  --accent2: #00e5ff;
+  --accent2-rgb: 0, 229, 255;
+
+  /* Soft drifting nebula behind the whole app — panes/cards paint their own opaque
+     backgrounds on top, so this only shows through in gaps, borders, and empty panel
+     space, not underneath actual content. */
+  background:
+    radial-gradient(ellipse 60% 50% at 20% 25%, rgba(255, 110, 199, 0.22), transparent 60%),
+    radial-gradient(ellipse 60% 50% at 80% 75%, rgba(0, 229, 255, 0.16), transparent 60%),
+    linear-gradient(135deg, #1a1025, #2a1046 40%, #3b1160 60%, #1a1025);
+  background-size: 200% 200%, 200% 200%, 400% 400%;
+  animation: vaporwave-bg-drift 30s ease-in-out infinite;
+}
+
+@keyframes vaporwave-bg-drift {
+  0% {
+    background-position: 0% 0%, 100% 100%, 0% 50%;
+  }
+  50% {
+    background-position: 30% 40%, 70% 60%, 100% 50%;
+  }
+  100% {
+    background-position: 0% 0%, 100% 100%, 0% 50%;
+  }
+}
+
+/* A slow-drifting neon gradient across the header — the one place it's safe to get
+   flashy without hurting readability of panels/cards elsewhere. */
+:root[data-theme='vaporwave'] .app-header {
+  background:
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.05) 0px, rgba(255, 255, 255, 0.05) 1px, transparent 1px, transparent 6px),
+    linear-gradient(90deg, #2b1055, #6a1b9a 35%, #c2185b 70%, #ff6ec7 100%);
+  background-size: 100% 100%, 250% 100%;
+  animation: vaporwave-drift 14s ease-in-out infinite alternate;
+  border-bottom: 1px solid var(--accent);
+}
+
+@keyframes vaporwave-drift {
+  0% {
+    background-position: 0 0, 0% 0;
+  }
+  100% {
+    background-position: 0 0, 100% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme='vaporwave'] {
+    animation: none;
+  }
+  :root[data-theme='vaporwave'] .app-header {
+    animation: none;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button {
+  --glow: 0;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  padding: 0.4em 0.9em;
+  font-size: 0.9em;
+  font-family: inherit;
+  background-color: var(--bg-panel-raised);
+  color: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+button:hover {
+  border-color: var(--accent);
+}
+/* Mouse-proximity glow is a Vaporwave-only flourish — see useProximityGlow, which only
+   drives --glow (0..1 from live cursor distance) when that theme is active. */
+:root[data-theme='vaporwave'] button {
+  box-shadow: 0 0 calc(var(--glow) * 20px) calc(var(--glow) * 2px) rgba(var(--accent-rgb), calc(var(--glow) * 0.85));
+  transition: border-color 0.15s, box-shadow 0.06s linear, filter 0.06s linear;
+}
+@media (hover: hover) and (pointer: fine) {
+  :root[data-theme='vaporwave'] button {
+    filter: brightness(calc(1 + var(--glow) * 0.3));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme='vaporwave'] button {
+    box-shadow: none;
+    filter: none;
+  }
+}
+button:focus,
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+input, select {
+  font-family: inherit;
+  color: inherit;
+  background-color: var(--bg-panel-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 0.4em 0.6em;
+}

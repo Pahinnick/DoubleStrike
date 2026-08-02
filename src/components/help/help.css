@@ -1,0 +1,53 @@
+.help-modal {
+  width: min(560px, 92vw);
+}
+
+.help-modal__section {
+  margin-bottom: 1rem;
+}
+
+.help-modal__section h3 {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  margin: 0 0 0.4rem 0;
+}
+
+.help-modal__section p {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.help-modal__section ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.help-modal__path {
+  display: block;
+  background-color: var(--bg-panel-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 0.4em 0.6em;
+  font-size: 0.8rem;
+  overflow-wrap: break-word;
+  margin-bottom: 0.5rem;
+}
+
+.help-modal__folder-buttons {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.5rem;
+}
+
+.help-modal__hint {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}

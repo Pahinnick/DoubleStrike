@@ -1,0 +1,68 @@
+import { useEffect, useState } from 'react'
+import { edhrecSlug, fetchEdhrecSalt } from '../api/edhrec'
+import { getSaltSnapshots, isSaltSnapshotStale, saveSaltSnapshots, type SaltSnapshot } from '../storage/saltCache'
+
+// Module-level so a slug is only (re-)fetched once per session, even though multiple components
+// (DeckPanel, DeckStatsPanel, SimilarCardsView) can call this hook for overlapping cards.
+const refreshedSlugs = new Set<string>()
+
+/** EDHREC salt score per card name (see api/edhrec.ts). Keyed by name, not scryfallId — salt
+ *  lives on the oracle card, so every printing shares one score. A missing map entry means "not
+ *  loaded yet"; a `null` value means "EDHREC has no score for this card" (a real answer). */
+export function useSaltScores(names: string[]): Map<string, number | null> {
+  const [scores, setScores] = useState<Map<string, number | null>>(new Map())
+  const namesKey = [...new Set(names)].sort().join('|')
+
+  useEffect(() => {
+    let cancelled = false
+    const uniqueNames = [...new Set(names)]
+    if (uniqueNames.length === 0) {
+      setScores(new Map())
+      return
+    }
+
+    const slugByName = new Map(uniqueNames.map((name) => [name, edhrecSlug(name)]))
+
+    getSaltSnapshots(uniqueNames.map((name) => slugByName.get(name)!)).then((results) => {
+      if (cancelled) return
+      const map = new Map<string, number | null>()
+      const namesToFetch: string[] = []
+      results.forEach((snapshot, index) => {
+        const name = uniqueNames[index]
+        const slug = slugByName.get(name)!
+        if (snapshot) {
+          map.set(name, snapshot.salt)
+          if (isSaltSnapshotStale(snapshot) && !refreshedSlugs.has(slug)) namesToFetch.push(name)
+        } else if (!refreshedSlugs.has(slug)) {
+          namesToFetch.push(name)
+        }
+      })
+      setScores(map)
+
+      if (namesToFetch.length === 0) return
+      namesToFetch.forEach((name) => refreshedSlugs.add(slugByName.get(name)!))
+
+      void Promise.all(
+        namesToFetch.map(async (name) => ({ name, slug: slugByName.get(name)!, salt: await fetchEdhrecSalt(name) })),
+      ).then((fetched) => {
+        if (cancelled) return
+        const snapshots: SaltSnapshot[] = fetched.map(({ slug, salt }) => ({ slug, salt, cachedAt: new Date().toISOString() }))
+        void saveSaltSnapshots(snapshots)
+        setScores((prev) => {
+          const next = new Map(prev)
+          for (const { name, salt } of fetched) next.set(name, salt)
+          return next
+        })
+      })
+    })
+
+    return () => {
+      cancelled = true
+    }
+    // namesKey is a stable serialization of `names` used intentionally in place of the array
+    // reference, which changes every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [namesKey])
+
+  return scores
+}
