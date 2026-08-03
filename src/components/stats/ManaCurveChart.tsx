@@ -1,4 +1,4 @@
-import { WUBRG } from '../../utils/colors'
+import { sortManaStack } from '../../utils/colors'
 import type { CurveBucket, CurveColorKey } from '../../engine/deckStats'
 
 type Props = {
@@ -9,11 +9,6 @@ const BAR_WIDTH = 26
 const GAP = 6
 const CHART_HEIGHT = 90
 const LABEL_SPACE = 16
-
-// Standard WUBRG order, colorless last — bucket.byColor's own key order just reflects whichever
-// color happened to be encountered first while scanning the deck's cards, so each bar's color
-// stacking order was effectively random/data-dependent without this.
-const COLOR_ORDER: readonly CurveColorKey[] = [...WUBRG, 'C']
 
 function colorFill(color: CurveColorKey): string {
   return `var(--color-${color.toLowerCase()})`
@@ -33,9 +28,7 @@ function ManaCurveChart({ buckets }: Props) {
       {buckets.map((bucket, index) => {
         const x = index * (BAR_WIDTH + GAP)
         let yOffset = CHART_HEIGHT - (bucket.total / maxTotal) * CHART_HEIGHT
-        const segments = (Object.entries(bucket.byColor) as [CurveColorKey, number][]).sort(
-          ([a], [b]) => COLOR_ORDER.indexOf(a) - COLOR_ORDER.indexOf(b),
-        )
+        const segments = sortManaStack(bucket.byColor)
 
         return (
           <g key={bucket.cmc}>

@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import type { CastabilityResult } from '../../engine/castability'
 import type { CurveColorKey } from '../../engine/deckStats'
 import { parseManaCost, pipShapeKey } from '../../engine/manaCost'
+import { sortManaStack } from '../../utils/colors'
 
 export type RampEntry = { name: string; quantity: number; manaCost: string; colors: string[] }
 
@@ -80,7 +81,7 @@ function RampSources({ entries, castabilityIndex }: Props) {
         {buckets.map((bucket, index) => {
           const x = index * (BAR_WIDTH + GAP)
           let yOffset = CHART_HEIGHT - (bucket.total / maxTotal) * CHART_HEIGHT
-          const segments = Object.entries(bucket.byColor) as [CurveColorKey, number][]
+          const segments = sortManaStack(bucket.byColor)
 
           return (
             <g key={bucket.label}>
