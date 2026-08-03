@@ -9,6 +9,7 @@ export function createElectronAdapter(bridge: NonNullable<Window['electronStorag
     deleteProfile: (id) => bridge.deleteProfile(id),
     setDefaultProfile: (id) => bridge.setDefaultProfile(id),
     setActiveProfile: (id) => bridge.setActiveProfile(id),
+    updateProfileSettings: (id, settings) => bridge.updateProfileSettings(id, settings),
 
     async getLastOpenedDeckId(profileId) {
       const meta = await bridge.getProfileMeta(profileId)

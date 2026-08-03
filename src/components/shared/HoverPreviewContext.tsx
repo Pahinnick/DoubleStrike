@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { TaggableCard } from '../../api/scryfallTypes'
+import { useProfiles } from '../../state/ProfileContext'
 import type { FoilKind } from '../../state/types'
 import type { CounterPile, PtCounterPile } from '../playtest/counterFormat'
 
@@ -37,6 +38,14 @@ type HoverPreviewContextValue = {
 const HoverPreviewContext = createContext<HoverPreviewContextValue | null>(null)
 
 export function HoverPreviewProvider({ children }: { children: ReactNode }) {
+  const { activeProfile } = useProfiles()
+  // 'alt' gates the popup behind holding Alt (chosen so the same held-key gesture that already
+  // resizes the preview via Alt+scroll also reveals it — see the settings page and the wheel
+  // effect below). 'always' (default) is the app's original always-on-hover behavior.
+  const gated = activeProfile?.settings?.hoverPreviewMode === 'alt'
+  const gatedRef = useRef(gated)
+  gatedRef.current = gated
+
   const [hover, setHoverState] = useState<HoverState>(null)
   const [previewScale, setPreviewScale] = useState(1)
   // Wheel listener below is added once (on window, not re-subscribed on every mousemove-driven
@@ -44,10 +53,60 @@ export function HoverPreviewProvider({ children }: { children: ReactNode }) {
   const hoverRef = useRef<HoverState>(null)
   // The element the current hover came from — see the MutationObserver below and setHoverElement.
   const hoverElRef = useRef<Element | null>(null)
+  // Last hover state actually *attempted* (via setHover below), regardless of whether the alt-gate
+  // let it through — so pressing Alt while already hovering something can reveal it immediately,
+  // without waiting for the next mousemove to re-attempt it.
+  const pendingRef = useRef<HoverState>(null)
+  const altHeldRef = useRef(false)
 
   const setHover = useCallback((state: HoverState) => {
+    pendingRef.current = state
+    if (gatedRef.current && state !== null && !altHeldRef.current) {
+      // Gated and Alt isn't held: never actually reveal it, but keep tracking what's under the
+      // cursor (pendingRef) so a later Alt-press can reveal it without another mouse event.
+      if (hoverRef.current !== null) {
+        hoverRef.current = null
+        setHoverState(null)
+      }
+      return
+    }
     hoverRef.current = state
     setHoverState(state)
+  }, [])
+
+  // Alt-gated mode only: reveal the currently-hovered card (if any) the instant Alt goes down,
+  // and hide it the instant Alt comes back up — rather than waiting for the next mousemove to
+  // pass through the gate in setHover above.
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== 'Alt' || altHeldRef.current) return
+      altHeldRef.current = true
+      if (gatedRef.current && pendingRef.current && hoverElRef.current?.isConnected) {
+        hoverRef.current = pendingRef.current
+        setHoverState(pendingRef.current)
+      }
+    }
+    function onKeyUp(event: KeyboardEvent) {
+      if (event.key !== 'Alt') return
+      altHeldRef.current = false
+      if (gatedRef.current) {
+        hoverRef.current = null
+        setHoverState(null)
+      }
+    }
+    // A held Alt whose keyup gets swallowed by the OS (classic case: Alt-tabbing away) would
+    // otherwise leave the preview stuck visible forever in gated mode.
+    function onWindowBlur() {
+      altHeldRef.current = false
+    }
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    window.addEventListener('blur', onWindowBlur)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('blur', onWindowBlur)
+    }
   }, [])
 
   const setHoverElement = useCallback((el: Element | null) => {

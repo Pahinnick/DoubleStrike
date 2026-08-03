@@ -1,5 +1,3 @@
-import { useEffect, useState } from 'react'
-
 export type Theme = 'dark' | 'light' | 'plains' | 'island' | 'swamp' | 'mountain' | 'forest' | 'vaporwave'
 
 export const THEMES: { id: Theme; label: string; swatch: string }[] = [
@@ -13,28 +11,13 @@ export const THEMES: { id: Theme; label: string; swatch: string }[] = [
   { id: 'vaporwave', label: 'Vaporwave', swatch: '🌆' },
 ]
 
-const THEME_KEY = 'mtgdb:theme'
+// Theme lived as a single global localStorage value before settings became per-profile — read
+// once as a fallback by useProfileSettings so an existing choice carries over instead of
+// silently resetting to 'dark'. See useProfileSettings' migration effect.
+export const LEGACY_THEME_KEY = 'mtgdb:theme'
+
 const THEME_IDS = THEMES.map((t) => t.id)
 
-function isTheme(value: string | null): value is Theme {
-  return value !== null && (THEME_IDS as string[]).includes(value)
-}
-
-function getStoredTheme(): Theme {
-  const stored = localStorage.getItem(THEME_KEY)
-  return isTheme(stored) ? stored : 'dark'
-}
-
-/** Applies the theme to <html data-theme="..."> (see index.css's :root[data-theme="..."]
- *  override blocks) and persists the choice. Read once at module load / component mount so
- *  the theme is already correct on first paint rather than flashing dark-then-light. */
-export function useTheme(): [Theme, (theme: Theme) => void] {
-  const [theme, setTheme] = useState<Theme>(getStoredTheme)
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme
-    localStorage.setItem(THEME_KEY, theme)
-  }, [theme])
-
-  return [theme, setTheme]
+export function isTheme(value: string | null | undefined): value is Theme {
+  return value != null && (THEME_IDS as string[]).includes(value)
 }

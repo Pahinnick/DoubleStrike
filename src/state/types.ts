@@ -53,10 +53,31 @@ export type DeckSummary = {
   updatedAt: string
 }
 
+/** Per-profile app preferences (Settings page). Every field optional so older persisted
+ *  profiles (saved before a given field existed) still satisfy the type — readers apply their
+ *  own default, see hooks/useProfileSettings.ts. Kept structurally primitive (no imports from
+ *  hooks/) so this file stays free of any hook-layer dependency. */
+export type ProfileSettings = {
+  /** One of hooks/useTheme's Theme ids — kept as a bare string here for that reason, validated
+   *  back to Theme by the reader. */
+  theme?: string
+  /** 'alt' gates the shared card hover-preview popup behind holding Alt (so it doesn't fight
+   *  Alt+scroll's existing "resize the preview" gesture); 'always' (default) shows it on every
+   *  plain hover, matching the app's original behavior. */
+  hoverPreviewMode?: 'always' | 'alt'
+  /** Multiplier (0-1) on the base volume of Playtest's synthesized UI sound cues (draw, tap,
+   *  shuffle, etc.) — 0 is fully muted. Independent of TableRadio's own volume slider. */
+  soundVolume?: number
+  /** Whether a fresh Playtest session starts with the goldfish practice panel already showing,
+   *  instead of requiring the "Show Goldfish Stats" button every time. */
+  goldfishStatsDefault?: boolean
+}
+
 export type Profile = {
   id: string
   name: string
   createdAt: string
+  settings?: ProfileSettings
 }
 
 export type AppData = {

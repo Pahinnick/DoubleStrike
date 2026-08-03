@@ -1,5 +1,5 @@
 import { del, entries } from 'idb-keyval'
-import type { AppData, Deck, Profile } from '../state/types'
+import type { AppData, Deck, Profile, ProfileSettings } from '../state/types'
 import { decksStore, LEGACY_LAST_OPENED_DECK_KEY } from './db'
 import { storage } from './storage'
 
@@ -80,4 +80,8 @@ export async function setDefaultProfile(id: string): Promise<void> {
 
 export async function setActiveProfile(id: string): Promise<void> {
   await storage.setActiveProfile(id)
+}
+
+export async function updateProfileSettings(id: string, settings: ProfileSettings): Promise<void> {
+  await storage.updateProfileSettings(id, settings)
 }

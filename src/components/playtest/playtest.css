@@ -706,6 +706,45 @@
   z-index: 40;
 }
 
+/* "Look at top N" tray (see PlaytestView's startRevealTop) — floats just left of .playtest__zones
+   so the revealed cards sit right next to the library pile they came from, each individually
+   draggable straight out to any zone/the battlefield (see PlaytestCard's draggableFromZone). */
+.library-peek-tray {
+  position: absolute;
+  top: 50%;
+  right: calc(0.75rem + 96px + 0.75rem);
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.6rem 0.6rem 0.75rem;
+  max-width: min(420px, 60vw);
+  background-color: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  z-index: 40;
+}
+
+.library-peek-tray__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.library-peek-tray__cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.library-peek-tray__card {
+  width: 64px;
+}
+
 .zone-pile {
   display: flex;
   flex-direction: column;

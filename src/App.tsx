@@ -15,11 +15,11 @@ import HelpModal from './components/help/HelpModal'
 import PlaytestView from './components/playtest/PlaytestView'
 import ProfileSwitcher from './components/profile/ProfileSwitcher'
 import WelcomeNameModal from './components/profile/WelcomeNameModal'
-import ThemePicker from './components/shared/ThemePicker'
+import SettingsModal from './components/settings/SettingsModal'
 import { useCardSize } from './hooks/useCardSize'
 import { getPlaytestWindowMode } from './hooks/usePlaytestWindowMode'
+import { useProfileSettings } from './hooks/useProfileSettings'
 import { useProximityGlow } from './hooks/useProximityGlow'
-import { useTheme } from './hooks/useTheme'
 import { useDeck } from './state/DeckContext'
 import { DeckWorkspaceProvider } from './state/DeckListContext'
 import { JumpToCardProvider } from './state/JumpToCardContext'
@@ -42,6 +42,7 @@ function AppShell() {
   const [importOpen, setImportOpen] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
   const [helpOpen, setHelpOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   // Only used in 'inline' playtest-window mode (see usePlaytestWindowMode) — 'window' mode
   // never touches this, it opens a separate OS/browser window instead of swapping this one.
   const [playtestOpen, setPlaytestOpen] = useState(false)
@@ -49,7 +50,9 @@ function AppShell() {
   const [searchExpanded, setSearchExpanded] = useState(false)
   const [statsExpanded, setStatsExpanded] = useState(true)
   const [cardSize, setCardSize] = useCardSize()
-  const [theme, setTheme] = useTheme()
+  // Also the one place that keeps the active profile's theme applied to <html data-theme="...">
+  // at all times — see useProfileSettings' own doc for why this call staying mounted matters.
+  const { theme } = useProfileSettings()
   useProximityGlow(theme === 'vaporwave')
 
   // Ctrl/Cmd+Z = undo, Ctrl/Cmd+Y or Ctrl/Cmd+Shift+Z = redo, for deck edits. Skipped while a
@@ -146,7 +149,9 @@ function AppShell() {
         <button type="button" onClick={() => setManagerOpen(true)}>
           My Decks
         </button>
-        <ThemePicker theme={theme} onChange={setTheme} />
+        <button type="button" className="app-header__help" aria-label="Settings" title="Settings" onClick={() => setSettingsOpen(true)}>
+          ⚙
+        </button>
         <button type="button" className="app-header__help" aria-label="Help" onClick={() => setHelpOpen(true)}>
           ?
         </button>
@@ -177,6 +182,7 @@ function AppShell() {
       {importOpen && <ImportDeckModal onClose={() => setImportOpen(false)} />}
       {exportOpen && <ExportDeckModal onClose={() => setExportOpen(false)} />}
       {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
+      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
       <SimilarCardsView onAddTagToSearch={handleAddTagToSearch} />
     </div>
   )

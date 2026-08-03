@@ -3,7 +3,7 @@ import cardBackImage from '../../assets/card-back.svg'
 import { useHoverPreview } from '../../hooks/useHoverPreview'
 import FoilShine from '../shared/FoilShine'
 import { getSnapshotImage, type CardSnapshot } from '../../storage/cardCache'
-import type { GameCard } from '../../state/gameReducer'
+import type { GameCard, GameZone } from '../../state/gameReducer'
 import type { FoilKind } from '../../state/types'
 import { playCue } from '../../utils/sound'
 import { clearCurrentDragData, setGameDragData, type GroupOffset } from './dragGameCard'
@@ -27,6 +27,13 @@ type Props = {
    *  player's id, so the drop handler knows whose board to send the RELOCATE_CARD to. Grants
    *  no other interaction: still no tap/click/context-menu, since those remain the owner's call. */
   remoteOwnerId?: string
+  /** Set on a `readOnly` card that's actually one of YOUR OWN — e.g. a revealed top-of-library
+   *  card — to let it be dragged out to any other zone/the battlefield the same way a hand card
+   *  can be, via the normal MOVE_CARD drop handlers (no RELOCATE_CARD/network involved, unlike
+   *  `remoteOwnerId`). Mutually exclusive with `remoteOwnerId` in practice — a card is either
+   *  someone else's (drag-to-reposition) or your own revealed library card (drag-to-move-zone),
+   *  never both. */
+  draggableFromZone?: GameZone
   /** Forces a generic card-back regardless of `snapshot`/`gameCard.faceDown` — used for an
    *  opponent's face-down card, whose real identity this client was never sent (see
    *  toPublicCard/FACE_DOWN_SCRYFALL_ID) and so genuinely cannot render. Distinct from your own
@@ -47,7 +54,7 @@ type Props = {
   foil?: FoilKind
 }
 
-function PlaytestCard({ gameCard, snapshot, onClick, onContextMenu, readOnly, remoteOwnerId, hidden, entering, selected, groupOffsets, foil }: Props) {
+function PlaytestCard({ gameCard, snapshot, onClick, onContextMenu, readOnly, remoteOwnerId, draggableFromZone, hidden, entering, selected, groupOffsets, foil }: Props) {
   const face = gameCard.showBackFace ? 'back' : 'front'
   const image = hidden ? undefined : snapshot ? getSnapshotImage(snapshot, face) : undefined
   const name = hidden
@@ -69,11 +76,18 @@ function PlaytestCard({ gameCard, snapshot, onClick, onContextMenu, readOnly, re
   }
 
   // Opponents' cards: no tap/menu (all hooks above still run unconditionally), but draggable
-  // purely to reposition when remoteOwnerId is set (see that prop's doc). `onClick` is still
-  // wired through here (unlike a tap/context-menu) so the caller can react to an Alt+click
-  // flash-highlight gesture — the caller itself is responsible for ignoring a plain click.
+  // purely to reposition when remoteOwnerId is set (see that prop's doc), or draggable out to any
+  // zone/the battlefield when draggableFromZone is set (see that prop's doc — a revealed
+  // top-of-library card, currently the only caller). `onClick` is still wired through here (unlike
+  // a tap/context-menu) so the caller can react to an Alt+click flash-highlight gesture — the
+  // caller itself is responsible for ignoring a plain click.
+  const dragSource = remoteOwnerId
+    ? { fromZone: 'battlefield' as const, fromPlayerId: remoteOwnerId }
+    : draggableFromZone
+      ? { fromZone: draggableFromZone }
+      : undefined
   if (readOnly) {
-    const remoteDragHandlers = remoteOwnerId
+    const readOnlyDragHandlers = dragSource
       ? {
           draggable: true,
           onDragStart: (event: DragEvent) => {
@@ -82,7 +96,7 @@ function PlaytestCard({ gameCard, snapshot, onClick, onContextMenu, readOnly, re
             // taken card taps it (see PlaytestView's opponent-loop onClick), a cancelled
             // reposition-drag must not fall through and register as a spurious tap.
             didDrag.current = true
-            setGameDragData(event, { instanceId: gameCard.instanceId, fromZone: 'battlefield', fromPlayerId: remoteOwnerId })
+            setGameDragData(event, { instanceId: gameCard.instanceId, ...dragSource })
           },
           onDragEnd: () => {
             clearCurrentDragData()
@@ -101,7 +115,7 @@ function PlaytestCard({ gameCard, snapshot, onClick, onContextMenu, readOnly, re
           }
           onClick?.(event)
         }}
-        {...remoteDragHandlers}
+        {...readOnlyDragHandlers}
         {...(snapshot && !hidden ? { ...hoverHandlers, onMouseEnter: handleMouseEnter } : {})}
       >
         {hidden ? (

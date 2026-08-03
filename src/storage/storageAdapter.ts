@@ -1,4 +1,4 @@
-import type { AppData, Deck, Profile } from '../state/types'
+import type { AppData, Deck, Profile, ProfileSettings } from '../state/types'
 
 export type StoragePaths = {
   decksDir: string
@@ -12,6 +12,7 @@ export interface StorageAdapter {
   deleteProfile(id: string): Promise<void>
   setDefaultProfile(id: string): Promise<void>
   setActiveProfile(id: string): Promise<void>
+  updateProfileSettings(id: string, settings: ProfileSettings): Promise<void>
 
   getLastOpenedDeckId(profileId: string): Promise<string | undefined>
   setLastOpenedDeckId(profileId: string, deckId: string): Promise<void>

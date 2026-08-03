@@ -1,4 +1,4 @@
-import type { AppData, Deck, Profile } from '../state/types'
+import type { AppData, Deck, Profile, ProfileSettings } from '../state/types'
 
 export type ElectronStorageBridge = {
   loadAppData(): Promise<AppData>
@@ -7,6 +7,7 @@ export type ElectronStorageBridge = {
   deleteProfile(id: string): Promise<void>
   setDefaultProfile(id: string): Promise<void>
   setActiveProfile(id: string): Promise<void>
+  updateProfileSettings(id: string, settings: ProfileSettings): Promise<void>
   getProfileMeta(profileId: string): Promise<{ lastOpenedDeckId: string | null }>
   setLastOpenedDeckId(profileId: string, deckId: string): Promise<void>
   listDecks(profileId: string): Promise<Deck[]>

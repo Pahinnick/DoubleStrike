@@ -1,5 +1,5 @@
 import { del, entries, get, set } from 'idb-keyval'
-import type { AppData, Deck, Profile } from '../state/types'
+import type { AppData, Deck, Profile, ProfileSettings } from '../state/types'
 import { APP_DATA_KEY, decksStore, profilesStore } from './db'
 import type { StorageAdapter } from './storageAdapter'
 
@@ -118,6 +118,13 @@ export const indexedDbAdapter: StorageAdapter = {
   async setActiveProfile(id) {
     const data = await loadAppData()
     data.lastActiveProfileId = id
+    await saveAppData(data)
+  },
+
+  async updateProfileSettings(id, settings: ProfileSettings) {
+    const data = await loadAppData()
+    const profile = data.profiles.find((p) => p.id === id)
+    if (profile) profile.settings = settings
     await saveAppData(data)
   },
 

@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import BootstrapError from '../components/shared/BootstrapError'
 import {
   bootstrapProfiles,
@@ -8,18 +8,28 @@ import {
   renameProfile as renameProfileInStore,
   setActiveProfile,
   setDefaultProfile as setDefaultProfileInStore,
+  updateProfileSettings as updateProfileSettingsInStore,
 } from '../storage/profileRepository'
-import type { Profile } from './types'
+import type { Profile, ProfileSettings } from './types'
 
 type ProfileContextValue = {
   profiles: Profile[]
   activeProfileId: string
+  /** Convenience lookup — the same object every call site would otherwise get via
+   *  `profiles.find((p) => p.id === activeProfileId)`. undefined only for the brief window before
+   *  bootstrapProfiles resolves (callers inside the tree render after that, per Workspace's own
+   *  `!ready` gate, so in practice this is only ever undefined pre-mount). */
+  activeProfile: Profile | undefined
   defaultProfileId: string | null
   switchProfile: (id: string) => Promise<void>
   createProfile: (name: string) => Promise<void>
   renameProfile: (id: string, name: string) => Promise<void>
   deleteProfile: (id: string) => Promise<void>
   setDefaultProfile: (id: string) => Promise<void>
+  /** Merges `partial` into the ACTIVE profile's stored settings and persists it. Merges rather
+   *  than replaces so callers (Settings page, useProfileSettings' one-time theme migration) only
+   *  ever need to pass the field(s) they're actually changing. */
+  updateSettings: (partial: Partial<ProfileSettings>) => Promise<void>
 }
 
 const ProfileContext = createContext<ProfileContextValue | null>(null)
@@ -103,18 +113,54 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     setDefaultProfileIdState(id)
   }, [])
 
+  // updateProfileSettingsInStore does its own read-modify-write (loadAppData then saveAppData) —
+  // two overlapping calls (e.g. flipping the theme then immediately a checkbox, both from
+  // Settings) can otherwise race: the slower one's loadAppData reads before the faster one's
+  // saveAppData commits, so its write clobbers the other's field instead of merging with it. This
+  // ref chains every write behind the previous one so each call's storage read only ever happens
+  // after the prior write has actually landed, regardless of how quickly they fire.
+  const settingsWriteQueueRef = useRef<Promise<void>>(Promise.resolve())
+
+  const updateSettings = useCallback(
+    async (partial: Partial<ProfileSettings>) => {
+      if (!activeProfileId) return
+      const id = activeProfileId
+      // Merge against the latest known settings rather than a possibly-stale closure value —
+      // profiles is read fresh via the updater form so two quick successive updateSettings calls
+      // (e.g. dragging a slider) can't clobber each other on the React-state side.
+      let merged: ProfileSettings = {}
+      setProfiles((prev) =>
+        prev.map((p) => {
+          if (p.id !== id) return p
+          merged = { ...p.settings, ...partial }
+          return { ...p, settings: merged }
+        }),
+      )
+      const next = settingsWriteQueueRef.current.then(() => updateProfileSettingsInStore(id, merged))
+      // Swallow here so one failed write doesn't poison the queue for every write after it —
+      // the queue only needs to serialize ordering, not propagate failures to unrelated callers.
+      settingsWriteQueueRef.current = next.catch(() => {})
+      await next
+    },
+    [activeProfileId],
+  )
+
+  const activeProfile = profiles.find((p) => p.id === activeProfileId)
+
   const value = useMemo(
     () => ({
       profiles,
       activeProfileId: activeProfileId ?? '',
+      activeProfile,
       defaultProfileId,
       switchProfile,
       createProfile,
       renameProfile,
       deleteProfile,
       setDefaultProfile,
+      updateSettings,
     }),
-    [profiles, activeProfileId, defaultProfileId, switchProfile, createProfile, renameProfile, deleteProfile, setDefaultProfile],
+    [profiles, activeProfileId, activeProfile, defaultProfileId, switchProfile, createProfile, renameProfile, deleteProfile, setDefaultProfile, updateSettings],
   )
 
   if (error) {

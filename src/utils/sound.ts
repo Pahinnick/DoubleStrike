@@ -4,10 +4,13 @@
 
 export type SoundCue = 'draw' | 'life-up' | 'life-down' | 'play-card' | 'hover' | 'shuffle'
 
-const MUTE_KEY = 'mtgdb:soundMuted'
-const VOLUME = 0.05
+const BASE_VOLUME = 0.05
 
 let sharedContext: AudioContext | null = null
+// Multiplier (0-1) applied on top of BASE_VOLUME — the per-profile Settings slider's live value,
+// pushed in from React via setSoundVolume whenever it changes (see useProfileSettings). This
+// module has no React/profile dependency of its own; it just remembers the last value it was told.
+let volumeMultiplier = 1
 
 function getContext(): AudioContext | null {
   if (typeof window === 'undefined') return null
@@ -20,12 +23,12 @@ function getContext(): AudioContext | null {
   return sharedContext
 }
 
-export function isSoundMuted(): boolean {
-  return localStorage.getItem(MUTE_KEY) === 'true'
+export function setSoundVolume(multiplier: number): void {
+  volumeMultiplier = Math.min(1, Math.max(0, multiplier))
 }
 
-export function setSoundMuted(muted: boolean): void {
-  localStorage.setItem(MUTE_KEY, muted ? 'true' : 'false')
+export function getSoundVolume(): number {
+  return volumeMultiplier
 }
 
 function tone(freq: number, startOffset: number, duration: number, type: OscillatorType): void {
@@ -37,7 +40,7 @@ function tone(freq: number, startOffset: number, duration: number, type: Oscilla
   osc.frequency.value = freq
   const start = audio.currentTime + startOffset
   gain.gain.setValueAtTime(0, start)
-  gain.gain.linearRampToValueAtTime(VOLUME, start + 0.01)
+  gain.gain.linearRampToValueAtTime(BASE_VOLUME * volumeMultiplier, start + 0.01)
   gain.gain.exponentialRampToValueAtTime(0.0001, start + duration)
   osc.connect(gain)
   gain.connect(audio.destination)
@@ -64,7 +67,7 @@ function noiseBurst(duration: number, cutoffFreq: number, startOffset = 0): void
   const gain = audio.createGain()
   const start = audio.currentTime + startOffset
   gain.gain.setValueAtTime(0, start)
-  gain.gain.linearRampToValueAtTime(VOLUME * 0.5, start + 0.004)
+  gain.gain.linearRampToValueAtTime(BASE_VOLUME * 0.5 * volumeMultiplier, start + 0.004)
   gain.gain.exponentialRampToValueAtTime(0.0001, start + duration)
 
   source.connect(filter)
@@ -96,7 +99,7 @@ const CUES: Record<SoundCue, () => void> = {
 }
 
 export function playCue(cue: SoundCue): void {
-  if (isSoundMuted()) return
+  if (volumeMultiplier <= 0) return
   try {
     CUES[cue]()
   } catch {

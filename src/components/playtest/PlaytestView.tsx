@@ -17,6 +17,7 @@ import { getCardById } from '../../api/scryfall'
 import { BATTLEFIELD_SKINS, normalizeBattlefieldSkin, useBattlefieldSkin, type BattlefieldSkin } from '../../hooks/useBattlefieldSkin'
 import { useCardSnapshots } from '../../hooks/useCardSnapshots'
 import { usePlaytestWindowMode } from '../../hooks/usePlaytestWindowMode'
+import { useProfileSettings } from '../../hooks/useProfileSettings'
 import { FACE_DOWN_SCRYFALL_ID, type PublicBoard, type RollResult, type Seat } from '../../net/protocol'
 import { toPublicBoard } from '../../net/publicBoard'
 import { useMultiplayer } from '../../net/useMultiplayer'
@@ -37,7 +38,7 @@ import type { Deck, FoilKind } from '../../state/types'
 import { isFlippableSnapshot } from '../../storage/cardCache'
 import { getSoloGameSave, saveSoloGameSave } from '../../storage/soloGameStorage'
 import { isPlaytestWindow, openDedicatedPlaytestWindow, requestSwitchToInlineAndClose } from '../../utils/playtestWindowBridge'
-import { isSoundMuted, playCue, setSoundMuted } from '../../utils/sound'
+import { playCue, setSoundVolume } from '../../utils/sound'
 import ActionsTray, { type TrayAction } from './ActionsTray'
 import BattlefieldEmberAura from './BattlefieldEmberAura'
 import BattlefieldLavaGround from './BattlefieldLavaGround'
@@ -350,13 +351,22 @@ function PlaytestView({ onClose }: Props) {
     (reactorId, _name, emoji) => addReaction(reactorId, emoji),
   )
   const [mpModalOpen, setMpModalOpen] = useState(false)
-  const [muted, setMuted] = useState(isSoundMuted)
+  // soundVolume is the persisted per-profile preference (Settings page); `muted` is a session-
+  // local quick-mute on top of it (the topbar 🔊 button) that deliberately does NOT persist —
+  // muting for one distracting game shouldn't silently change your permanent volume preference.
+  // The effect below combines them into sound.ts's actual playback volume.
+  const { soundVolume, goldfishStatsDefault } = useProfileSettings()
+  const [muted, setMuted] = useState(false)
+  useEffect(() => {
+    setSoundVolume(muted ? 0 : soundVolume)
+  }, [muted, soundVolume])
   const [battlefieldSkin, setBattlefieldSkin] = useBattlefieldSkin()
   const [playtestWindowMode, setPlaytestWindowMode] = usePlaytestWindowMode()
   // Opt-in goldfish practice stat (lands drawn vs. expected) — solo-only, purely a local display
   // preference like battlefieldSkin above, never part of GameState/the wire (nothing here is
-  // shared info, and it wouldn't mean anything on an opponent's board anyway).
-  const [goldfishOn, setGoldfishOn] = useState(false)
+  // shared info, and it wouldn't mean anything on an opponent's board anyway). Seeded from the
+  // Settings page's default so it doesn't have to be re-toggled on every fresh Playtest session.
+  const [goldfishOn, setGoldfishOn] = useState(goldfishStatsDefault)
   // The shared table radio's current station (or null, off) — see TableRadio.tsx. Local state
   // rather than something read straight off the wire, so it also works solo/in the dev mock
   // preview (which have no `mpRadioStation` at all); the effect below keeps it in sync with
@@ -553,7 +563,13 @@ function PlaytestView({ onClose }: Props) {
   // Separate from `contextMenu` above (which looks its card up in `battlefield`) since this one
   // looks its card up in `hand` instead — see handCardActions.
   const [handContextMenu, setHandContextMenu] = useState<{ instanceId: string; x: number; y: number } | null>(null)
-  const [countPrompt, setCountPrompt] = useState<{ mode: 'scry' | 'surveil' | 'cascade' | 'dice' | 'bottom'; x: number; y: number } | null>(null)
+  const [countPrompt, setCountPrompt] = useState<{ mode: 'scry' | 'surveil' | 'cascade' | 'dice' | 'bottom' | 'reveal'; x: number; y: number } | null>(null)
+  // Snapshot of instanceIds captured the moment "Look at top N" is confirmed — deliberately NOT a
+  // live count, so dragging one of them away doesn't pull a new card into view to replace it (an
+  // "exile the top 5" effect means exactly those 5, not "keep 5 visible as you remove them"). A
+  // dragged-away card naturally drops out of the rendered tray on its own: it's filtered against
+  // the live `library` array below, and leaving the library removes it from that array entirely.
+  const [peekedLibraryIds, setPeekedLibraryIds] = useState<string[]>([])
   const [peek, setPeek] = useState<{ title: string; note?: string; entries: PeekEntry[]; shuffleBottom: boolean } | null>(null)
   const [tokenPickerOpen, setTokenPickerOpen] = useState(false)
   // Where to place the next token(s) picked from TokenPickerModal. Set from a right-click on
@@ -897,6 +913,10 @@ function PlaytestView({ onClose }: Props) {
 
   const library = zoneCards(state, 'library')
   const topOfLibrary = library[0]
+  // See startRevealTop's doc: a snapshot of ids, filtered against the live library so a card
+  // dragged away drops out on its own instead of pulling a new one into view. Preserves the
+  // library's own top-to-bottom order (matches the order they'd resolve in for a real effect).
+  const peekedLibraryCards = library.filter((c) => peekedLibraryIds.includes(c.instanceId))
   const hand = zoneCards(state, 'hand')
   const battlefield = zoneCards(state, 'battlefield')
   const battlefieldIdsKey = battlefield.map((c) => c.instanceId).join(',')
@@ -1238,6 +1258,17 @@ function PlaytestView({ onClose }: Props) {
   function shuffleLibrary() {
     dispatch({ type: 'SHUFFLE_LIBRARY', shuffledOrder: shuffle(library.map((c) => c.instanceId)) })
     playCue('shuffle')
+  }
+
+  /** "Look at top N": reveals the top N library cards as real, individually draggable cards (see
+   *  PlaytestCard's draggableFromZone) right next to the library pile — for effects like "exile
+   *  the top 5 cards of your library" where you want to drag each one straight to wherever it's
+   *  actually going (battlefield, graveyard, exile, hand) rather than picking from button-based
+   *  destinations in a modal. Purely local UI state, same as the existing Tutor/scry/surveil
+   *  peeks — nothing here touches game state or the network. */
+  function startRevealTop(count: number) {
+    setPeekedLibraryIds(library.slice(0, count).map((c) => c.instanceId))
+    setCountPrompt(null)
   }
 
   function startScryOrSurveil(mode: 'scry' | 'surveil', count: number) {
@@ -1867,6 +1898,12 @@ function PlaytestView({ onClose }: Props) {
     { key: 'scry', label: 'Scry', icon: '🔮', onClick: (event) => setCountPrompt({ mode: 'scry', x: event.clientX, y: event.clientY }) },
     { key: 'surveil', label: 'Surveil', icon: '👀', onClick: (event) => setCountPrompt({ mode: 'surveil', x: event.clientX, y: event.clientY }) },
     { key: 'cascade', label: 'Cascade', icon: '🌊', onClick: (event) => setCountPrompt({ mode: 'cascade', x: event.clientX, y: event.clientY }) },
+    {
+      key: 'peek-top',
+      label: 'Look at Top N',
+      icon: '🔎',
+      onClick: (event) => setCountPrompt({ mode: 'reveal', x: event.clientX, y: event.clientY }),
+    },
     { key: 'tutor', label: 'Tutor', icon: '🔍', onClick: () => setViewerZone('library') },
     { key: 'tokens', label: 'Create Token', icon: '⭐', onClick: () => setTokenPickerOpen(true) },
     { key: 'dice', label: 'Roll Die', icon: '🎲', onClick: (event) => setCountPrompt({ mode: 'dice', x: event.clientX, y: event.clientY }) },
@@ -2062,12 +2099,8 @@ function PlaytestView({ onClose }: Props) {
         </button>
         <button
           type="button"
-          onClick={() => {
-            const next = !muted
-            setSoundMuted(next)
-            setMuted(next)
-          }}
-          title={muted ? 'Sound is off — click to unmute' : 'Sound is on — click to mute'}
+          onClick={() => setMuted((prev) => !prev)}
+          title={muted ? 'Sound is off for this game — click to unmute (Settings has the permanent volume)' : 'Sound is on — click to mute for this game'}
           aria-label={muted ? 'Unmute sound' : 'Mute sound'}
         >
           {muted ? '🔇' : '🔊'}
@@ -2522,6 +2555,24 @@ function PlaytestView({ onClose }: Props) {
           />
         )}
 
+        {peekedLibraryCards.length > 0 && (
+          <div className="library-peek-tray">
+            <div className="library-peek-tray__header">
+              <span>Looking at top {peekedLibraryCards.length}</span>
+              <button type="button" onClick={() => setPeekedLibraryIds([])}>
+                Put Away
+              </button>
+            </div>
+            <div className="library-peek-tray__cards">
+              {peekedLibraryCards.map((card) => (
+                <div className="library-peek-tray__card" key={card.instanceId}>
+                  <PlaytestCard readOnly draggableFromZone="library" gameCard={card} snapshot={snapshotFor(card.scryfallId)} foil={foilFor(card.scryfallId)} />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="playtest__zones">
           <ZonePile
             label="Library"
@@ -2541,6 +2592,7 @@ function PlaytestView({ onClose }: Props) {
               (state.revealTopOfLibrary && topOfLibrary ? (
                 <PlaytestCard
                   readOnly
+                  draggableFromZone="library"
                   gameCard={topOfLibrary}
                   snapshot={snapshotFor(topOfLibrary.scryfallId)}
                   foil={foilFor(topOfLibrary.scryfallId)}
@@ -2817,6 +2869,16 @@ function PlaytestView({ onClose }: Props) {
                 x={countPrompt.x}
                 y={countPrompt.y}
                 actions={SCRY_SURVEIL_COUNTS.map((count) => ({ label: `Bottom ${count}`, onSelect: () => openBottomViewer(count) }))}
+                onClose={() => setCountPrompt(null)}
+              />
+            )
+          }
+          if (mode === 'reveal') {
+            return (
+              <CardContextMenu
+                x={countPrompt.x}
+                y={countPrompt.y}
+                actions={SCRY_SURVEIL_COUNTS.map((count) => ({ label: `Look at top ${count}`, onSelect: () => startRevealTop(count) }))}
                 onClose={() => setCountPrompt(null)}
               />
             )

@@ -19,6 +19,10 @@ const MOUSE_SHORTCUTS: Shortcut[] = [
   { keys: 'Shift + drag empty battlefield', description: 'Marquee-select every card in the box' },
   { keys: 'Right-click empty battlefield', description: 'Create a token at that point' },
   { keys: 'Right-click a card', description: 'Open its actions menu (tap, counters, flip, etc.)' },
+  {
+    keys: 'Drag a revealed library card',
+    description: 'A revealed top card, or one shown by "Look at Top N" (Actions menu), can be dragged straight to any zone or the battlefield',
+  },
 ]
 
 type Props = {

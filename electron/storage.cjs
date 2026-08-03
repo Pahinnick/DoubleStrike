@@ -266,6 +266,13 @@ function registerStorageIpc() {
     await saveAppData(data)
   })
 
+  ipcMain.handle('storage:updateProfileSettings', async (_event, id, settings) => {
+    const data = await loadAppData()
+    const profile = data.profiles.find((p) => p.id === id)
+    if (profile) profile.settings = settings
+    await saveAppData(data)
+  })
+
   ipcMain.handle('storage:getProfileMeta', async (_event, profileId) => {
     return readJson(profileMetaFile(profileId), { lastOpenedDeckId: null })
   })

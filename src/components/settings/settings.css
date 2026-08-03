@@ -1,0 +1,48 @@
+.settings-modal {
+  width: min(480px, 92vw);
+}
+
+.settings-modal__section {
+  margin-bottom: 1.1rem;
+}
+
+.settings-modal__section h3 {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  margin: 0 0 0.5rem 0;
+}
+
+.settings-modal__radio-row,
+.settings-modal__checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  margin-bottom: 0.35rem;
+}
+
+.settings-modal__slider-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.9rem;
+}
+
+.settings-modal__slider-row input[type='range'] {
+  flex: 1;
+}
+
+.settings-modal__slider-value {
+  min-width: 2.6em;
+  text-align: right;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}
+
+.settings-modal__hint {
+  margin: 0.3rem 0 0.6rem 0;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}

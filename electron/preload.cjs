@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('electronStorage', {
   deleteProfile: (id) => ipcRenderer.invoke('storage:deleteProfile', id),
   setDefaultProfile: (id) => ipcRenderer.invoke('storage:setDefaultProfile', id),
   setActiveProfile: (id) => ipcRenderer.invoke('storage:setActiveProfile', id),
+  updateProfileSettings: (id, settings) => ipcRenderer.invoke('storage:updateProfileSettings', id, settings),
   getProfileMeta: (profileId) => ipcRenderer.invoke('storage:getProfileMeta', profileId),
   setLastOpenedDeckId: (profileId, deckId) => ipcRenderer.invoke('storage:setLastOpenedDeckId', profileId, deckId),
   listDecks: (profileId) => ipcRenderer.invoke('storage:listDecks', profileId),
