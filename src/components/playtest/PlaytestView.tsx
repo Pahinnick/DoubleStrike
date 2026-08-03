@@ -66,6 +66,7 @@ import ReactionMarker from './ReactionMarker'
 import ReactionsTray from './ReactionsTray'
 import RollLog, { type RollLogEntry } from './RollLog'
 import SeatOverlay from './SeatOverlay'
+import SettingsModal from '../settings/SettingsModal'
 import ShortcutsModal from './ShortcutsModal'
 import TableRadio from './TableRadio'
 import TokenPickerModal from './TokenPickerModal'
@@ -578,6 +579,7 @@ function PlaytestView({ onClose }: Props) {
   const [tokenSpawnPoint, setTokenSpawnPoint] = useState<{ x: number; y: number } | null>(null)
   const [deckManagerOpen, setDeckManagerOpen] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   // How many bottom-of-library cards to show; null means the viewer is closed. Unlike the Tutor
   // view (viewerZone === 'library'), closing this never shuffles — it's meant as a repeatable
   // "play from the bottom" capability, not a one-shot search effect.
@@ -2105,6 +2107,9 @@ function PlaytestView({ onClose }: Props) {
         >
           {muted ? '🔇' : '🔊'}
         </button>
+        <button type="button" onClick={() => setSettingsOpen(true)} title="Settings" aria-label="Settings">
+          ⚙
+        </button>
         <button type="button" onClick={() => setShortcutsOpen(true)} title="Keyboard/mouse shortcuts (press ?)" aria-label="Shortcuts">
           ❓
         </button>
@@ -2927,6 +2932,7 @@ function PlaytestView({ onClose }: Props) {
       {deckManagerOpen && <DeckManagerModal onClose={() => setDeckManagerOpen(false)} />}
 
       {shortcutsOpen && <ShortcutsModal onClose={() => setShortcutsOpen(false)} />}
+      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
     </div>
   )
 }
