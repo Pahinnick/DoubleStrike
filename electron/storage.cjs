@@ -10,11 +10,24 @@ const path = require('node:path')
 const crypto = require('node:crypto')
 
 // The app shipped as "MTG Deck Builder" before the DoubleStrike rename (2026-08-02). Electron
-// derives userData from `build.productName`, so renaming the product silently repoints the app at
-// a brand-new empty folder — to an existing user every profile and deck would simply be *gone*.
+// derives userData from the app's *name* — but which name depends on how it's running, and that
+// distinction is the whole reason this list has two entries instead of one:
+//
+//   - Packaged (the real installed .exe): Electron uses `build.productName`, "MTG Deck Builder".
+//   - Unpackaged (`npm run electron:dev`, i.e. every day-to-day dev run): Electron ignores
+//     `build.productName` entirely and falls back to the top-level package.json's own "name"
+//     field, which was "claude-projects" (the very first name this project had, long before either
+//     "MTG Deck Builder" or "DoubleStrike").
+//
+// The first migration attempt only checked the first of these and shipped believing it was the
+// complete legacy story — it wasn't. Everyone whose actual usage was `electron:dev` (i.e. anyone
+// who was never running an installed build) had their real profiles and decks sitting under
+// "claude-projects" and got silently skipped: no error, just a fresh empty profile, which reads
+// exactly like data loss even though the old folder was never touched.
+//
 // These constants exist purely so migrateLegacyStorage() can find the old locations; nothing else
 // should reference them.
-const LEGACY_PRODUCT_NAME = 'MTG Deck Builder'
+const LEGACY_APP_NAMES = ['MTG Deck Builder', 'claude-projects']
 const LEGACY_BACKUP_DIR_NAME = 'MTG Deck Builder Backups'
 const BACKUP_DIR_NAME = 'DoubleStrike Backups'
 
@@ -144,20 +157,26 @@ async function pathExists(target) {
  *
  * Guarded on the absence of the NEW app-data.json, which is only sound because this runs before
  * loadAppData's own read (loadAppData seeds a default profile when it finds nothing, and that
- * would otherwise make the migration look unnecessary from the second launch onward). No build
- * has shipped under the DoubleStrike name yet, so no install can already be past that point.
+ * would otherwise make the migration look unnecessary from the second launch onward). Tries each
+ * of LEGACY_APP_NAMES in order and migrates from the first one that actually exists — on a given
+ * machine at most one of them ever will, since a person was either running the packaged app or
+ * running it from source, not both.
  */
 let migrationPromise
 async function migrateLegacyStorage() {
   const currentRoot = storageRoot()
-  const legacyRoot = path.join(app.getPath('appData'), LEGACY_PRODUCT_NAME)
 
-  if (legacyRoot !== currentRoot && !(await pathExists(appDataFile())) && (await pathExists(legacyRoot))) {
-    try {
-      await fs.cp(legacyRoot, currentRoot, { recursive: true, force: false, errorOnExist: false })
-      console.log('[storage] migrated legacy user data:', legacyRoot, '->', currentRoot)
-    } catch (err) {
-      console.error('[storage] legacy user-data migration failed (old data left untouched):', err)
+  if (!(await pathExists(appDataFile()))) {
+    for (const legacyName of LEGACY_APP_NAMES) {
+      const legacyRoot = path.join(app.getPath('appData'), legacyName)
+      if (legacyRoot === currentRoot || !(await pathExists(legacyRoot))) continue
+      try {
+        await fs.cp(legacyRoot, currentRoot, { recursive: true, force: false, errorOnExist: false })
+        console.log('[storage] migrated legacy user data:', legacyRoot, '->', currentRoot)
+      } catch (err) {
+        console.error('[storage] legacy user-data migration failed (old data left untouched):', err)
+      }
+      break // Found and (attempted to) migrate one — later candidates would be red herrings.
     }
   }
 
