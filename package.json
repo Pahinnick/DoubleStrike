@@ -20,7 +20,8 @@
     "electron": "electron .",
     "electron:dev": "concurrently -k \"npm:dev\" \"wait-on tcp:5173 && electron .\"",
     "electron:pack": "npm run build && electron-builder --dir",
-    "electron:build": "npm run build && electron-builder"
+    "electron:build": "npm run build && electron-builder",
+    "checksums": "node scripts/checksums.mjs"
   },
   "dependencies": {
     "idb-keyval": "^6.3.0",

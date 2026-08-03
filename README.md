@@ -56,6 +56,33 @@ Deck and profile data is stored locally and never leaves your machine.
 
 Card data is fetched from Scryfall's public API and cached locally.
 
+## Verifying a download
+
+The only official source for builds is this repository's
+[Releases](https://github.com/Pahinnick/DoubleStrike/releases) page. Builds
+found anywhere else may have been modified.
+
+Every release ships a `SHA256SUMS.txt`. To check a download matches:
+
+```powershell
+# Windows (PowerShell)
+Get-FileHash "DoubleStrike Setup 1.0.0.exe" -Algorithm SHA256
+```
+
+```bash
+# macOS / Linux / Git Bash — verifies every listed file at once
+sha256sum -c SHA256SUMS.txt
+```
+
+If the hash doesn't match the one published for that release, don't run it.
+
+Maintainers regenerate the file after building:
+
+```bash
+npm run electron:build
+npm run checksums
+```
+
 ## Tech stack
 
 React 18, TypeScript, Vite, Electron, PeerJS for multiplayer, `idb-keyval` for
