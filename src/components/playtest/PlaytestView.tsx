@@ -483,7 +483,7 @@ function PlaytestView({ onClose }: Props) {
     if (!viewRotated) return { x, y }
     return { x: surface.width - x - w, y: surface.height - y - h }
   }
-  const opponentBoards: PublicBoard[] = mockBoards ?? [...boards.values()]
+  const opponentBoards: PublicBoard[] = useMemo(() => mockBoards ?? [...boards.values()], [mockBoards, boards])
   // Eliminated: 0 life or below (real Commander rules), OR a voluntary Scoop — either one is the
   // same "out" state everywhere it's checked (turn rotation, quadrant scrim, nameplate badge), per
   // [[mtg-deckbuilder-vtt-auto-skip-eliminated]] and [[mtg-deckbuilder-vtt-scoop]].
@@ -1770,7 +1770,7 @@ function PlaytestView({ onClose }: Props) {
     if (mockBoards !== null) setMockBoards(buildMockBoards(next))
   }
 
-  const snapshotFor = (scryfallId: string) => snapshots.get(scryfallId)
+  const snapshotFor = useCallback((scryfallId: string) => snapshots.get(scryfallId), [snapshots])
 
   // F: flip whatever's relevant under the cursor, matching real-table "flip that" talk —
   //  - a hovered battlefield card that's actually double-faced flips to its other face
