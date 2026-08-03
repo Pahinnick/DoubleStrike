@@ -63,6 +63,8 @@ export type PeerConnectionEvents = {
   cardTapRequested: (req: { instanceId: string; tapped: boolean }) => void
   /** A directed flip request for one of OUR cards (see FlipCardMessage) — apply FLIP_CARD locally. */
   cardFlipRequested: (req: { instanceId: string }) => void
+  /** A directed delete request for one of OUR cards (see DeleteCardMessage) — move it to our own graveyard locally. */
+  cardDeleteRequested: (req: { instanceId: string }) => void
   /** A die/coin roll from any player (including relayed ones from other guests). */
   roll: (playerId: string, name: string, roll: RollResult) => void
   /** A "look here" ping at a table-space point, from any player (including relayed ones). */
@@ -128,6 +130,7 @@ export class PeerConnection {
     cardRelocated: new Set(),
     cardTapRequested: new Set(),
     cardFlipRequested: new Set(),
+    cardDeleteRequested: new Set(),
     roll: new Set(),
     ping: new Set(),
     highlight: new Set(),
@@ -278,6 +281,10 @@ export class PeerConnection {
         // A guest flipped a card on someone else's board; route it to that card's owner.
         this.deliverFlip(msg)
         break
+      case 'DELETE_CARD':
+        // A guest deleted a card on someone else's board; route it to that card's owner.
+        this.deliverDelete(msg)
+        break
       case 'ROLL': {
         this.emit('roll', msg.playerId, msg.name, msg.roll)
         // Fan out to every other guest, same star-relay pattern as STATE.
@@ -396,6 +403,20 @@ export class PeerConnection {
     }
   }
 
+  /** Deliver a DELETE_CARD to the card owner's client, same routing as deliverFlip. */
+  private deliverDelete(msg: Extract<NetMessage, { type: 'DELETE_CARD' }>) {
+    if (msg.toPlayerId === this.local.playerId) {
+      this.emit('cardDeleteRequested', { instanceId: msg.instanceId })
+      return
+    }
+    for (const guest of this.guests.values()) {
+      if (guest.playerId === msg.toPlayerId) {
+        this.sendTo(guest.conn, msg)
+        return
+      }
+    }
+  }
+
   private dropGuest(peerId: string) {
     const record = this.guests.get(peerId)
     if (!record) return
@@ -479,6 +500,12 @@ export class PeerConnection {
         // The host delivered a flip request meant for one of our own cards.
         if (msg.toPlayerId === this.local.playerId) {
           this.emit('cardFlipRequested', { instanceId: msg.instanceId })
+        }
+        break
+      case 'DELETE_CARD':
+        // The host delivered a delete request meant for one of our own cards.
+        if (msg.toPlayerId === this.local.playerId) {
+          this.emit('cardDeleteRequested', { instanceId: msg.instanceId })
         }
         break
       case 'ROLL':
@@ -571,6 +598,22 @@ export class PeerConnection {
     const msg: NetMessage = { type: 'FLIP_CARD', v: PROTOCOL_VERSION, toPlayerId, instanceId }
     if (this.role === 'host') {
       this.deliverFlip(msg)
+    } else if (this.role === 'guest' && this.hostConn) {
+      this.sendTo(this.hostConn, msg)
+    }
+  }
+
+  /**
+   * Ask the owner of a card sitting on OUR board (a taken/relocated card) to send it to their
+   * own graveyard — it's still legally theirs even though it's sitting on our quadrant, so
+   * deleting it has to land with them, not us. Same directed routing as tapCard/flipCard; the
+   * owner's client applies MOVE_CARD and the result comes back to everyone through their next
+   * STATE broadcast.
+   */
+  deleteCard(toPlayerId: string, instanceId: string): void {
+    const msg: NetMessage = { type: 'DELETE_CARD', v: PROTOCOL_VERSION, toPlayerId, instanceId }
+    if (this.role === 'host') {
+      this.deliverDelete(msg)
     } else if (this.role === 'guest' && this.hostConn) {
       this.sendTo(this.hostConn, msg)
     }

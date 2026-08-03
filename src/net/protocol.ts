@@ -243,6 +243,21 @@ export type FlipCardMessage = {
   instanceId: string
 }
 
+/**
+ * Send a card on another player's board to the graveyard — same free-for-all table-talk
+ * companion to RELOCATE_CARD as TAP_CARD/FLIP_CARD. A relocated (not given) card is still
+ * legally the true owner's, so deleting it has to land in *their* graveyard, not the
+ * controller's — same directed guest->host->target routing; the owner's client applies
+ * MOVE_CARD (toZone: 'graveyard', which already handles a token simply ceasing to exist)
+ * and the change comes back to everyone via their next STATE broadcast.
+ */
+export type DeleteCardMessage = {
+  type: 'DELETE_CARD'
+  v: number
+  toPlayerId: string
+  instanceId: string
+}
+
 /** A single die roll or coin flip result. */
 export type RollResult = { kind: 'die'; sides: number; value: number } | { kind: 'coin'; value: 'heads' | 'tails' }
 
@@ -337,6 +352,7 @@ export type NetMessage =
   | RelocateCardMessage
   | TapCardMessage
   | FlipCardMessage
+  | DeleteCardMessage
   | RollMessage
   | PingMessage
   | TurnPassMessage
@@ -417,6 +433,11 @@ export function parseMessage(raw: unknown): ParseResult {
     case 'FLIP_CARD':
       if (isNonEmptyString(m.toPlayerId) && isNonEmptyString(m.instanceId)) {
         return { ok: true, msg: obj as FlipCardMessage }
+      }
+      return { ok: false, reason: 'malformed' }
+    case 'DELETE_CARD':
+      if (isNonEmptyString(m.toPlayerId) && isNonEmptyString(m.instanceId)) {
+        return { ok: true, msg: obj as DeleteCardMessage }
       }
       return { ok: false, reason: 'malformed' }
     case 'ROLL':

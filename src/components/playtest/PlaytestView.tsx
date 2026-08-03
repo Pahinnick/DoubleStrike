@@ -320,6 +320,7 @@ function PlaytestView({ onClose }: Props) {
     relocateCard,
     tapRemoteCard,
     flipRemoteCard,
+    deleteRemoteCard,
   } = useMultiplayer(
     {
       playerId,
@@ -340,6 +341,9 @@ function PlaytestView({ onClose }: Props) {
     // Another player flipped one of our own cards sitting on their board (a card they took via
     // relocate) — apply it locally; our next STATE broadcast shows everyone.
     (req) => dispatch({ type: 'FLIP_CARD', instanceId: req.instanceId }),
+    // Another player sent one of our own cards sitting on their board (a card they took via
+    // relocate) to the graveyard — apply it locally; our next STATE broadcast shows everyone.
+    (req) => dispatch({ type: 'MOVE_CARD', instanceId: req.instanceId, toZone: 'graveyard' }),
     // Another player's card flash-highlight, relayed to us — just show it, nothing to broadcast back.
     (instanceId) => addHighlight(instanceId),
     // Another player's emoji reaction, relayed to us — just show it, nothing to broadcast back.
@@ -829,13 +833,34 @@ function PlaytestView({ onClose }: Props) {
         return
       }
       if (!hoveredInstanceId) return
+      // A card someone else relocated onto our own quadrant (a "taken" card, same free-for-all
+      // as tapRemoteCard/flipRemoteCard above) lives in ITS owner's battlefield array, not ours
+      // — check opponentBoards first so deleting it routes to their own graveyard via a directed
+      // DELETE_CARD instead of a local dispatch (deleting it doesn't make it ours, it just leaves
+      // wherever it's actually sitting). Falls through to the plain local dispatch below for
+      // anything actually ours (hand or own battlefield), same as before this existed.
+      if (inPod) {
+        let onSomeonesBoard = false
+        for (const board of opponentBoards) {
+          const pc = board.battlefield.find((c) => c.instanceId === hoveredInstanceId)
+          if (!pc) continue
+          onSomeonesBoard = true
+          if (pc.atSeat !== undefined && pc.atSeat === mySeatResolved) {
+            event.preventDefault()
+            deleteRemoteCard(board.playerId, pc.instanceId)
+            setHoveredInstanceId(null)
+          }
+          break
+        }
+        if (onSomeonesBoard) return
+      }
       event.preventDefault()
       dispatch({ type: 'MOVE_CARD', instanceId: hoveredInstanceId, toZone: 'graveyard' })
       setHoveredInstanceId(null)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [hoveredInstanceId, selectedIds, dispatch])
+  }, [hoveredInstanceId, selectedIds, dispatch, inPod, opponentBoards, mySeatResolved, deleteRemoteCard])
 
   // Include opponents' public cards so their images resolve from the snapshot
   // cache too (battlefield + graveyard + exile + command), not just our own. Skips
@@ -2184,6 +2209,8 @@ function PlaytestView({ onClose }: Props) {
                       top: pos.y,
                       ...(foreign ? { '--owner-color': SEAT_COLORS[trueOwnerSeat] } : {}),
                     } as CSSProperties}
+                    onMouseEnter={() => setHoveredInstanceId(pc.instanceId)}
+                    onMouseLeave={() => setHoveredInstanceId((cur) => (cur === pc.instanceId ? null : cur))}
                   >
                     <PlaytestCard
                       readOnly

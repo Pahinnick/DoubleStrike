@@ -321,6 +321,21 @@ describe('serialization round-trips', () => {
     expect(deserialize(JSON.stringify(bad))).toBeNull()
   })
 
+  it('DELETE_CARD round-trips', () => {
+    const msg: NetMessage = { type: 'DELETE_CARD', v: PROTOCOL_VERSION, toPlayerId: 'p2', instanceId: 'i9' }
+    expect(deserialize(serialize(msg))).toEqual(msg)
+  })
+
+  it('rejects a DELETE_CARD missing instanceId', () => {
+    const bad = { type: 'DELETE_CARD', v: PROTOCOL_VERSION, toPlayerId: 'p2' }
+    expect(deserialize(JSON.stringify(bad))).toBeNull()
+  })
+
+  it('rejects a DELETE_CARD missing toPlayerId', () => {
+    const bad = { type: 'DELETE_CARD', v: PROTOCOL_VERSION, instanceId: 'i9' }
+    expect(deserialize(JSON.stringify(bad))).toBeNull()
+  })
+
   it('TURN_PASS round-trips', () => {
     const msg: NetMessage = { type: 'TURN_PASS', v: PROTOCOL_VERSION, activeSeat: 2 }
     expect(deserialize(serialize(msg))).toEqual(msg)
