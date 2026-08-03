@@ -58,10 +58,11 @@ function tone(freq: number, startOffset: number, duration: number, type: Oscilla
   osc.stop(start + duration + 0.02)
 }
 
-/** Short burst of high-passed white noise — a tight "tss" rather than a musical tone.
- *  `startOffset` schedules it to begin later in the same audio timeline (seconds from now),
- *  so a caller can stack several bursts into one longer effect — see the `shuffle` cue below. */
-function noiseBurst(duration: number, cutoffFreq: number, startOffset = 0): void {
+/** Short burst of filtered noise. `filterType` defaults to highpass for the existing bright "tss"
+ *  cues (hover/shuffle); the thock cue below passes 'lowpass' for a dull, muted texture instead.
+ *  `startOffset` schedules it to begin later in the same audio timeline (seconds from now), so a
+ *  caller can stack several bursts into one longer effect — see the `shuffle` cue below. */
+function noiseBurst(duration: number, cutoffFreq: number, startOffset = 0, filterType: BiquadFilterType = 'highpass'): void {
   const audio = getContext()
   if (!audio) return
   const sampleCount = Math.max(1, Math.floor(audio.sampleRate * duration))
@@ -72,7 +73,7 @@ function noiseBurst(duration: number, cutoffFreq: number, startOffset = 0): void
   const source = audio.createBufferSource()
   source.buffer = buffer
   const filter = audio.createBiquadFilter()
-  filter.type = 'highpass'
+  filter.type = filterType
   filter.frequency.value = cutoffFreq
   const gain = audio.createGain()
   const start = audio.currentTime + startOffset
@@ -87,9 +88,11 @@ function noiseBurst(duration: number, cutoffFreq: number, startOffset = 0): void
   source.stop(start + duration + 0.02)
 }
 
-/** A soft percussive knock — a quick downward pitch bend rather than a flat tone, so it reads as
- *  a physical tap (a finger on the table) instead of a musical note. Louder than the other cues'
- *  base gain (they're accents; this one needs to read as an actual touch). */
+/** A deep, muted "thock" — a mechanical-keyboard-style thud rather than a musical note or a
+ *  sharp knock. Low sine fundamental with a short, mild pitch dip (not a dramatic sweep, which
+ *  reads as "boingy" instead of solid) plus a brief lowpassed-noise layer for a bit of dull
+ *  "meat" under the tone. Kept close to the other cues' base gain — a thock is felt more than
+ *  heard, not a loud accent. */
 function thump(freq: number, duration: number, startOffset = 0): void {
   const audio = getContext()
   if (!audio) return
@@ -97,15 +100,16 @@ function thump(freq: number, duration: number, startOffset = 0): void {
   const gain = audio.createGain()
   osc.type = 'sine'
   const start = audio.currentTime + startOffset
-  osc.frequency.setValueAtTime(freq * 1.8, start)
-  osc.frequency.exponentialRampToValueAtTime(freq, start + 0.03)
+  osc.frequency.setValueAtTime(freq * 1.25, start)
+  osc.frequency.exponentialRampToValueAtTime(freq, start + 0.015)
   gain.gain.setValueAtTime(0, start)
-  gain.gain.linearRampToValueAtTime(BASE_VOLUME * 1.4 * volumeMultiplier, start + 0.006)
+  gain.gain.linearRampToValueAtTime(BASE_VOLUME * volumeMultiplier, start + 0.006)
   gain.gain.exponentialRampToValueAtTime(0.0001, start + duration)
   osc.connect(gain)
   gain.connect(audio.destination)
   osc.start(start)
   osc.stop(start + duration + 0.02)
+  noiseBurst(duration * 0.5, 400, startOffset, 'lowpass')
 }
 
 const CUES: Record<SoundCue, () => void> = {
@@ -128,7 +132,7 @@ const CUES: Record<SoundCue, () => void> = {
     }
   },
   // Left-clicking empty battlefield — a finger tapping the table.
-  'board-tap': () => thump(110, 0.12),
+  'board-tap': () => thump(85, 0.09),
 }
 
 export function playCue(cue: SoundCue): void {
