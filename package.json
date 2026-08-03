@@ -4,6 +4,11 @@
   "version": "1.0.0",
   "description": "DoubleStrike — Magic: The Gathering deck builder and playtest VTT",
   "author": "Phinnick",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Pahinnick/DoubleStrike.git"
+  },
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
