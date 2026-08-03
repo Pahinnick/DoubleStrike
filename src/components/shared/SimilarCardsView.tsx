@@ -31,16 +31,22 @@ function SimilarCardsView({ onAddTagToSearch }: Props) {
   const { deck, dispatch, addCard, setCardPrinting } = useDeck()
 
   // Suggestions stay within the commander's color identity ("at most", same default as the
-  // advanced search Color identity filter), so they're actually castable in this deck.
-  const commanderId = deck.format === 'commander' ? deck.cards.find((c) => c.isCommander)?.scryfallId : undefined
-  const commanderIds = useMemo(() => (commanderId ? [commanderId] : []), [commanderId])
+  // advanced search Color identity filter), so they're actually castable in this deck. Partner
+  // commanders (or a commander + Background) union their identities together — a deck isn't
+  // limited to just whichever commander card happened to be first in the list.
+  const commanderIds = useMemo(
+    () => (deck.format === 'commander' ? deck.cards.filter((c) => c.isCommander).map((c) => c.scryfallId) : []),
+    [deck.format, deck.cards],
+  )
   const commanderSnapshots = useCardSnapshots(commanderIds)
   const commanderIdentity = useMemo(() => {
-    if (!commanderId) return null
-    const identity = commanderSnapshots.get(commanderId)?.color_identity
-    if (!identity) return null
+    if (commanderIds.length === 0) return null
+    // Wait for every commander's snapshot before filtering — with partners, filtering as soon as
+    // just one has loaded would briefly show an over-restrictive identity missing the other's colors.
+    if (!commanderIds.every((id) => commanderSnapshots.has(id))) return null
+    const identity = commanderIds.flatMap((id) => commanderSnapshots.get(id)?.color_identity ?? [])
     return new Set(identity.filter((c): c is Color => (WUBRG as readonly string[]).includes(c)))
-  }, [commanderId, commanderSnapshots])
+  }, [commanderIds, commanderSnapshots])
 
   const [tagIndex, setTagIndex] = useState<TagIndexData | null>(null)
   const [indexStatus, setIndexStatus] = useState<Status>('idle')

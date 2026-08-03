@@ -31,13 +31,17 @@ function SearchPanel({ onAddCard, text, onTextChange, expanded, onExpand, onColl
 
   // When a commander is designated, the Color identity filter defaults to its color identity
   // (with the "at most these" default match, that means "cards this deck could actually play").
-  const commanderId = deck.format === 'commander' ? deck.cards.find((c) => c.isCommander)?.scryfallId : undefined
-  const commanderIds = useMemo(() => (commanderId ? [commanderId] : []), [commanderId])
+  // Partner commanders (or a commander + Background) union their identities together — a deck
+  // isn't limited to just whichever commander card happened to be first in the list.
+  const commanderIds = useMemo(
+    () => (deck.format === 'commander' ? deck.cards.filter((c) => c.isCommander).map((c) => c.scryfallId) : []),
+    [deck.format, deck.cards],
+  )
   const commanderSnapshots = useCardSnapshots(commanderIds)
   const commanderIdentity = useMemo(() => {
-    const identity = commanderId ? commanderSnapshots.get(commanderId)?.color_identity : undefined
-    return (identity ?? []).filter((c): c is Color => (WUBRG as readonly string[]).includes(c))
-  }, [commanderId, commanderSnapshots])
+    const identity = commanderIds.flatMap((id) => commanderSnapshots.get(id)?.color_identity ?? [])
+    return [...new Set(identity.filter((c): c is Color => (WUBRG as readonly string[]).includes(c)))]
+  }, [commanderIds, commanderSnapshots])
   const identityKey = commanderIdentity.join('')
 
   // Re-applied whenever the commander (identity) changes; manual edits persist until then.
