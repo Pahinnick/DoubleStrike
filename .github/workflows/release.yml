@@ -1,0 +1,94 @@
+name: Release
+
+# Publishing is driven by tags, not by pushes to main — tag a commit when you actually want a
+# build, so ordinary work doesn't burn Actions minutes or create half-finished releases.
+#
+#   npm version 1.0.1        # bumps package.json and creates the matching v1.0.1 tag
+#   git push --follow-tags
+#
+# workflow_dispatch is here so you can smoke-test the pipeline without tagging; it builds and
+# uploads nothing.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write # required to create the GitHub Release
+
+jobs:
+  windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # electron-builder names artifacts from package.json's version, NOT the git tag. Without
+      # this guard, tagging v1.0.1 while package.json still says 1.0.0 silently produces a
+      # release called v1.0.1 containing files named 1.0.0 — confusing and hard to spot later.
+      - name: Verify tag matches package.json version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(node -p "require('./package.json').version")
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::Tag v$TAG does not match package.json version $PKG. Run 'npm version $TAG' and re-tag."
+            exit 1
+          fi
+          echo "Tag and package.json agree on $PKG"
+
+      - name: Type-check, lint and test
+        run: |
+          npm run lint
+          npm test
+
+      # --publish never: electron-builder would otherwise try to create the GitHub Release itself
+      # (it infers a publish target from package.json's "repository" field once it detects CI plus
+      # a tag). Uploading is done explicitly below instead, so the installers and SHA256SUMS.txt
+      # land in one release rather than racing each other.
+      - name: Build installers
+        run: |
+          npm run build
+          npx electron-builder --publish never
+
+      - name: Generate checksums
+        run: npm run checksums
+
+      - name: Show what will be published
+        shell: bash
+        run: ls -lh release/*.exe release/SHA256SUMS.txt
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true # review it before it goes live; publish from the Releases page
+          files: |
+            release/*.exe
+            release/SHA256SUMS.txt
+          body: |
+            ## Downloads
+
+            - **Setup `.exe`** — installer, adds Start Menu and uninstall entries
+            - **Portable `.exe`** — runs directly, no installation
+
+            Windows will warn about an unrecognized publisher; these builds are not code-signed.
+
+            ### Verifying your download
+
+            `SHA256SUMS.txt` lists the expected hash of every file in this release.
+
+            ```powershell
+            Get-FileHash "<downloaded file>.exe" -Algorithm SHA256
+            ```
+
+            If it doesn't match, don't run it. This Releases page is the only official source.
