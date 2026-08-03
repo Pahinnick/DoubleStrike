@@ -62,6 +62,7 @@ import NumberInputPrompt from './NumberInputPrompt'
 import PingMarker from './PingMarker'
 import PlaytestCard from './PlaytestCard'
 import { ALL_SEATS, buildSpinSequence, nextActiveSeat, pickRandomSeat, SEAT_COLOR_NAMES, SEAT_COLORS, SEAT_GRID, seatOrigin, tableSize } from './podLayout'
+import PtCounterPileStack from './PtCounterPileStack'
 import ReactionMarker from './ReactionMarker'
 import ReactionsTray from './ReactionsTray'
 import RollLog, { type RollLogEntry } from './RollLog'
@@ -2352,10 +2353,12 @@ function PlaytestView({ onClose }: Props) {
                   onAdjust={(pileId, delta) => dispatch({ type: 'ADJUST_COUNTER_PILE', instanceId: gameCard.instanceId, pileId, delta })}
                   onRemove={(pileId) => dispatch({ type: 'REMOVE_COUNTER_PILE', instanceId: gameCard.instanceId, pileId })}
                 />
-                <CounterPileStack
-                  items={(gameCard.ptCounters ?? []).map((p) => ({ id: p.id, color: p.color, text: formatPtCounters(p) }))}
+                <PtCounterPileStack
+                  items={gameCard.ptCounters ?? []}
                   side="right"
-                  onAdjust={(pileId, delta) => dispatch({ type: 'ADJUST_PT_COUNTER_PILE', instanceId: gameCard.instanceId, pileId, delta })}
+                  onAdjust={(pileId, powerDelta, toughnessDelta) =>
+                    dispatch({ type: 'ADJUST_PT_COUNTER_PILE', instanceId: gameCard.instanceId, pileId, powerDelta, toughnessDelta })
+                  }
                   onRemove={(pileId) => dispatch({ type: 'REMOVE_PT_COUNTER_PILE', instanceId: gameCard.instanceId, pileId })}
                 />
               </div>

@@ -512,7 +512,7 @@ describe('gameReducer', () => {
     expect(state.cards.find((c) => c.instanceId === cardId)!.counters).toBeUndefined()
   })
 
-  it('ADD_PT_COUNTER_PILE creates a pile at +1/+1, ADJUST_PT_COUNTER_PILE moves power and toughness together', () => {
+  it('ADD_PT_COUNTER_PILE creates a pile at +1/+1, ADJUST_PT_COUNTER_PILE can move power and toughness together', () => {
     const before = startedGame(20)
     const cardId = zoneCards(before, 'hand')[0].instanceId
     let state = apply(
@@ -521,8 +521,23 @@ describe('gameReducer', () => {
       { type: 'ADD_PT_COUNTER_PILE', instanceId: cardId, color: 'green' },
     )
     const pileId = state.cards.find((c) => c.instanceId === cardId)!.ptCounters![0].id
-    state = gameReducer(state, { type: 'ADJUST_PT_COUNTER_PILE', instanceId: cardId, pileId, delta: 1 })
+    state = gameReducer(state, { type: 'ADJUST_PT_COUNTER_PILE', instanceId: cardId, pileId, powerDelta: 1, toughnessDelta: 1 })
     expect(state.cards.find((c) => c.instanceId === cardId)!.ptCounters).toEqual([{ id: pileId, color: 'green', power: 2, toughness: 2 }])
+  })
+
+  // Real gap reported: no way to represent an asymmetric bonus like an Equipment's +1/+0 — the
+  // old ADJUST_PT_COUNTER_PILE always moved power and toughness by the same delta.
+  it('ADJUST_PT_COUNTER_PILE moves power and toughness independently, so a +1/+1 pile can become +1/+0', () => {
+    const before = startedGame(20)
+    const cardId = zoneCards(before, 'hand')[0].instanceId
+    let state = apply(
+      before,
+      { type: 'MOVE_CARD', instanceId: cardId, toZone: 'battlefield', x: 0, y: 0 },
+      { type: 'ADD_PT_COUNTER_PILE', instanceId: cardId, color: 'green' },
+    )
+    const pileId = state.cards.find((c) => c.instanceId === cardId)!.ptCounters![0].id
+    state = gameReducer(state, { type: 'ADJUST_PT_COUNTER_PILE', instanceId: cardId, pileId, powerDelta: 0, toughnessDelta: -1 })
+    expect(state.cards.find((c) => c.instanceId === cardId)!.ptCounters).toEqual([{ id: pileId, color: 'green', power: 1, toughness: 0 }])
   })
 
   it('ADD_PT_COUNTER_PILE ignores cards not on the battlefield', () => {

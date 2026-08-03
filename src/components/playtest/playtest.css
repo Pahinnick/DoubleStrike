@@ -557,6 +557,21 @@
   font-size: 0.75rem !important;
 }
 
+/* Power/toughness piles get their own +/- row each (top = power, bottom = toughness, matching
+   the "+1/+0" chip's own left-to-right order) instead of one shared row, since a P/T pile can be
+   asymmetric — see PtCounterPileStack. */
+.playtest-card__counter-pile-controls--pt {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.playtest-card__counter-pile-pt-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
 .playtest-card__token-badge {
   position: absolute;
   bottom: -4px;

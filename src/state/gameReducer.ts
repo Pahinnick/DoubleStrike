@@ -108,11 +108,15 @@ export type GameAction =
   | { type: 'ADD_COUNTER_PILE'; instanceId: string; color: CounterColor }
   | { type: 'ADJUST_COUNTER_PILE'; instanceId: string; pileId: string; delta: number }
   | { type: 'REMOVE_COUNTER_PILE'; instanceId: string; pileId: string }
-  /** Creates a new power/toughness counter pile of the given color, starting at +1/+1. */
+  /** Creates a new power/toughness counter pile of the given color, starting at +1/+1 — nudge
+   *  power and toughness independently afterward via ADJUST_PT_COUNTER_PILE to represent an
+   *  asymmetric bonus (e.g. an Equipment's +1/+0). */
   | { type: 'ADD_PT_COUNTER_PILE'; instanceId: string; color: CounterColor }
-  /** Applies the same delta to both power and toughness within the pile (how +1/+1 and -1/-1
-   *  counters are placed one at a time in real Magic). */
-  | { type: 'ADJUST_PT_COUNTER_PILE'; instanceId: string; pileId: string; delta: number }
+  /** Power and toughness move independently — e.g. {powerDelta: 0, toughnessDelta: -1} turns a
+   *  +1/+1 pile into +1/+0, representing an asymmetric bonus a symmetric +1/+1-style counter
+   *  can't (Equipment, "gets +2/+0" effects, etc). Real symmetric +1/+1 counters just pass the
+   *  same value for both. */
+  | { type: 'ADJUST_PT_COUNTER_PILE'; instanceId: string; pileId: string; powerDelta: number; toughnessDelta: number }
   | { type: 'REMOVE_PT_COUNTER_PILE'; instanceId: string; pileId: string }
   | { type: 'FLIP_CARD'; instanceId: string }
   | { type: 'SET_FACE_DOWN'; instanceId: string; faceDown: boolean }
@@ -366,7 +370,9 @@ function gameReducerInner(state: GameState, action: GameAction): GameState {
             ? {
                 ...c,
                 ptCounters: (c.ptCounters ?? []).map((p) =>
-                  p.id === action.pileId ? { ...p, power: p.power + action.delta, toughness: p.toughness + action.delta } : p,
+                  p.id === action.pileId
+                    ? { ...p, power: p.power + action.powerDelta, toughness: p.toughness + action.toughnessDelta }
+                    : p,
                 ),
               }
             : c,
