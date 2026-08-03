@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useProfiles } from '../state/ProfileContext'
+import { setSoundVolume as applySoundVolume } from '../utils/sound'
 import { isTheme, LEGACY_THEME_KEY, type Theme } from './useTheme'
 
 export type HoverPreviewMode = 'always' | 'alt'
@@ -45,6 +46,13 @@ export function useProfileSettings() {
   const hoverPreviewMode: HoverPreviewMode = stored?.hoverPreviewMode ?? 'always'
   const soundVolume = stored?.soundVolume ?? 1
   const goldfishStatsDefault = stored?.goldfishStatsDefault ?? false
+
+  // Global, not Playtest-specific — UI sound cues (playCue) fire from the search/deck-list views
+  // too, so this needs to apply regardless of which screen is showing. AppShell keeps this
+  // effect always-on the same way it does for the theme effect above.
+  useEffect(() => {
+    applySoundVolume(soundVolume)
+  }, [soundVolume])
 
   return {
     theme,

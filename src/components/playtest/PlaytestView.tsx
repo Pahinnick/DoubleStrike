@@ -38,7 +38,7 @@ import type { Deck, FoilKind } from '../../state/types'
 import { isFlippableSnapshot } from '../../storage/cardCache'
 import { getSoloGameSave, saveSoloGameSave } from '../../storage/soloGameStorage'
 import { isPlaytestWindow, openDedicatedPlaytestWindow, requestSwitchToInlineAndClose } from '../../utils/playtestWindowBridge'
-import { playCue, setSoundVolume } from '../../utils/sound'
+import { playCue, setSessionMuted } from '../../utils/sound'
 import ActionsTray, { type TrayAction } from './ActionsTray'
 import BattlefieldEmberAura from './BattlefieldEmberAura'
 import BattlefieldLavaGround from './BattlefieldLavaGround'
@@ -352,15 +352,17 @@ function PlaytestView({ onClose }: Props) {
     (reactorId, _name, emoji) => addReaction(reactorId, emoji),
   )
   const [mpModalOpen, setMpModalOpen] = useState(false)
-  // soundVolume is the persisted per-profile preference (Settings page); `muted` is a session-
-  // local quick-mute on top of it (the topbar 🔊 button) that deliberately does NOT persist —
-  // muting for one distracting game shouldn't silently change your permanent volume preference.
-  // The effect below combines them into sound.ts's actual playback volume.
-  const { soundVolume, goldfishStatsDefault } = useProfileSettings()
+  // The persisted per-profile volume (Settings page) applies globally via useProfileSettings'
+  // own effect — this is just a session-local quick-mute on top of it (the topbar 🔊 button)
+  // that deliberately does NOT persist: muting for one distracting game shouldn't silently
+  // change the permanent volume preference. Cleanup un-mutes on exit so leaving Playtest can't
+  // leave sound.ts stuck muted for the search/deck-list screens.
+  const { goldfishStatsDefault } = useProfileSettings()
   const [muted, setMuted] = useState(false)
   useEffect(() => {
-    setSoundVolume(muted ? 0 : soundVolume)
-  }, [muted, soundVolume])
+    setSessionMuted(muted)
+    return () => setSessionMuted(false)
+  }, [muted])
   const [battlefieldSkin, setBattlefieldSkin] = useBattlefieldSkin()
   const [playtestWindowMode, setPlaytestWindowMode] = usePlaytestWindowMode()
   // Opt-in goldfish practice stat (lands drawn vs. expected) — solo-only, purely a local display
@@ -1597,6 +1599,7 @@ function PlaytestView({ onClose }: Props) {
       const burstPoint = mirror(point.x, point.y)
       particlesRef.current?.burst(burstPoint.x, burstPoint.y)
     }
+    playCue('board-tap')
     setContextMenu(null)
     // A plain click on empty background drops the selection — shift doesn't, so an accidental
     // miss between cards (a click, or the start of a marquee drag) doesn't wipe out the group.

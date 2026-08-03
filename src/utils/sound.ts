@@ -2,15 +2,21 @@
 // download/bundle). Deliberately quiet and short; muted by default is NOT the goal here,
 // but any failure to play must never be fatal to the actual game action it accompanies.
 
-export type SoundCue = 'draw' | 'life-up' | 'life-down' | 'play-card' | 'hover' | 'shuffle'
+export type SoundCue = 'draw' | 'life-up' | 'life-down' | 'play-card' | 'hover' | 'shuffle' | 'board-tap'
 
 const BASE_VOLUME = 0.05
 
 let sharedContext: AudioContext | null = null
 // Multiplier (0-1) applied on top of BASE_VOLUME — the per-profile Settings slider's live value,
-// pushed in from React via setSoundVolume whenever it changes (see useProfileSettings). This
-// module has no React/profile dependency of its own; it just remembers the last value it was told.
+// pushed in from React via setSoundVolume whenever it changes (see useProfileSettings' own
+// always-on effect — this is global, not Playtest-specific, since playCue is called from the
+// search/deck-list views too). This module has no React/profile dependency of its own; it just
+// remembers the last value it was told.
 let volumeMultiplier = 1
+// Playtest's own topbar 🔊 button — a session-local override on top of volumeMultiplier, kept
+// entirely separate so the two can't race each other (see PlaytestView's effect, which owns this
+// and nothing else). Never true outside an active Playtest session.
+let sessionMuted = false
 
 function getContext(): AudioContext | null {
   if (typeof window === 'undefined') return null
@@ -29,6 +35,10 @@ export function setSoundVolume(multiplier: number): void {
 
 export function getSoundVolume(): number {
   return volumeMultiplier
+}
+
+export function setSessionMuted(muted: boolean): void {
+  sessionMuted = muted
 }
 
 function tone(freq: number, startOffset: number, duration: number, type: OscillatorType): void {
@@ -77,6 +87,27 @@ function noiseBurst(duration: number, cutoffFreq: number, startOffset = 0): void
   source.stop(start + duration + 0.02)
 }
 
+/** A soft percussive knock — a quick downward pitch bend rather than a flat tone, so it reads as
+ *  a physical tap (a finger on the table) instead of a musical note. Louder than the other cues'
+ *  base gain (they're accents; this one needs to read as an actual touch). */
+function thump(freq: number, duration: number, startOffset = 0): void {
+  const audio = getContext()
+  if (!audio) return
+  const osc = audio.createOscillator()
+  const gain = audio.createGain()
+  osc.type = 'sine'
+  const start = audio.currentTime + startOffset
+  osc.frequency.setValueAtTime(freq * 1.8, start)
+  osc.frequency.exponentialRampToValueAtTime(freq, start + 0.03)
+  gain.gain.setValueAtTime(0, start)
+  gain.gain.linearRampToValueAtTime(BASE_VOLUME * 1.4 * volumeMultiplier, start + 0.006)
+  gain.gain.exponentialRampToValueAtTime(0.0001, start + duration)
+  osc.connect(gain)
+  gain.connect(audio.destination)
+  osc.start(start)
+  osc.stop(start + duration + 0.02)
+}
+
 const CUES: Record<SoundCue, () => void> = {
   draw: () => tone(720, 0, 0.09, 'triangle'),
   'life-up': () => tone(880, 0, 0.08, 'sine'),
@@ -96,10 +127,12 @@ const CUES: Record<SoundCue, () => void> = {
       noiseBurst(0.035, 3000 + Math.random() * 2500, offset)
     }
   },
+  // Left-clicking empty battlefield — a finger tapping the table.
+  'board-tap': () => thump(110, 0.12),
 }
 
 export function playCue(cue: SoundCue): void {
-  if (volumeMultiplier <= 0) return
+  if (sessionMuted || volumeMultiplier <= 0) return
   try {
     CUES[cue]()
   } catch {

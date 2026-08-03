@@ -36,9 +36,9 @@ function SettingsModal({ onClose }: Props) {
         </section>
 
         <section className="settings-modal__section">
-          <h3>Playtest sound</h3>
+          <h3>UI sound</h3>
           <label className="settings-modal__slider-row">
-            <span>UI sound volume</span>
+            <span>Sound volume</span>
             <input
               type="range"
               min={0}
@@ -49,11 +49,15 @@ function SettingsModal({ onClose }: Props) {
             <span className="settings-modal__slider-value">{Math.round(soundVolume * 100)}%</span>
           </label>
           <p className="settings-modal__hint">
-            Draw/tap/shuffle cues, not the table radio — that has its own volume slider in the radio panel.
+            Hover/tap/draw/shuffle cues everywhere in the app, not the table radio — that has its own volume slider in the radio panel.
           </p>
+        </section>
+
+        <section className="settings-modal__section">
+          <h3>Playtest</h3>
           <label className="settings-modal__checkbox-row">
             <input type="checkbox" checked={goldfishStatsDefault} onChange={(event) => setGoldfishStatsDefault(event.target.checked)} />
-            Show goldfish practice stats by default in Playtest
+            Show goldfish practice stats by default
           </label>
         </section>
 
