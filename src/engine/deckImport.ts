@@ -6,10 +6,10 @@ export type ParsedDeckCard = {
   /** First non-special tag on the line (e.g. "Ramp", "Burn") — used as this app's card category. */
   category?: string
   isCommander: boolean
-  /** True for Archidekt's built-in "Maybeboard" category or any category (built-in or custom)
-   *  Archidekt marks excluded from the deck count (`{noDeck}` in the plain-text export,
-   *  `includedInDeck: false` in the API) — these cards aren't actually in the 100/60, so they
-   *  land in the sideboard instead of the mainboard. */
+  /** True for Archidekt's built-in "Maybeboard" category, any category named "Sideboard", or any
+   *  category (built-in or custom) Archidekt marks excluded from the deck count (`{noDeck}` in the
+   *  plain-text export, `includedInDeck: false` in the API) — these cards aren't actually in the
+   *  100/60, so they land in the sideboard instead of the mainboard. */
   isMaybeboard: boolean
   /** The literal text line this entry was parsed from — only set by the plain-text export parser
    *  (parseArchidektExport); undefined for JSON/API imports, which have no raw text line to show.
@@ -26,6 +26,19 @@ export type ParsedDeckCard = {
 const LINE_PATTERN = /^(\d+)x\s+(.+?)\s+\(([a-zA-Z0-9]+)\)\s+(\S+)(?:\s+\*F\*)?(?:\s+\[(.+)\])?(?:\s+\^[^^]*\^)?$/
 
 type ParsedTag = { name: string; excludedFromDeck: boolean }
+
+// Archidekt's own site excludes these category names from a deck's size/legality count even when
+// the category's own `includedInDeck` flag reads true — confirmed against a real deck (a plain
+// user-created "Sideboard" category defaulted to `includedInDeck: true`, since Archidekt only
+// flips that flag automatically for its own built-in "Maybeboard", yet the site's displayed
+// "Deck size" still excluded the Sideboard cards). Users name a category "Sideboard" expecting it
+// to behave like one without ever touching the deck-inclusion toggle, so this app has to special-
+// case the name too, not just the flag, to land those cards in the sideboard instead of mainboard.
+const EXCLUDED_CATEGORY_NAMES = new Set(['maybeboard', 'sideboard'])
+
+function isExcludedCategoryName(name: string): boolean {
+  return EXCLUDED_CATEGORY_NAMES.has(name.toLowerCase())
+}
 
 // Archidekt marks a category "not part of the 100/60" by suffixing every card line's tag with
 // `{noDeck}` (alongside its own built-in "Maybeboard" category, which always carries the same
@@ -81,7 +94,9 @@ type ArchidektDeckResponse = {
  */
 export function parseArchidektDeckJson(data: ArchidektDeckResponse): { name?: string; cards: ParsedDeckCard[] } {
   const excludedCategories = new Set(
-    (data.categories ?? []).filter((c) => c.includedInDeck === false && c.name).map((c) => c.name as string),
+    (data.categories ?? [])
+      .filter((c) => c.name && (c.includedInDeck === false || isExcludedCategoryName(c.name)))
+      .map((c) => c.name as string),
   )
 
   const cards: ParsedDeckCard[] = []
@@ -124,8 +139,8 @@ export function parseArchidektExport(text: string): ParsedDeckCard[] {
     const [, quantity, name, set, collectorNumber, tagsRaw] = match
     const tags = parseTags(tagsRaw)
     const isCommander = tags.some((tag) => tag.name === 'Commander')
-    const isMaybeboard = tags.some((tag) => tag.name === 'Maybeboard' || tag.excludedFromDeck)
-    const category = tags.find((tag) => tag.name !== 'Commander' && tag.name !== 'Maybeboard')?.name
+    const isMaybeboard = tags.some((tag) => tag.excludedFromDeck || isExcludedCategoryName(tag.name))
+    const category = tags.find((tag) => tag.name !== 'Commander' && !isExcludedCategoryName(tag.name))?.name
 
     results.push({
       quantity: Number(quantity),

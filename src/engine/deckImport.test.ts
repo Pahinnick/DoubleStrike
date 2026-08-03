@@ -49,6 +49,21 @@ describe('parseArchidektExport', () => {
     expect(card.category).toBe('Chaseboard')
   })
 
+  it('treats a "Sideboard"-named category as maybeboard even without a {noDeck} marker', () => {
+    // Real-world bug: Archidekt only auto-sets includedInDeck:false for its own built-in
+    // "Maybeboard" category. A user-created "Sideboard" category keeps includedInDeck:true unless
+    // manually toggled, so the plain-text export never carries a {noDeck} marker for it either —
+    // yet archidekt.com's own site still excludes "Sideboard" cards from the deck-size count.
+    const [card] = parseArchidektExport('1x Anger of the Gods (frf) 133 [Sideboard]')
+    expect(card.isMaybeboard).toBe(true)
+    expect(card.category).toBeUndefined()
+  })
+
+  it('matches a "Sideboard" category case-insensitively', () => {
+    const [card] = parseArchidektExport('1x Anger of the Gods (frf) 133 [sideboard]')
+    expect(card.isMaybeboard).toBe(true)
+  })
+
   it('flags the commander tag and leaves category unset when Commander is the only tag', () => {
     const [card] = parseArchidektExport('1x Tannuk, Memorial Ensign (eoe) 233 [Commander{top}]')
     expect(card.isCommander).toBe(true)
@@ -190,6 +205,27 @@ describe('parseArchidektDeckJson', () => {
   it('lowercases the set code and preserves quantity and collector number', () => {
     const island = parseArchidektDeckJson(deck).cards.find((c) => c.name === 'Island')!
     expect(island).toMatchObject({ set: 'znr', collectorNumber: '276', quantity: 20, isMaybeboard: false })
+  })
+
+  // Real-world bug (backlog task #37): confirmed against a live Archidekt deck that a plain
+  // user-created "Sideboard" category keeps includedInDeck:true (Archidekt only auto-flips that
+  // flag for its own built-in "Maybeboard"), yet archidekt.com's own site still excludes
+  // "Sideboard" cards from the deck's size count — so this importer has to special-case the name
+  // the same way, not just trust includedInDeck.
+  it('treats a "Sideboard"-named category as maybeboard even though includedInDeck reads true', () => {
+    const deckWithSideboard = {
+      categories: [{ name: 'Sideboard', includedInDeck: true }],
+      cards: [
+        {
+          quantity: 1,
+          categories: ['Sideboard'],
+          card: { collectorNumber: '133', oracleCard: { name: 'Anger of the Gods' }, edition: { editioncode: 'frf' } },
+        },
+      ],
+    }
+    const [card] = parseArchidektDeckJson(deckWithSideboard).cards
+    expect(card.isMaybeboard).toBe(true)
+    expect(card.category).toBeUndefined()
   })
 
   it('skips entries missing a name, set, or collector number', () => {
