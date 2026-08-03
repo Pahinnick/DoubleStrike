@@ -20,6 +20,10 @@ const MOUSE_SHORTCUTS: Shortcut[] = [
   { keys: 'Right-click empty battlefield', description: 'Create a token at that point' },
   { keys: 'Right-click a card', description: 'Open its actions menu (tap, counters, flip, etc.)' },
   {
+    keys: 'Left/right-click a counter pile',
+    description: 'Add or remove one — for a power/toughness pile, click directly on the power or toughness number to move just that stat',
+  },
+  {
     keys: 'Drag a revealed library card',
     description: 'A revealed top card, or one shown by "Look at Top N" (Actions menu), can be dragged straight to any zone or the battlefield',
   },

@@ -19,8 +19,9 @@ type Props = {
 
 /** Vertical stack of colored counter-pile chips anchored to a battlefield card's left or right
  *  edge, ~1/3 of the way down (by the card art, not the text box). Each chip always shows its
- *  color and value; hovering one reveals +/- (and a remove ×) for that pile specifically —
- *  the right-click "Add Counter" menu is the only other way to create or delete a pile. */
+ *  color and value; left-click adds one, right-click removes one — the right-click "Add Counter"
+ *  menu (on the card itself, not the chip) is the only other way to create or delete a pile;
+ *  hovering a chip reveals a small × to delete the whole pile at once. */
 function CounterPileStack({ items, side, onAdjust, onRemove }: Props) {
   if (items.length === 0) return null
   const interactive = !!onAdjust
@@ -36,44 +37,40 @@ function CounterPileStack({ items, side, onAdjust, onRemove }: Props) {
           key={item.id}
           className={`playtest-card__counter-pile ${interactive ? 'playtest-card__counter-pile--interactive' : ''}`}
           style={{ '--pile-color': swatchFor(item.color) } as CSSProperties}
+          title={interactive ? 'Left-click: +1 · Right-click: -1' : undefined}
           onMouseDown={interactive ? stop : undefined}
+          onClick={
+            interactive
+              ? (event) => {
+                  stop(event)
+                  onAdjust!(item.id, 1)
+                }
+              : undefined
+          }
+          onContextMenu={
+            interactive
+              ? (event) => {
+                  event.preventDefault()
+                  stop(event)
+                  onAdjust!(item.id, -1)
+                }
+              : undefined
+          }
         >
           <span className="playtest-card__counter-pile-value">{item.text}</span>
-          {interactive && (
+          {interactive && onRemove && (
             <span className="playtest-card__counter-pile-controls">
               <button
                 type="button"
-                title="Remove one"
+                className="playtest-card__counter-pile-remove"
+                title="Remove this counter pile"
                 onClick={(event) => {
                   stop(event)
-                  onAdjust!(item.id, -1)
+                  onRemove(item.id)
                 }}
               >
-                −
+                ×
               </button>
-              <button
-                type="button"
-                title="Add one"
-                onClick={(event) => {
-                  stop(event)
-                  onAdjust!(item.id, 1)
-                }}
-              >
-                +
-              </button>
-              {onRemove && (
-                <button
-                  type="button"
-                  className="playtest-card__counter-pile-remove"
-                  title="Remove this counter pile"
-                  onClick={(event) => {
-                    stop(event)
-                    onRemove(item.id)
-                  }}
-                >
-                  ×
-                </button>
-              )}
             </span>
           )}
         </div>

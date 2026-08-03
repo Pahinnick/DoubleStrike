@@ -503,6 +503,13 @@
   flex-shrink: 0;
 }
 
+/* Left-click: +1, right-click: -1 — the whole chip is the click target for a generic pile's
+   single value; PtCounterPileStack instead makes each of the two numbers (power/toughness) below
+   its own click target, since those move independently. */
+.playtest-card__counter-pile--interactive {
+  cursor: pointer;
+}
+
 .playtest-card__counter-pile-value {
   white-space: nowrap;
   font-size: 0.68rem;
@@ -511,10 +518,20 @@
   color: rgba(255, 255, 255, 0.92);
 }
 
+.playtest-card__counter-pile-stat {
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.playtest-card__counter-pile-stat:hover {
+  background-color: color-mix(in srgb, var(--pile-color, var(--accent)) 35%, transparent);
+}
+
+/* Just the × remove button now (the +/- buttons were replaced by left/right-click on the value
+   itself) — still hover-revealed so a stack of piles doesn't show a permanent × on every chip. */
 .playtest-card__counter-pile-controls {
   display: flex;
   align-items: center;
-  gap: 2px;
   width: 0;
   overflow: hidden;
   opacity: 0;
@@ -528,7 +545,7 @@
   pointer-events: auto;
 }
 
-.playtest-card__counter-pile-controls button {
+.playtest-card__counter-pile-remove {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -539,37 +556,18 @@
   border-radius: 50%;
   background-color: color-mix(in srgb, var(--pile-color, var(--accent)) 35%, transparent);
   color: rgba(255, 255, 255, 0.92);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   font-weight: 700;
   line-height: 1;
   cursor: pointer;
 }
 
-.playtest-card__counter-pile-controls button:hover {
+.playtest-card__counter-pile-remove:hover {
   background-color: var(--pile-color, var(--accent));
 }
 
-.playtest-card__counter-pile-controls button:active {
+.playtest-card__counter-pile-remove:active {
   transform: scale(0.88);
-}
-
-.playtest-card__counter-pile-remove {
-  font-size: 0.75rem !important;
-}
-
-/* Power/toughness piles get their own +/- row each (top = power, bottom = toughness, matching
-   the "+1/+0" chip's own left-to-right order) instead of one shared row, since a P/T pile can be
-   asymmetric — see PtCounterPileStack. */
-.playtest-card__counter-pile-controls--pt {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-}
-
-.playtest-card__counter-pile-pt-row {
-  display: flex;
-  align-items: center;
-  gap: 2px;
 }
 
 .playtest-card__token-badge {
