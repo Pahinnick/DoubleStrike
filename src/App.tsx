@@ -130,7 +130,7 @@ function AppShell() {
   return (
     <div className="app-shell">
       <header className="app-header">
-        <h1>MTG Deck Builder</h1>
+        <h1>DoubleStrike</h1>
         <ProfileSwitcher />
         <span className="app-header__deck-name">{deck.name}</span>
         <FormatSelector />

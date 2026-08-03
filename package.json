@@ -1,8 +1,8 @@
 {
-  "name": "claude-projects",
+  "name": "doublestrike",
   "private": true,
   "version": "1.0.0",
-  "description": "MTG Scryfall search and deck builder with a pip-accurate castability stat",
+  "description": "DoubleStrike — Magic: The Gathering deck builder and playtest VTT",
   "author": "Phinnick",
   "type": "module",
   "main": "electron/main.cjs",
@@ -45,8 +45,8 @@
     "wait-on": "^8.0.1"
   },
   "build": {
-    "appId": "com.claudeprojects.mtgdeckbuilder",
-    "productName": "MTG Deck Builder",
+    "appId": "com.phinnick.doublestrike",
+    "productName": "DoubleStrike",
     "directories": {
       "output": "release"
     },

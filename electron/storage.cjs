@@ -9,12 +9,21 @@ const fs = require('node:fs/promises')
 const path = require('node:path')
 const crypto = require('node:crypto')
 
+// The app shipped as "MTG Deck Builder" before the DoubleStrike rename (2026-08-02). Electron
+// derives userData from `build.productName`, so renaming the product silently repoints the app at
+// a brand-new empty folder — to an existing user every profile and deck would simply be *gone*.
+// These constants exist purely so migrateLegacyStorage() can find the old locations; nothing else
+// should reference them.
+const LEGACY_PRODUCT_NAME = 'MTG Deck Builder'
+const LEGACY_BACKUP_DIR_NAME = 'MTG Deck Builder Backups'
+const BACKUP_DIR_NAME = 'DoubleStrike Backups'
+
 function storageRoot() {
   return app.getPath('userData')
 }
 
 function backupRoot() {
-  return path.join(app.getPath('documents'), 'MTG Deck Builder Backups')
+  return path.join(app.getPath('documents'), BACKUP_DIR_NAME)
 }
 
 function appDataFile() {
@@ -117,7 +126,62 @@ async function recoverOrphanedProfiles(data) {
   return true
 }
 
+async function pathExists(target) {
+  try {
+    await fs.access(target)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * One-time copy of the pre-rename userData and backup folders into their new DoubleStrike
+ * locations. Copies rather than moves, and never deletes the originals — same "leave the old copy
+ * recoverable by hand" philosophy as readJson's corrupted-file quarantine. If anything here throws
+ * we log and continue: a failed migration must degrade to "looks like a fresh install with the old
+ * data still safely on disk", never to a hard startup failure.
+ *
+ * Guarded on the absence of the NEW app-data.json, which is only sound because this runs before
+ * loadAppData's own read (loadAppData seeds a default profile when it finds nothing, and that
+ * would otherwise make the migration look unnecessary from the second launch onward). No build
+ * has shipped under the DoubleStrike name yet, so no install can already be past that point.
+ */
+let migrationPromise
+async function migrateLegacyStorage() {
+  const currentRoot = storageRoot()
+  const legacyRoot = path.join(app.getPath('appData'), LEGACY_PRODUCT_NAME)
+
+  if (legacyRoot !== currentRoot && !(await pathExists(appDataFile())) && (await pathExists(legacyRoot))) {
+    try {
+      await fs.cp(legacyRoot, currentRoot, { recursive: true, force: false, errorOnExist: false })
+      console.log('[storage] migrated legacy user data:', legacyRoot, '->', currentRoot)
+    } catch (err) {
+      console.error('[storage] legacy user-data migration failed (old data left untouched):', err)
+    }
+  }
+
+  // Backups are a standing mirror rather than the source of truth, so this is best-effort too —
+  // but it's the fallback someone reaches for precisely when userData went wrong, so it's worth
+  // carrying across rather than stranding it under the old name.
+  const currentBackups = backupRoot()
+  const legacyBackups = path.join(app.getPath('documents'), LEGACY_BACKUP_DIR_NAME)
+  if (legacyBackups !== currentBackups && !(await pathExists(currentBackups)) && (await pathExists(legacyBackups))) {
+    try {
+      await fs.cp(legacyBackups, currentBackups, { recursive: true, force: false, errorOnExist: false })
+      console.log('[storage] migrated legacy backups:', legacyBackups, '->', currentBackups)
+    } catch (err) {
+      console.error('[storage] legacy backup migration failed (old backups left untouched):', err)
+    }
+  }
+}
+
 async function loadAppData() {
+  // Every storage IPC funnels through here, so this is the one chokepoint that reliably runs
+  // before anything reads or writes. Cached as a promise so concurrent calls share a single run.
+  if (!migrationPromise) migrationPromise = migrateLegacyStorage()
+  await migrationPromise
+
   const data = await readJson(appDataFile(), { profiles: [], defaultProfileId: null, lastActiveProfileId: null })
   const recovered = await recoverOrphanedProfiles(data)
 

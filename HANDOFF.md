@@ -1,4 +1,4 @@
-# Handoff — MTG Deck Builder
+# Handoff — DoubleStrike
 
 Read this first if you're picking this project back up. It's a Vite + React + TypeScript single-page app: Scryfall search and deck building in one screen (no more tab-switching between Scryfall and a deck builder), with a pip-accurate "average turn castable" stat as the headline feature.
 
