@@ -289,6 +289,38 @@ describe('serialization round-trips', () => {
     expect(deserialize(JSON.stringify(bad))).toBeNull()
   })
 
+  it('TAP_CARD round-trips in both tap directions', () => {
+    for (const tapped of [true, false]) {
+      const msg: NetMessage = { type: 'TAP_CARD', v: PROTOCOL_VERSION, toPlayerId: 'p2', instanceId: 'i9', tapped }
+      expect(deserialize(serialize(msg))).toEqual(msg)
+    }
+  })
+
+  it('rejects a TAP_CARD missing tapped', () => {
+    const bad = { type: 'TAP_CARD', v: PROTOCOL_VERSION, toPlayerId: 'p2', instanceId: 'i9' }
+    expect(deserialize(JSON.stringify(bad))).toBeNull()
+  })
+
+  it('rejects a TAP_CARD missing toPlayerId', () => {
+    const bad = { type: 'TAP_CARD', v: PROTOCOL_VERSION, instanceId: 'i9', tapped: true }
+    expect(deserialize(JSON.stringify(bad))).toBeNull()
+  })
+
+  it('FLIP_CARD round-trips', () => {
+    const msg: NetMessage = { type: 'FLIP_CARD', v: PROTOCOL_VERSION, toPlayerId: 'p2', instanceId: 'i9' }
+    expect(deserialize(serialize(msg))).toEqual(msg)
+  })
+
+  it('rejects a FLIP_CARD missing instanceId', () => {
+    const bad = { type: 'FLIP_CARD', v: PROTOCOL_VERSION, toPlayerId: 'p2' }
+    expect(deserialize(JSON.stringify(bad))).toBeNull()
+  })
+
+  it('rejects a FLIP_CARD missing toPlayerId', () => {
+    const bad = { type: 'FLIP_CARD', v: PROTOCOL_VERSION, instanceId: 'i9' }
+    expect(deserialize(JSON.stringify(bad))).toBeNull()
+  })
+
   it('TURN_PASS round-trips', () => {
     const msg: NetMessage = { type: 'TURN_PASS', v: PROTOCOL_VERSION, activeSeat: 2 }
     expect(deserialize(serialize(msg))).toEqual(msg)

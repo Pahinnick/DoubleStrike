@@ -7,11 +7,15 @@ type Props = {
   onClick?: () => void
   onContextMenu?: () => void
   onDropCard?: (data: DraggedGameCard) => void
+  /** Currently only wired up for the library pile — see PlaytestView's libraryHovered, which the
+   *  F-key "flip top of library" shortcut targets the same way Delete targets hoveredInstanceId. */
+  onMouseEnter?: () => void
+  onMouseLeave?: () => void
   children?: ReactNode
 }
 
 /** A stacked zone (library, graveyard, exile, command): shows its top card (or a card back), its count, and accepts drops. */
-function ZonePile({ label, count, onClick, onContextMenu, onDropCard, children }: Props) {
+function ZonePile({ label, count, onClick, onContextMenu, onDropCard, onMouseEnter, onMouseLeave, children }: Props) {
   function handleDrop(event: DragEvent) {
     event.preventDefault()
     const data = getGameDragData(event)
@@ -23,6 +27,8 @@ function ZonePile({ label, count, onClick, onContextMenu, onDropCard, children }
       className="zone-pile"
       onDragOver={onDropCard ? (event) => event.preventDefault() : undefined}
       onDrop={onDropCard ? handleDrop : undefined}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
     >
       <div
         className={`zone-pile__slot ${onClick ? 'is-clickable' : ''}`}

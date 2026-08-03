@@ -2,7 +2,9 @@ type Shortcut = { keys: string; description: string }
 
 const KEYBOARD_SHORTCUTS: Shortcut[] = [
   { keys: '1 – 4', description: 'Center the camera on that seat (multiplayer pod only)' },
-  { keys: '0 or F', description: 'Fit the whole table in view (multiplayer pod only)' },
+  { keys: '0', description: 'Fit the whole table in view (multiplayer pod only)' },
+  { keys: 'F', description: 'Flip the hovered double-faced card — or, hovering the library, flip its top card face-up/down' },
+  { keys: 'R', description: 'Shuffle your library (while hovering the library pile)' },
   { keys: 'Ctrl+Z / Cmd+Z', description: 'Undo' },
   { keys: 'Ctrl+Y or Ctrl+Shift+Z / Cmd+Shift+Z', description: 'Redo' },
   { keys: 'Esc', description: 'Close the open menu/dialog, or clear the current multi-selection' },

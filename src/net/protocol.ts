@@ -214,6 +214,35 @@ export type RelocateCardMessage = {
   atSeat?: Seat
 }
 
+/**
+ * Tap/untap a card on another player's board — the companion to RELOCATE_CARD's free-for-all
+ * table talk: once you've dragged someone's card onto your own quadrant ("taken" it, without the
+ * ownership transfer of GIVE_CARD), tapping it should work like tapping anything else on your
+ * board. The tap state still lives in the owner's GameState, so this is a directed request to
+ * that owner (same guest->host->target routing as RELOCATE_CARD); their client applies SET_TAPPED
+ * and the change comes back to everyone via their next STATE broadcast.
+ */
+export type TapCardMessage = {
+  type: 'TAP_CARD'
+  v: number
+  toPlayerId: string
+  instanceId: string
+  tapped: boolean
+}
+
+/**
+ * Flip a card face up/down on another player's board — same free-for-all table-talk
+ * companion to RELOCATE_CARD as TAP_CARD, just toggling `showBackFace` instead of
+ * `tapped`. Same directed guest->host->target routing; the owner's client applies
+ * FLIP_CARD and the change comes back to everyone via their next STATE broadcast.
+ */
+export type FlipCardMessage = {
+  type: 'FLIP_CARD'
+  v: number
+  toPlayerId: string
+  instanceId: string
+}
+
 /** A single die roll or coin flip result. */
 export type RollResult = { kind: 'die'; sides: number; value: number } | { kind: 'coin'; value: 'heads' | 'tails' }
 
@@ -306,6 +335,8 @@ export type NetMessage =
   | PlayerLeftMessage
   | GiveCardMessage
   | RelocateCardMessage
+  | TapCardMessage
+  | FlipCardMessage
   | RollMessage
   | PingMessage
   | TurnPassMessage
@@ -376,6 +407,16 @@ export function parseMessage(raw: unknown): ParseResult {
         (m.atSeat === undefined || isSeat(m.atSeat))
       ) {
         return { ok: true, msg: obj as RelocateCardMessage }
+      }
+      return { ok: false, reason: 'malformed' }
+    case 'TAP_CARD':
+      if (isNonEmptyString(m.toPlayerId) && isNonEmptyString(m.instanceId) && typeof m.tapped === 'boolean') {
+        return { ok: true, msg: obj as TapCardMessage }
+      }
+      return { ok: false, reason: 'malformed' }
+    case 'FLIP_CARD':
+      if (isNonEmptyString(m.toPlayerId) && isNonEmptyString(m.instanceId)) {
+        return { ok: true, msg: obj as FlipCardMessage }
       }
       return { ok: false, reason: 'malformed' }
     case 'ROLL':

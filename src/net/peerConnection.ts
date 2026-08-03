@@ -59,6 +59,10 @@ export type PeerConnectionEvents = {
   cardGiven: (card: GivenCard) => void
   /** Another player repositioned one of our own cards — reposition it locally, no ownership change. */
   cardRelocated: (card: RelocatedCard) => void
+  /** A directed tap/untap request for one of OUR cards (see TapCardMessage) — apply SET_TAPPED locally. */
+  cardTapRequested: (req: { instanceId: string; tapped: boolean }) => void
+  /** A directed flip request for one of OUR cards (see FlipCardMessage) — apply FLIP_CARD locally. */
+  cardFlipRequested: (req: { instanceId: string }) => void
   /** A die/coin roll from any player (including relayed ones from other guests). */
   roll: (playerId: string, name: string, roll: RollResult) => void
   /** A "look here" ping at a table-space point, from any player (including relayed ones). */
@@ -122,6 +126,8 @@ export class PeerConnection {
     playerLeft: new Set(),
     cardGiven: new Set(),
     cardRelocated: new Set(),
+    cardTapRequested: new Set(),
+    cardFlipRequested: new Set(),
     roll: new Set(),
     ping: new Set(),
     highlight: new Set(),
@@ -264,6 +270,14 @@ export class PeerConnection {
         // A guest repositioned a card on someone else's board; route it to that board's owner.
         this.deliverRelocate(msg)
         break
+      case 'TAP_CARD':
+        // A guest tapped/untapped a card on someone else's board; route it to that card's owner.
+        this.deliverTap(msg)
+        break
+      case 'FLIP_CARD':
+        // A guest flipped a card on someone else's board; route it to that card's owner.
+        this.deliverFlip(msg)
+        break
       case 'ROLL': {
         this.emit('roll', msg.playerId, msg.name, msg.roll)
         // Fan out to every other guest, same star-relay pattern as STATE.
@@ -354,6 +368,34 @@ export class PeerConnection {
     }
   }
 
+  /** Deliver a TAP_CARD to the card owner's client, same routing as deliverRelocate. */
+  private deliverTap(msg: Extract<NetMessage, { type: 'TAP_CARD' }>) {
+    if (msg.toPlayerId === this.local.playerId) {
+      this.emit('cardTapRequested', { instanceId: msg.instanceId, tapped: msg.tapped })
+      return
+    }
+    for (const guest of this.guests.values()) {
+      if (guest.playerId === msg.toPlayerId) {
+        this.sendTo(guest.conn, msg)
+        return
+      }
+    }
+  }
+
+  /** Deliver a FLIP_CARD to the card owner's client, same routing as deliverTap. */
+  private deliverFlip(msg: Extract<NetMessage, { type: 'FLIP_CARD' }>) {
+    if (msg.toPlayerId === this.local.playerId) {
+      this.emit('cardFlipRequested', { instanceId: msg.instanceId })
+      return
+    }
+    for (const guest of this.guests.values()) {
+      if (guest.playerId === msg.toPlayerId) {
+        this.sendTo(guest.conn, msg)
+        return
+      }
+    }
+  }
+
   private dropGuest(peerId: string) {
     const record = this.guests.get(peerId)
     if (!record) return
@@ -427,6 +469,18 @@ export class PeerConnection {
           this.emit('cardRelocated', { instanceId: msg.instanceId, x: msg.x, y: msg.y, atSeat: msg.atSeat })
         }
         break
+      case 'TAP_CARD':
+        // The host delivered a tap/untap request meant for one of our own cards.
+        if (msg.toPlayerId === this.local.playerId) {
+          this.emit('cardTapRequested', { instanceId: msg.instanceId, tapped: msg.tapped })
+        }
+        break
+      case 'FLIP_CARD':
+        // The host delivered a flip request meant for one of our own cards.
+        if (msg.toPlayerId === this.local.playerId) {
+          this.emit('cardFlipRequested', { instanceId: msg.instanceId })
+        }
+        break
       case 'ROLL':
         this.emit('roll', msg.playerId, msg.name, msg.roll)
         break
@@ -489,6 +543,34 @@ export class PeerConnection {
     const msg: NetMessage = { type: 'RELOCATE_CARD', v: PROTOCOL_VERSION, toPlayerId, instanceId, x, y, atSeat }
     if (this.role === 'host') {
       this.deliverRelocate(msg)
+    } else if (this.role === 'guest' && this.hostConn) {
+      this.sendTo(this.hostConn, msg)
+    }
+  }
+
+  /**
+   * Ask the owner of a card sitting on OUR board (a taken/relocated card) to tap or untap it.
+   * Same directed routing as relocateCard; the owner's client applies SET_TAPPED and the result
+   * comes back to everyone through their next STATE broadcast.
+   */
+  tapCard(toPlayerId: string, instanceId: string, tapped: boolean): void {
+    const msg: NetMessage = { type: 'TAP_CARD', v: PROTOCOL_VERSION, toPlayerId, instanceId, tapped }
+    if (this.role === 'host') {
+      this.deliverTap(msg)
+    } else if (this.role === 'guest' && this.hostConn) {
+      this.sendTo(this.hostConn, msg)
+    }
+  }
+
+  /**
+   * Ask the owner of a card sitting on OUR board (a taken/relocated card) to flip it face
+   * up/down. Same directed routing as tapCard; the owner's client applies FLIP_CARD and the
+   * result comes back to everyone through their next STATE broadcast.
+   */
+  flipCard(toPlayerId: string, instanceId: string): void {
+    const msg: NetMessage = { type: 'FLIP_CARD', v: PROTOCOL_VERSION, toPlayerId, instanceId }
+    if (this.role === 'host') {
+      this.deliverFlip(msg)
     } else if (this.role === 'guest' && this.hostConn) {
       this.sendTo(this.hostConn, msg)
     }

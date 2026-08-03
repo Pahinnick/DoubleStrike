@@ -318,6 +318,8 @@ function PlaytestView({ onClose }: Props) {
     leave: mpLeave,
     giveCard,
     relocateCard,
+    tapRemoteCard,
+    flipRemoteCard,
   } = useMultiplayer(
     {
       playerId,
@@ -332,6 +334,12 @@ function PlaytestView({ onClose }: Props) {
     (pingerId, name, x, y) => addPing(pingerId, name, x, y),
     // Another player repositioned one of our own cards — reposition it locally.
     (card) => dispatch({ type: 'RECEIVE_RELOCATED_CARD', instanceId: card.instanceId, x: card.x, y: card.y, atSeat: card.atSeat }),
+    // Another player tapped/untapped one of our own cards sitting on their board (a card they
+    // took via relocate) — apply it locally; our next STATE broadcast shows everyone.
+    (req) => dispatch({ type: 'SET_TAPPED', instanceId: req.instanceId, tapped: req.tapped }),
+    // Another player flipped one of our own cards sitting on their board (a card they took via
+    // relocate) — apply it locally; our next STATE broadcast shows everyone.
+    (req) => dispatch({ type: 'FLIP_CARD', instanceId: req.instanceId }),
     // Another player's card flash-highlight, relayed to us — just show it, nothing to broadcast back.
     (instanceId) => addHighlight(instanceId),
     // Another player's emoji reaction, relayed to us — just show it, nothing to broadcast back.
@@ -583,6 +591,10 @@ function PlaytestView({ onClose }: Props) {
   // own cards' wrapper divs, never opponents' (killing another player's permanent by hotkey
   // isn't something a keyboard shortcut should be able to do).
   const [hoveredInstanceId, setHoveredInstanceId] = useState<string | null>(null)
+  // Separate from hoveredInstanceId (battlefield cards only) since the library pile shows at
+  // most one card (its top) but isn't itself a GameCard the F-key handler can look up by id —
+  // see the F-key effect below and TOGGLE_REVEAL_TOP.
+  const [libraryHovered, setLibraryHovered] = useState(false)
   // Shift+drag-on-empty-canvas selection box (table-space corners, live while dragging) —
   // see handleCanvasMouseDown. Plain drag is reserved for panning, so this only ever starts
   // with shift held, same modifier as the individual-card multi-select click.
@@ -721,7 +733,9 @@ function PlaytestView({ onClose }: Props) {
     else centerCamera()
   }, [inPod, mySeatResolved, seatPending, centerOnSeat, centerCamera])
 
-  // Pod camera hotkeys: 1–4 center on that seat; 0 or F fits the whole table.
+  // Pod camera hotkeys: 1–4 center on that seat; 0 fits the whole table. F used to be an alias
+  // for this too, but now means "flip a card" (see the F-key effect below) — freed up since 0
+  // already covers fit-all on its own and doesn't need a second key sharing the job.
   useEffect(() => {
     if (!inPod) return
     const onKey = (event: KeyboardEvent) => {
@@ -732,7 +746,7 @@ function PlaytestView({ onClose }: Props) {
       if (event.key >= '1' && event.key <= '4') {
         event.preventDefault()
         centerOnSeat((Number(event.key) - 1) as Seat)
-      } else if (event.key === '0' || event.key === 'f' || event.key === 'F') {
+      } else if (event.key === '0') {
         event.preventDefault()
         fitAll()
       }
@@ -880,19 +894,35 @@ function PlaytestView({ onClose }: Props) {
   // A plain derived value like `battlefield`/`opponentBoards` themselves above, not useMemo'd,
   // since its own inputs are already fresh references every render.
   type SkinLayer = { key: string; origin: { x: number; y: number }; skin: BattlefieldSkin; points: { x: number; y: number; tapped: boolean }[] }
+  // A card's shader point belongs with whichever quadrant it's actually SHOWING in right now
+  // (atSeat, when someone's relocated it elsewhere), not with whichever board's array it lives
+  // in — otherwise a relocated card leaves a ghost point glowing on its home quadrant forever
+  // (nothing rendered there to explain it) while never lighting up the quadrant it actually
+  // landed on. `x`/`y` are already stored relative to that effective seat's own origin (same
+  // convention the battlefield-card render loops above use), so no extra translation needed.
+  const allSeatedCards: { atOrigin: Seat; x: number; y: number; tapped: boolean }[] = [
+    ...battlefield.map((c) => ({ atOrigin: c.atSeat ?? mySeatResolved, x: c.x ?? 0, y: c.y ?? 0, tapped: !!c.tapped })),
+    ...opponentBoards.flatMap((board) =>
+      board.battlefield.map((pc) => ({ atOrigin: pc.atSeat ?? board.seat, x: pc.x, y: pc.y, tapped: !!pc.tapped })),
+    ),
+  ]
+  const pointsForSeat = (seat: Seat) =>
+    allSeatedCards
+      .filter((c) => c.atOrigin === seat)
+      .map((c) => ({ x: c.x + CARD_W_PX / 2, y: c.y + CARD_H_PX / 2, tapped: c.tapped }))
   const skinLayers: SkinLayer[] = inPod
     ? [
         {
           key: `skin-${mySeatResolved}`,
           origin: myOrigin,
           skin: battlefieldSkin,
-          points: battlefield.map((c) => ({ x: (c.x ?? 0) + CARD_W_PX / 2, y: (c.y ?? 0) + CARD_H_PX / 2, tapped: !!c.tapped })),
+          points: pointsForSeat(mySeatResolved),
         },
         ...opponentBoards.map((board) => ({
           key: `skin-${board.seat}`,
           origin: seatOrigin(board.seat, CANVAS_W, CANVAS_H),
           skin: normalizeBattlefieldSkin(board.battlefieldSkin),
-          points: board.battlefield.map((pc) => ({ x: pc.x + CARD_W_PX / 2, y: pc.y + CARD_H_PX / 2, tapped: !!pc.tapped })),
+          points: pointsForSeat(board.seat),
         })),
       ]
     : [
@@ -1169,14 +1199,20 @@ function PlaytestView({ onClose }: Props) {
     dispatch({ type: 'MOVE_CARD', instanceId, toZone, libraryPosition: 'top' })
   }
 
-  /** Real Magic requires shuffling your library after searching it (a tutor effect) — do that
-   *  automatically whenever the library viewer closes, regardless of whether a card was taken. */
+  /** Closing the tutor deliberately does NOT auto-shuffle (it used to — user found the forced
+   *  shuffle on every library peek/right-click more annoying than helpful). Real Magic does
+   *  require shuffling after a search, but that's now the player's own call via the R shortcut
+   *  (hover the library, press R — see the R-key effect), like reaching for your deck at a real
+   *  table. The viewer's note text reminds them. */
   function closeViewer() {
-    if (viewerZone === 'library') {
-      dispatch({ type: 'SHUFFLE_LIBRARY', shuffledOrder: shuffle(library.map((c) => c.instanceId)) })
-      playCue('shuffle')
-    }
     setViewerZone(null)
+  }
+
+  /** Shuffles the library, with the cue — shared by the R shortcut and anything else that wants
+   *  an explicit shuffle. */
+  function shuffleLibrary() {
+    dispatch({ type: 'SHUFFLE_LIBRARY', shuffledOrder: shuffle(library.map((c) => c.instanceId)) })
+    playCue('shuffle')
   }
 
   function startScryOrSurveil(mode: 'scry' | 'surveil', count: number) {
@@ -1710,6 +1746,84 @@ function PlaytestView({ onClose }: Props) {
   }
 
   const snapshotFor = (scryfallId: string) => snapshots.get(scryfallId)
+
+  // F: flip whatever's relevant under the cursor, matching real-table "flip that" talk —
+  //  - a hovered battlefield card that's actually double-faced flips to its other face
+  //    (dispatches the same FLIP_CARD the card's own right-click menu offers)
+  //  - otherwise, hovering the library pile flips its top card face-up/down (TOGGLE_REVEAL_TOP,
+  //    same action as the Actions tray's Reveal/Hide Top Card button)
+  // A specific hovered flippable card wins over the library fallback, same priority the
+  // Delete-key handler above gives an explicit target over an implicit one. (Placed here, well
+  // after battlefield/library/snapshotFor are declared, since the effect below closes over them
+  // directly in its dependency array — not just inside the deferred keydown callback — so they
+  // need to already exist by the time this line itself runs, not just by the time a key is
+  // actually pressed.)
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) {
+        return
+      }
+      if (event.key !== 'f' && event.key !== 'F') return
+      if (hoveredInstanceId) {
+        const hoveredCard = battlefield.find((c) => c.instanceId === hoveredInstanceId)
+        const snapshot = hoveredCard ? snapshotFor(hoveredCard.scryfallId) : undefined
+        if (hoveredCard && snapshot && isFlippableSnapshot(snapshot)) {
+          event.preventDefault()
+          dispatch({ type: 'FLIP_CARD', instanceId: hoveredInstanceId })
+          return
+        }
+        // Not one of ours — maybe it's a card someone relocated onto our own quadrant (a
+        // "taken" card, same free-for-all as tapRemoteCard's onClick counterpart above):
+        // still flippable from here, just routed to its real owner via a directed FLIP_CARD
+        // instead of a local dispatch.
+        if (!hoveredCard && inPod) {
+          for (const board of opponentBoards) {
+            const pc = board.battlefield.find((c) => c.instanceId === hoveredInstanceId)
+            if (!pc) continue
+            if (pc.atSeat !== undefined && pc.atSeat === mySeatResolved) {
+              const remoteSnapshot = pc.faceDown ? undefined : snapshotFor(pc.scryfallId)
+              if (remoteSnapshot && isFlippableSnapshot(remoteSnapshot)) {
+                event.preventDefault()
+                flipRemoteCard(board.playerId, pc.instanceId)
+              }
+            }
+            return
+          }
+        }
+      }
+      if (libraryHovered && library.length > 0) {
+        event.preventDefault()
+        dispatch({ type: 'TOGGLE_REVEAL_TOP' })
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [hoveredInstanceId, battlefield, libraryHovered, library, dispatch, snapshotFor, inPod, opponentBoards, mySeatResolved, flipRemoteCard])
+
+  // R: shuffle the hovered library — the explicit replacement for the old shuffle-on-tutor-close
+  // behavior (see closeViewer). Library only: it's the one zone whose order is hidden information;
+  // graveyard/exile are public ordered piles where "shuffle" isn't a real Magic action.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) {
+        return
+      }
+      if (event.key !== 'r' && event.key !== 'R') return
+      if (event.ctrlKey || event.metaKey) return // never eat the browser's own reload shortcut
+      if (libraryHovered && library.length > 1) {
+        event.preventDefault()
+        shuffleLibrary()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+    // shuffleLibrary is a plain per-render function; library (which it closes over) standing in
+    // for it here keeps the closure fresh without re-subscribing on unrelated renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [libraryHovered, library, dispatch])
+
   // Own-deck cosmetic foil lookup — GameCard doesn't carry it (see FoilKind's doc), so every
   // own-card render site looks it up here by printing. Never consulted for opponents' cards
   // (their foil choice is local to their own client and never sent over the wire).
@@ -2049,8 +2163,17 @@ function PlaytestView({ onClose }: Props) {
             {inPod &&
               opponentBoards.flatMap((board) => {
                 return board.battlefield.map((pc) => {
-                  const origin = seatOrigin(pc.atSeat ?? board.seat, CANVAS_W, CANVAS_H)
-                  const foreign = pc.ownerSeat !== undefined && pc.ownerSeat !== board.seat
+                  const displaySeat = pc.atSeat ?? board.seat
+                  // ownerSeat only records a GIVE_CARD's original owner — for a card that's
+                  // merely been relocated (never given), the true owner is whichever board's
+                  // battlefield array it actually lives in (board.seat), same as displaySeat
+                  // would be absent a relocate. Comparing against that instead of ownerSeat
+                  // alone means a relocated-but-not-given card also gets ringed, not just a
+                  // given one — a relocate is a visual move only, so the owner never stops
+                  // being whoever's board this data lives on.
+                  const trueOwnerSeat = pc.ownerSeat ?? board.seat
+                  const origin = seatOrigin(displaySeat, CANVAS_W, CANVAS_H)
+                  const foreign = displaySeat !== trueOwnerSeat
                   const pos = mirror(pc.x + origin.x, pc.y + origin.y, CARD_W_PX, CARD_H_PX)
                   return (
                   <div
@@ -2059,7 +2182,7 @@ function PlaytestView({ onClose }: Props) {
                     style={{
                       left: pos.x,
                       top: pos.y,
-                      ...(foreign ? { '--owner-color': SEAT_COLORS[pc.ownerSeat!] } : {}),
+                      ...(foreign ? { '--owner-color': SEAT_COLORS[trueOwnerSeat] } : {}),
                     } as CSSProperties}
                   >
                     <PlaytestCard
@@ -2068,7 +2191,18 @@ function PlaytestView({ onClose }: Props) {
                       hidden={pc.faceDown}
                       entering={enteringOpponentIds.has(pc.instanceId)}
                       onClick={(event) => {
-                        if (event.altKey) sendHighlight(pc.instanceId)
+                        if (event.altKey) {
+                          sendHighlight(pc.instanceId)
+                          return
+                        }
+                        // A card someone relocated ("gave a seat") onto MY quadrant should tap
+                        // like anything else on my board, even though its state lives with its
+                        // owner — send them a directed TAP_CARD; their STATE broadcast echoes
+                        // the result back to the whole pod. Cards on anyone else's quadrant
+                        // stay tap-inert from here: those remain their controller's business.
+                        if (pc.atSeat !== undefined && pc.atSeat === mySeatResolved) {
+                          tapRemoteCard(board.playerId, pc.instanceId, !pc.tapped)
+                        }
                       }}
                       gameCard={{
                         instanceId: pc.instanceId,
@@ -2101,7 +2235,11 @@ function PlaytestView({ onClose }: Props) {
 
             {/* Your own battlefield — interactive, offset into your quadrant. */}
             {battlefield.map((gameCard) => {
-              const foreign = gameCard.ownerSeat !== undefined && gameCard.ownerSeat !== mySeatResolved
+              // Same displaySeat-vs-trueOwnerSeat comparison as the opponent-board loop above —
+              // a card of mine that got relocated (not given) onto someone else's quadrant should
+              // still ring in my color, not just a card that was actually given away.
+              const trueOwnerSeat = gameCard.ownerSeat ?? mySeatResolved
+              const foreign = (gameCard.atSeat ?? mySeatResolved) !== trueOwnerSeat
               const isSelected = selectedIds.has(gameCard.instanceId)
               const groupOffsets =
                 isSelected && selectedIds.size > 1
@@ -2124,7 +2262,7 @@ function PlaytestView({ onClose }: Props) {
                 style={{
                   left: pos.x,
                   top: pos.y,
-                  ...(foreign ? { '--owner-color': SEAT_COLORS[gameCard.ownerSeat!] } : {}),
+                  ...(foreign ? { '--owner-color': SEAT_COLORS[trueOwnerSeat] } : {}),
                 } as CSSProperties}
                 onMouseEnter={() => setHoveredInstanceId(gameCard.instanceId)}
                 onMouseLeave={() => setHoveredInstanceId((cur) => (cur === gameCard.instanceId ? null : cur))}
@@ -2369,6 +2507,8 @@ function PlaytestView({ onClose }: Props) {
             // going to the top, matching the same option already offered by that card's own
             // right-click menu.
             onDropCard={(data) => dropToZone('library', data.fromZone === 'hand' ? 'bottom' : 'top')(data)}
+            onMouseEnter={() => setLibraryHovered(true)}
+            onMouseLeave={() => setLibraryHovered(false)}
           >
             {library.length > 0 &&
               (state.revealTopOfLibrary && topOfLibrary ? (
@@ -2534,7 +2674,7 @@ function PlaytestView({ onClose }: Props) {
           }))}
           onMove={moveFromViewer}
           onClose={closeViewer}
-          note={viewerZone === 'library' ? 'Your library will be reshuffled when you close this.' : undefined}
+          note={viewerZone === 'library' ? 'Searching your library means shuffling afterward — hover the library pile and press R.' : undefined}
           searchable={viewerZone === 'library'}
         />
       )}

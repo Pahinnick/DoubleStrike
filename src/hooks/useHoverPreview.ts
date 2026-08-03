@@ -29,11 +29,12 @@ export function useHoverPreview(
   { onMouseEnter: (event: PointerTarget) => void; onMouseMove: (event: PointerTarget) => void; onMouseLeave: () => void; onFocus: (event: FocusTarget) => void; onBlur: () => void },
   { x: number; y: number },
 ] {
-  const { setHover } = useHoverPreviewContext()
+  const { setHover, setHoverElement } = useHoverPreviewContext()
   const [foilPoint, setFoilPoint] = useState(CENTER)
 
   const showAtCursor = useCallback(
     (event: PointerTarget) => {
+      setHoverElement(event.currentTarget)
       if (foil) {
         const rect = event.currentTarget.getBoundingClientRect()
         const point = { x: (event.clientX - rect.left) / rect.width, y: (event.clientY - rect.top) / rect.height }
@@ -43,19 +44,23 @@ export function useHoverPreview(
       }
       setHover({ card, point: { x: event.clientX, y: event.clientY }, face, counters })
     },
-    [card, face, counters, foil, setHover],
+    [card, face, counters, foil, setHover, setHoverElement],
   )
 
   // Keyboard focus has no cursor position, so fall back to the anchor's edge.
   const showAtAnchor = useCallback(
     (event: FocusTarget) => {
+      setHoverElement(event.currentTarget)
       const rect = event.currentTarget.getBoundingClientRect()
       setHover({ card, point: { x: rect.right, y: rect.top }, face, counters, foil, foilPoint: foil ? CENTER : undefined })
     },
-    [card, face, counters, foil, setHover],
+    [card, face, counters, foil, setHover, setHoverElement],
   )
 
-  const hide = useCallback(() => setHover(null), [setHover])
+  const hide = useCallback(() => {
+    setHoverElement(null)
+    setHover(null)
+  }, [setHover, setHoverElement])
 
   return [
     {

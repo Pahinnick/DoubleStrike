@@ -77,16 +77,30 @@ function PlaytestCard({ gameCard, snapshot, onClick, onContextMenu, readOnly, re
       ? {
           draggable: true,
           onDragStart: (event: DragEvent) => {
+            // Same failed-drag click guard as the interactive branch below — this used to not
+            // matter here (a readOnly card's plain click did nothing), but now that clicking a
+            // taken card taps it (see PlaytestView's opponent-loop onClick), a cancelled
+            // reposition-drag must not fall through and register as a spurious tap.
+            didDrag.current = true
             setGameDragData(event, { instanceId: gameCard.instanceId, fromZone: 'battlefield', fromPlayerId: remoteOwnerId })
           },
-          onDragEnd: () => clearCurrentDragData(),
+          onDragEnd: () => {
+            clearCurrentDragData()
+            setTimeout(() => (didDrag.current = false), 0)
+          },
         }
       : {}
     return (
       <div
         className={`playtest-card playtest-card--readonly ${gameCard.tapped ? 'is-tapped' : ''} ${entering ? 'playtest-card--entering' : ''}`}
         aria-label={name}
-        onClick={onClick}
+        onClick={(event) => {
+          if (didDrag.current) {
+            didDrag.current = false
+            return
+          }
+          onClick?.(event)
+        }}
         {...remoteDragHandlers}
         {...(snapshot && !hidden ? { ...hoverHandlers, onMouseEnter: handleMouseEnter } : {})}
       >

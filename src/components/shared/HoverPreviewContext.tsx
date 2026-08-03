@@ -25,6 +25,10 @@ const PREVIEW_SCALE_STEP = 0.1
 type HoverPreviewContextValue = {
   hover: HoverState
   setHover: (state: HoverState) => void
+  /** Records which DOM element the current hover actually came from, purely so the
+   *  disconnection-watching MutationObserver below knows what to check — not meant for consumers,
+   *  see useHoverPreview. Pass null when clearing hover. */
+  setHoverElement: (el: Element | null) => void
   /** Multiplier on the preview's base size — a per-session zoom preference (Alt+scroll while
    *  hovering any card), not per-hover: it persists across cards until changed again. */
   previewScale: number
@@ -38,10 +42,16 @@ export function HoverPreviewProvider({ children }: { children: ReactNode }) {
   // Wheel listener below is added once (on window, not re-subscribed on every mousemove-driven
   // hover update), so it reads the *current* hover through a ref rather than a stale closure.
   const hoverRef = useRef<HoverState>(null)
+  // The element the current hover came from — see the MutationObserver below and setHoverElement.
+  const hoverElRef = useRef<Element | null>(null)
 
   const setHover = useCallback((state: HoverState) => {
     hoverRef.current = state
     setHoverState(state)
+  }, [])
+
+  const setHoverElement = useCallback((el: Element | null) => {
+    hoverElRef.current = el
   }, [])
 
   // HTML5 drag-and-drop suppresses normal mouse events for the duration of a
@@ -54,6 +64,23 @@ export function HoverPreviewProvider({ children }: { children: ReactNode }) {
     }
     document.addEventListener('dragstart', clearOnDragStart, true)
     return () => document.removeEventListener('dragstart', clearOnDragStart, true)
+  }, [setHover])
+
+  // The same "no mouseleave fires" problem as the dragstart case above, but for a different
+  // trigger: clicking a card to delete or play it removes that exact DOM node — out from under a
+  // cursor that never actually moved — as a direct result of the click. The browser has nothing
+  // to fire a mouseleave over, since as far as it's concerned the pointer never left the element;
+  // the element just isn't there anymore. Rather than patching every individual click handler that
+  // can remove a hovered card (deck row "Remove", playing a hand card, moving a battlefield card
+  // to a zone, etc. — an easy list to grow and easy to miss one of), watch broadly: whenever
+  // anything in the document changes, check whether the element the current hover came from is
+  // still actually attached, and clear the preview if not.
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      if (hoverElRef.current && !hoverElRef.current.isConnected) setHover(null)
+    })
+    observer.observe(document.body, { childList: true, subtree: true })
+    return () => observer.disconnect()
   }, [setHover])
 
   // Alt+scroll while hovering any card resizes the shared preview popup, for readability.
@@ -74,7 +101,11 @@ export function HoverPreviewProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('wheel', onWheel)
   }, [])
 
-  return <HoverPreviewContext.Provider value={{ hover, setHover, previewScale }}>{children}</HoverPreviewContext.Provider>
+  return (
+    <HoverPreviewContext.Provider value={{ hover, setHover, setHoverElement, previewScale }}>
+      {children}
+    </HoverPreviewContext.Provider>
+  )
 }
 
 export function useHoverPreviewContext(): HoverPreviewContextValue {

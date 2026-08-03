@@ -41,6 +41,10 @@ export type MultiplayerSession = {
   giveCard: (toPlayerId: string, card: GivenCard) => void
   /** Reposition a card on another player's board, without taking control of it. No-op when not connected. */
   relocateCard: (toPlayerId: string, instanceId: string, x: number, y: number, atSeat?: Seat) => void
+  /** Ask a card's owner to tap/untap it (a taken card sitting on our board). No-op when not connected. */
+  tapRemoteCard: (toPlayerId: string, instanceId: string, tapped: boolean) => void
+  /** Ask a card's owner to flip it face up/down (a taken card sitting on our board). No-op when not connected. */
+  flipRemoteCard: (toPlayerId: string, instanceId: string) => void
   /** Publish a die/coin roll to the pod. No-op when not connected. */
   broadcastRoll: (roll: RollResult) => void
   /** Publish a "look here" ping (table-space x/y) to the pod. No-op when not connected. */
@@ -64,6 +68,8 @@ export function useMultiplayer(
   onRollReceived?: (playerId: string, name: string, roll: RollResult) => void,
   onPingReceived?: (playerId: string, name: string, x: number, y: number) => void,
   onCardRelocated?: (card: RelocatedCard) => void,
+  onCardTapRequested?: (req: { instanceId: string; tapped: boolean }) => void,
+  onCardFlipRequested?: (req: { instanceId: string }) => void,
   onHighlightReceived?: (instanceId: string) => void,
   onReactionReceived?: (playerId: string, name: string, emoji: string) => void,
 ): MultiplayerSession {
@@ -77,6 +83,10 @@ export function useMultiplayer(
   onCardReceivedRef.current = onCardReceived
   const onCardRelocatedRef = useRef(onCardRelocated)
   onCardRelocatedRef.current = onCardRelocated
+  const onCardTapRequestedRef = useRef(onCardTapRequested)
+  onCardTapRequestedRef.current = onCardTapRequested
+  const onCardFlipRequestedRef = useRef(onCardFlipRequested)
+  onCardFlipRequestedRef.current = onCardFlipRequested
   const onRollReceivedRef = useRef(onRollReceived)
   onRollReceivedRef.current = onRollReceived
   const onPingReceivedRef = useRef(onPingReceived)
@@ -137,6 +147,8 @@ export function useMultiplayer(
     })
     conn.on('cardGiven', (card) => onCardReceivedRef.current?.(card))
     conn.on('cardRelocated', (card) => onCardRelocatedRef.current?.(card))
+    conn.on('cardTapRequested', (req) => onCardTapRequestedRef.current?.(req))
+    conn.on('cardFlipRequested', (req) => onCardFlipRequestedRef.current?.(req))
     conn.on('roll', (playerId, name, roll) => onRollReceivedRef.current?.(playerId, name, roll))
     conn.on('ping', (playerId, name, x, y) => onPingReceivedRef.current?.(playerId, name, x, y))
     conn.on('highlight', (instanceId) => onHighlightReceivedRef.current?.(instanceId))
@@ -176,6 +188,14 @@ export function useMultiplayer(
 
   const relocateCard = useCallback((toPlayerId: string, instanceId: string, x: number, y: number, atSeat?: Seat) => {
     connRef.current?.relocateCard(toPlayerId, instanceId, x, y, atSeat)
+  }, [])
+
+  const tapRemoteCard = useCallback((toPlayerId: string, instanceId: string, tapped: boolean) => {
+    connRef.current?.tapCard(toPlayerId, instanceId, tapped)
+  }, [])
+
+  const flipRemoteCard = useCallback((toPlayerId: string, instanceId: string) => {
+    connRef.current?.flipCard(toPlayerId, instanceId)
   }, [])
 
   const broadcastRoll = useCallback((roll: RollResult) => {
@@ -228,6 +248,8 @@ export function useMultiplayer(
     broadcast,
     giveCard,
     relocateCard,
+    tapRemoteCard,
+    flipRemoteCard,
     broadcastRoll,
     broadcastPing,
     broadcastHighlight,

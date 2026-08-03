@@ -258,3 +258,14 @@ input, select {
   border-radius: 6px;
   padding: 0.4em 0.6em;
 }
+
+/* The rule above is meant for text/number/select boxes — applied to type=range too, its padding
+   and border inset the native track away from the element's true edges, so the thumb visibly
+   can't reach either end even though the underlying value does hit 0/1 correctly (e.g.
+   TableRadio's volume slider). Reset those specifically so the track spans the full element. */
+input[type='range'] {
+  padding: 0;
+  border: none;
+  background: none;
+  accent-color: var(--accent);
+}

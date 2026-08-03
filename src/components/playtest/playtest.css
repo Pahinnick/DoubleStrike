@@ -1251,9 +1251,13 @@
   cursor: default;
 }
 
-/* A card controlled by someone other than its owner (given away): ring in the
-   owner's seat color so everyone can see whose card it is. */
-.playtest__battlefield-card.is-foreign {
+/* A card controlled by someone other than its owner (given away, or merely relocated onto
+   someone else's board): ring in the owner's seat color so everyone can see whose card it is.
+   Targets the INNER .playtest-card, not this wrapper — is-tapped's rotate(90deg) lives on that
+   same inner element, so the ring has to be there too or it stays a static square while the
+   card spins inside it (--owner-color itself is still set on the wrapper above; custom
+   properties inherit down to this selector fine). */
+.playtest__battlefield-card.is-foreign .playtest-card {
   border-radius: 6px;
   box-shadow: 0 0 0 2px var(--owner-color), 0 0 8px -2px var(--owner-color);
 }
@@ -2007,6 +2011,17 @@
   border: 1px solid var(--border-subtle);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
   white-space: nowrap;
+}
+
+/* Scrolls independently of .table-radio__volume below it (see the comment on the wrapping div in
+   TableRadio.tsx) — 46 stations at ~30px each would otherwise run well past the bottom of the
+   viewport with no way to reach the ones further down. */
+.table-radio__stations {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  max-height: 320px;
+  overflow-y: auto;
 }
 
 .table-radio__option {
