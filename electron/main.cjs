@@ -101,6 +101,14 @@ async function resolveBaseUrl() {
   return serveDist(distDir)
 }
 
+// A packaged .exe already gets its taskbar/titlebar icon from the resource electron-builder
+// embeds (from build.icon in package.json) — this option only actually matters in DEV, where an
+// unpackaged Electron process otherwise shows the generic Electron icon instead of DoubleStrike's.
+// Explicitly undefined once packaged rather than pointing at build/icon.png regardless: that path
+// isn't part of build.files, so it wouldn't exist in a packaged app anyway (Electron would just
+// silently ignore it) — being explicit here is clearer than relying on that silent fallback.
+const APP_ICON = app.isPackaged ? undefined : path.join(__dirname, '..', 'build', 'icon.png')
+
 function createMainWindow(baseUrl) {
   const win = new BrowserWindow({
     width: 1400,
@@ -109,6 +117,7 @@ function createMainWindow(baseUrl) {
     minHeight: 600,
     backgroundColor: '#16171a',
     autoHideMenuBar: true,
+    icon: APP_ICON,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,

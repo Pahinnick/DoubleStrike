@@ -7,6 +7,8 @@ const path = require('node:path')
 
 const DEFAULT_BOUNDS = { width: 1300, height: 860 }
 const SAVE_DEBOUNCE_MS = 400
+// See the matching constant/comment in main.cjs — only actually matters in dev (unpackaged) mode.
+const APP_ICON = app.isPackaged ? undefined : path.join(__dirname, '..', 'build', 'icon.png')
 
 function stateFile() {
   return path.join(app.getPath('userData'), 'playtest-window.json')
@@ -93,6 +95,7 @@ function openPlaytestWindow(baseUrl) {
     minHeight: 600,
     backgroundColor: '#16171a',
     autoHideMenuBar: true,
+    icon: APP_ICON,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,

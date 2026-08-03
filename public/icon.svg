@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <title>DoubleStrike</title>
+  <rect width="1024" height="1024" fill="#241016"/>
+
+  <!-- A full sword silhouette (pointed blade + crossguard + hilt + pommel) rather than a bare
+       tapered shape — the crossguard and pommel are what keep this reading unambiguously as a
+       sword instead of a leaf or icicle once reduced to favicon size. -->
+  <defs>
+    <g id="sword">
+      <polygon points="0,-320 32,-210 32,190 -32,190 -32,-210" stroke="#241016" stroke-width="14" stroke-linejoin="round"/>
+      <rect x="-85" y="178" width="170" height="24" rx="8"/>
+      <rect x="-13" y="200" width="26" height="70" rx="6"/>
+      <circle cx="0" cy="284" r="18"/>
+    </g>
+  </defs>
+
+  <!-- Echo: the SAME sword and rotation as the front one, just offset along the strike direction
+       and dimmed — that repetition (not a different angle) is what reads as "the same sword
+       landing a second time" rather than as two unrelated shapes. -->
+  <g transform="translate(600,600) rotate(-8)" fill="#e0632f" opacity="0.32">
+    <use href="#sword"/>
+  </g>
+
+  <g transform="translate(470,470) rotate(-8)" fill="#e0632f">
+    <use href="#sword"/>
+  </g>
+</svg>
