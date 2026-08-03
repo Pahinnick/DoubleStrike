@@ -20,6 +20,14 @@ export default defineConfig({
         rewrite: (path) => path.replace(/^\/archidekt/, ''),
       },
     },
+    watch: {
+      // Without this, `npm run dev` left running while `npm run electron:pack`/`electron:build`
+      // extracts a fresh Electron binary into release/win-unpacked.tmp causes a deterministic
+      // (not flaky) `EPERM: rename win-unpacked.tmp -> win-unpacked` on Windows — Vite's watcher
+      // holds open handles on the files as electron-builder writes them, and Windows (unlike
+      // POSIX) refuses to rename a directory with a file inside it still open elsewhere.
+      ignored: ['**/release/**'],
+    },
   },
   test: {
     environment: 'jsdom',
