@@ -198,6 +198,18 @@ html, body, #root {
 body {
   min-width: 320px;
   min-height: 100vh;
+  /* This is a desktop app, not a webpage — a click-drag across card names, buttons, or panels
+     shouldn't paint a browser-style text selection. Re-enabled explicitly below on the handful of
+     elements where selecting text is actually useful (search boxes, number inputs, etc). */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+input,
+textarea,
+select {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 button {
