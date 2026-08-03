@@ -12,7 +12,6 @@ import {
   type MouseEvent as ReactMouseEvent,
   type WheelEvent,
 } from 'react'
-import cardBackImage from '../../assets/card-back.svg'
 import { getCardById } from '../../api/scryfall'
 import { BATTLEFIELD_SKINS, normalizeBattlefieldSkin, useBattlefieldSkin, type BattlefieldSkin } from '../../hooks/useBattlefieldSkin'
 import { useCardSnapshots } from '../../hooks/useCardSnapshots'
@@ -1812,9 +1811,12 @@ function PlaytestView({ onClose }: Props) {
   // F: flip whatever's relevant under the cursor, matching real-table "flip that" talk —
   //  - a hovered battlefield card that's actually double-faced flips to its other face
   //    (dispatches the same FLIP_CARD the card's own right-click menu offers)
+  //  - a hovered battlefield card that ISN'T double-faced instead turns face down/up, same as
+  //    that card's own "Turn Face Down"/"Turn Face Up" context-menu action (SET_FACE_DOWN) —
+  //    "flip" for an ordinary card means physically turning it over, not transforming it
   //  - otherwise, hovering the library pile flips its top card face-up/down (TOGGLE_REVEAL_TOP,
   //    same action as the Actions tray's Reveal/Hide Top Card button)
-  // A specific hovered flippable card wins over the library fallback, same priority the
+  // A specific hovered card (flippable or not) wins over the library fallback, same priority the
   // Delete-key handler above gives an explicit target over an implicit one. (Placed here, well
   // after battlefield/library/snapshotFor are declared, since the effect below closes over them
   // directly in its dependency array — not just inside the deferred keydown callback — so they
@@ -1833,6 +1835,11 @@ function PlaytestView({ onClose }: Props) {
         if (hoveredCard && snapshot && isFlippableSnapshot(snapshot)) {
           event.preventDefault()
           dispatch({ type: 'FLIP_CARD', instanceId: hoveredInstanceId })
+          return
+        }
+        if (hoveredCard) {
+          event.preventDefault()
+          dispatch({ type: 'SET_FACE_DOWN', instanceId: hoveredInstanceId, faceDown: !hoveredCard.faceDown })
           return
         }
         // Not one of ours — maybe it's a card someone relocated onto our own quadrant (a
@@ -2600,7 +2607,8 @@ function PlaytestView({ onClose }: Props) {
             onMouseLeave={() => setLibraryHovered(false)}
           >
             {library.length > 0 &&
-              (state.revealTopOfLibrary && topOfLibrary ? (
+              topOfLibrary &&
+              (state.revealTopOfLibrary ? (
                 <PlaytestCard
                   readOnly
                   draggableFromZone="library"
@@ -2609,7 +2617,11 @@ function PlaytestView({ onClose }: Props) {
                   foil={foilFor(topOfLibrary.scryfallId)}
                 />
               ) : (
-                <img className="zone-pile__card-back" src={cardBackImage} alt="" title="Click to draw, right-click to search" />
+                // Still draggable even face-down — you can pick up your top card blind and send
+                // it to any zone (mill/impulse-style effects) without ever looking at it; only the
+                // reveal-top toggle actually shows what it is. `hidden` keeps the card-back visual
+                // identical to before this was made draggable.
+                <PlaytestCard readOnly hidden draggableFromZone="library" gameCard={topOfLibrary} snapshot={snapshotFor(topOfLibrary.scryfallId)} />
               ))}
           </ZonePile>
           <ZonePile

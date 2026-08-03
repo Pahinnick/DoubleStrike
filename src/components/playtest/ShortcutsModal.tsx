@@ -3,7 +3,11 @@ type Shortcut = { keys: string; description: string }
 const KEYBOARD_SHORTCUTS: Shortcut[] = [
   { keys: '1 – 4', description: 'Center the camera on that seat (multiplayer pod only)' },
   { keys: '0', description: 'Fit the whole table in view (multiplayer pod only)' },
-  { keys: 'F', description: 'Flip the hovered double-faced card — or, hovering the library, flip its top card face-up/down' },
+  {
+    keys: 'F',
+    description:
+      'Flip the hovered double-faced card to its other face; for any other card, turn it face down/up instead — or, hovering the library, flip its top card face-up/down',
+  },
   { keys: 'R', description: 'Shuffle your library (while hovering the library pile)' },
   { keys: 'Ctrl+Z / Cmd+Z', description: 'Undo' },
   { keys: 'Ctrl+Y or Ctrl+Shift+Z / Cmd+Shift+Z', description: 'Redo' },
@@ -24,8 +28,9 @@ const MOUSE_SHORTCUTS: Shortcut[] = [
     description: 'Add or remove one — for a power/toughness pile, click directly on the power or toughness number to move just that stat',
   },
   {
-    keys: 'Drag a revealed library card',
-    description: 'A revealed top card, or one shown by "Look at Top N" (Actions menu), can be dragged straight to any zone or the battlefield',
+    keys: 'Drag the top of your library',
+    description:
+      'Send it straight to any zone or the battlefield — works face down too (you won\'t see it while dragging), or reveal it first (Actions menu / F). "Look at Top N" shows several at once, each draggable the same way',
   },
 ]
 
