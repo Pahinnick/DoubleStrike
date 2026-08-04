@@ -50,9 +50,9 @@ function DeckPanel({ cardSize, onCardSizeChange }: Props) {
   }
 
   const uniqueIds = useMemo(() => [...new Set(deck.cards.map((c) => c.scryfallId))], [deck.cards])
-  const snapshots = useCardSnapshots(uniqueIds)
+  const [snapshots] = useCardSnapshots(uniqueIds)
   const cardNames = useMemo(() => [...new Set([...snapshots.values()].map((s) => s.name))], [snapshots])
-  const saltScores = useSaltScores(cardNames)
+  const [saltScores] = useSaltScores(cardNames)
 
   // Keyed by scryfallId+board (not just scryfallId) so the same printing sitting in both boards
   // at once doesn't cross-contaminate — e.g. a mainboard singleton violation shouldn't paint a red

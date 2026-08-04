@@ -9,7 +9,7 @@ const refreshedSlugs = new Set<string>()
 /** EDHREC salt score per card name (see api/edhrec.ts). Keyed by name, not scryfallId — salt
  *  lives on the oracle card, so every printing shares one score. A missing map entry means "not
  *  loaded yet"; a `null` value means "EDHREC has no score for this card" (a real answer). */
-export function useSaltScores(names: string[]): Map<string, number | null> {
+export function useSaltScores(names: string[]): [Map<string, number | null>, () => Promise<void>] {
   const [scores, setScores] = useState<Map<string, number | null>>(new Map())
   const namesKey = [...new Set(names)].sort().join('|')
 
@@ -64,5 +64,24 @@ export function useSaltScores(names: string[]): Map<string, number | null> {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [namesKey])
 
-  return scores
+  /** Unconditionally re-fetches every name from EDHREC, bypassing the staleness gate — for an
+   *  explicit user-triggered "refresh card data" action. fetchEdhrecSalt has no in-memory cache
+   *  of its own (unlike Scryfall's), so there's nothing else to bypass here. Deliberately a plain
+   *  function (recreated each render, not memoized) so it always closes over the current `names`. */
+  async function refresh() {
+    const uniqueNames = [...new Set(names)]
+    if (uniqueNames.length === 0) return
+    const fetched = await Promise.all(
+      uniqueNames.map(async (name) => ({ name, slug: edhrecSlug(name), salt: await fetchEdhrecSalt(name) })),
+    )
+    const snapshots: SaltSnapshot[] = fetched.map(({ slug, salt }) => ({ slug, salt, cachedAt: new Date().toISOString() }))
+    await saveSaltSnapshots(snapshots)
+    setScores((prev) => {
+      const next = new Map(prev)
+      for (const { name, salt } of fetched) next.set(name, salt)
+      return next
+    })
+  }
+
+  return [scores, refresh]
 }

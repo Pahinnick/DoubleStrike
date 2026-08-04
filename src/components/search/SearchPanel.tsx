@@ -37,7 +37,7 @@ function SearchPanel({ onAddCard, text, onTextChange, expanded, onExpand, onColl
     () => (deck.format === 'commander' ? deck.cards.filter((c) => c.isCommander).map((c) => c.scryfallId) : []),
     [deck.format, deck.cards],
   )
-  const commanderSnapshots = useCardSnapshots(commanderIds)
+  const [commanderSnapshots] = useCardSnapshots(commanderIds)
   const commanderIdentity = useMemo(() => {
     const identity = commanderIds.flatMap((id) => commanderSnapshots.get(id)?.color_identity ?? [])
     return [...new Set(identity.filter((c): c is Color => (WUBRG as readonly string[]).includes(c)))]

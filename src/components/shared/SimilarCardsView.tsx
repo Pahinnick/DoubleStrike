@@ -38,7 +38,7 @@ function SimilarCardsView({ onAddTagToSearch }: Props) {
     () => (deck.format === 'commander' ? deck.cards.filter((c) => c.isCommander).map((c) => c.scryfallId) : []),
     [deck.format, deck.cards],
   )
-  const commanderSnapshots = useCardSnapshots(commanderIds)
+  const [commanderSnapshots] = useCardSnapshots(commanderIds)
   const commanderIdentity = useMemo(() => {
     if (commanderIds.length === 0) return null
     // Wait for every commander's snapshot before filtering — with partners, filtering as soon as
@@ -59,7 +59,7 @@ function SimilarCardsView({ onAddTagToSearch }: Props) {
   const [selectedPrint, setSelectedPrint] = useState<ScryfallCard | null>(null)
 
   const saltLookupNames = useMemo(() => (openCard ? [openCard.name] : []), [openCard])
-  const saltScores = useSaltScores(saltLookupNames)
+  const [saltScores] = useSaltScores(saltLookupNames)
 
   // Load (or reuse) the tag index once — cached after the first open, even across drilling into other cards.
   useEffect(() => {

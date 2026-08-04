@@ -897,7 +897,7 @@ function PlaytestView({ onClose }: Props) {
     }
     return [...ids]
   }, [state.cards, boards, mockBoards])
-  const snapshots = useCardSnapshots(uniqueIds)
+  const [snapshots] = useCardSnapshots(uniqueIds)
 
   // Distinct tokens the deck's cards can make (from their Scryfall `related_tokens`), for the picker.
   // Deliberately scoped to just the deck's own real mainboard cards (not `snapshots.values()`

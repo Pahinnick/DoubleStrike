@@ -6,7 +6,7 @@ import { getSnapshots, isSnapshotStale, saveSnapshots, toSnapshot, type CardSnap
 // though multiple components (DeckPanel, DeckStatsPanel, PlaytestView) call this hook.
 const refreshedIds = new Set<string>()
 
-export function useCardSnapshots(ids: string[]): Map<string, CardSnapshot> {
+export function useCardSnapshots(ids: string[]): [Map<string, CardSnapshot>, () => Promise<void>] {
   const [snapshots, setSnapshots] = useState<Map<string, CardSnapshot>>(new Map())
   const idsKey = ids.join(',')
 
@@ -65,5 +65,25 @@ export function useCardSnapshots(ids: string[]): Map<string, CardSnapshot> {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [idsKey])
 
-  return snapshots
+  /** Unconditionally re-fetches every id from Scryfall, bypassing both the 7-day staleness gate
+   *  and the in-memory `cardCache` in api/scryfall.ts (a card touched earlier this session would
+   *  otherwise come back unchanged) — for an explicit user-triggered "refresh card data" action,
+   *  as opposed to the passive staleness-driven refresh above. Deliberately a plain function
+   *  (recreated each render, not memoized) so it always closes over the current `ids`. */
+  async function refresh() {
+    if (ids.length === 0) return
+    const cards = await getCardsByIdentifiers(
+      ids.map((id) => ({ id })),
+      { force: true },
+    )
+    if (cards.length === 0) return
+    await saveSnapshots(cards)
+    setSnapshots((prev) => {
+      const next = new Map(prev)
+      for (const card of cards) next.set(card.id, toSnapshot(card))
+      return next
+    })
+  }
+
+  return [snapshots, refresh]
 }

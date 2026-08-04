@@ -126,6 +126,28 @@
   color: var(--text-dim);
 }
 
+.stats-price-salt__refresh {
+  display: block;
+  width: 100%;
+  margin-bottom: 0.75rem;
+  padding: 0.35rem;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  background-color: transparent;
+  border: 1px dashed var(--border-subtle);
+  border-radius: 8px;
+}
+
+.stats-price-salt__refresh:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.stats-price-salt__refresh:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .stats-charts {
   display: flex;
   gap: 0.75rem;

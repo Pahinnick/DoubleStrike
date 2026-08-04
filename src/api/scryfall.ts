@@ -144,14 +144,17 @@ function chunk<T>(items: T[], size: number): T[][] {
 
 /**
  * Bulk-resolves cards by id, used to re-fetch a saved deck's cards.
- * Already-cached cards are served without a network call.
+ * Already-cached cards are served without a network call, unless `force` is set (a genuine
+ * "refresh from Scryfall" request — e.g. a card whose price/legality looked stale — needs to
+ * bypass this in-memory cache too, not just the IndexedDB-level staleness check in
+ * hooks/useCardSnapshots.ts, or a card touched earlier this session would just come back unchanged).
  */
-export async function getCardsByIdentifiers(identifiers: CardIdentifier[]): Promise<ScryfallCard[]> {
+export async function getCardsByIdentifiers(identifiers: CardIdentifier[], options?: { force?: boolean }): Promise<ScryfallCard[]> {
   const resolved: ScryfallCard[] = []
   const toFetch: CardIdentifier[] = []
 
   for (const identifier of identifiers) {
-    const cached = 'id' in identifier ? cardCache.get(identifier.id) : undefined
+    const cached = !options?.force && 'id' in identifier ? cardCache.get(identifier.id) : undefined
     if (cached) {
       resolved.push(cached)
     } else {

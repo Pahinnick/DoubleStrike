@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { computeCastabilityIndex } from '../../engine/castability'
 import { computeColorPipTotals, computeManaCurve } from '../../engine/deckStats'
 import { parseManaCost } from '../../engine/manaCost'
@@ -45,7 +45,7 @@ function DeckStatsPanel({ expanded, onExpand, onCollapse }: Props) {
   // Snapshots cover every board (not just mainboard) so legality checks can
   // flag banned cards sitting in the sideboard or commander slot too.
   const allUniqueIds = useMemo(() => [...new Set(deck.cards.map((c) => c.scryfallId))], [deck.cards])
-  const snapshots = useCardSnapshots(allUniqueIds)
+  const [snapshots, refreshSnapshots] = useCardSnapshots(allUniqueIds)
   // Token reference cards sit on the mainboard for visibility but aren't real deck contents —
   // excluded from every stat here the same way they're excluded from legality checking.
   const mainboard = useMemo(() => deck.cards.filter((c) => c.board === 'mainboard' && !c.isToken), [deck.cards])
@@ -69,7 +69,7 @@ function DeckStatsPanel({ expanded, onExpand, onCollapse }: Props) {
     () => [...new Set(mainboard.map((c) => snapshots.get(c.scryfallId)?.name).filter((n): n is string => !!n))],
     [mainboard, snapshots],
   )
-  const saltScores = useSaltScores(cardNames)
+  const [saltScores, refreshSaltScores] = useSaltScores(cardNames)
   const saltTotal = useMemo(() => {
     let total = 0
     let scored = 0
@@ -165,6 +165,23 @@ function DeckStatsPanel({ expanded, onExpand, onCollapse }: Props) {
     dispatch({ type: 'SET_MANA_OVERRIDE', override })
   }
 
+  const [refreshing, setRefreshing] = useState(false)
+
+  /** Force re-fetches price/legality (Scryfall) and salt score (EDHREC) for every card in the
+   *  deck, bypassing the normal 7-day staleness gate. Exists because a card's very first fetch
+   *  can land on a moment where Scryfall/EDHREC just don't have data yet (e.g. a set that only
+   *  just released) — that empty result otherwise gets cached and silently sits there for a full
+   *  week before the passive staleness check would even consider trying again. */
+  async function handleRefreshCardData() {
+    if (refreshing) return
+    setRefreshing(true)
+    try {
+      await Promise.all([refreshSnapshots(), refreshSaltScores()])
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
   if (!expanded) {
     return (
       <section className="app-pane stats-pane is-collapsed" aria-label="Deck statistics">
@@ -207,6 +224,15 @@ function DeckStatsPanel({ expanded, onExpand, onCollapse }: Props) {
               </span>
             </div>
           </div>
+          <button
+            type="button"
+            className="stats-price-salt__refresh"
+            onClick={handleRefreshCardData}
+            disabled={refreshing}
+            title="Re-fetch price, legality, and salt score for every card in this deck, even if recently cached"
+          >
+            {refreshing ? 'Refreshing…' : '↻ Refresh card data'}
+          </button>
           <div className="stats-charts">
             <div className="stats-charts__curve">
               <h3>Mana Curve</h3>
