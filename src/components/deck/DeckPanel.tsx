@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { getCachedCard } from '../../api/scryfall'
 import CardSizeToggle from '../shared/CardSizeToggle'
-import { COMMANDERS_LABEL, groupByCategory, groupByType, type DeckCardEntry } from '../../engine/deckGrouping'
+import { useCategoryRecommendationsContext } from '../shared/CategoryRecommendationsContext'
+import { COMMANDERS_LABEL, groupByCategory, groupByType, TOKEN_CARDS_LABEL, type DeckCardEntry } from '../../engine/deckGrouping'
 import { computeDeckLegality } from '../../engine/legality'
 import { useCardSnapshots } from '../../hooks/useCardSnapshots'
 import { useSaltScores } from '../../hooks/useSaltScores'
@@ -33,6 +34,7 @@ type Props = {
 function DeckPanel({ cardSize, onCardSizeChange }: Props) {
   const { deck, dispatch, addCard } = useDeck()
   const { jumpTarget, clearJumpTarget } = useJumpToCardContext()
+  const { setOpenCategory } = useCategoryRecommendationsContext()
   const [activeBoard, setActiveBoard] = useState<Board>('mainboard')
   const [layout, setLayout] = useState<Layout>('grid')
   const [groupBy, setGroupBy] = useState<GroupBy>('category')
@@ -249,6 +251,10 @@ function DeckPanel({ cardSize, onCardSizeChange }: Props) {
       {groups.map((group) => {
         const isCollapsed = group.label !== '' && collapsedGroups.has(group.label)
         const category = group.label === 'Uncategorized' ? undefined : group.label
+        // Recommendations are keyed off a real, user-assignable category — not the derived
+        // Commanders/Uncategorized/Token Cards sections, which aren't otag-driven groupings.
+        const isRecommendable =
+          groupBy === 'category' && category !== undefined && category !== COMMANDERS_LABEL && category !== TOKEN_CARDS_LABEL
         return (
           <DeckCardGroupDropZone
             key={group.label || 'all'}
@@ -273,7 +279,16 @@ function DeckPanel({ cardSize, onCardSizeChange }: Props) {
                     type="button"
                     className="deck-card-group__toggle"
                     aria-expanded={!isCollapsed}
+                    title={isRecommendable ? 'Right-click for card recommendations based on this category' : undefined}
                     onClick={() => toggleGroup(group.label)}
+                    onContextMenu={
+                      isRecommendable && category !== undefined
+                        ? (event) => {
+                            event.preventDefault()
+                            setOpenCategory(category)
+                          }
+                        : undefined
+                    }
                   >
                     <span className={`deck-card-group__chevron ${isCollapsed ? 'is-collapsed' : ''}`} aria-hidden="true">
                       ▸

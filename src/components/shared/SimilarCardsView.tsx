@@ -4,12 +4,12 @@ import { getCardPrints, getCardsByIdentifiers, getDisplayImage, ScryfallApiError
 import type { ScryfallCard } from '../../api/scryfallTypes'
 import { findSimilarCards, getTagsForCard } from '../../engine/similarCards'
 import { SIMILAR_SORT_OPTIONS, sortSimilarMatches, type SimilarSort } from '../../engine/similarCardSort'
-import { useCardSnapshots } from '../../hooks/useCardSnapshots'
+import { useCommanderColorIdentity } from '../../hooks/useCommanderColorIdentity'
 import { useSaltScores } from '../../hooks/useSaltScores'
 import { useDeck } from '../../state/DeckContext'
 import type { FoilKind } from '../../state/types'
 import { loadOrBuildTagIndex, type TagIndexData } from '../../storage/tagIndex'
-import { WUBRG, type Color } from '../../utils/colors'
+import type { Color } from '../../utils/colors'
 import { FOIL_OPTIONS } from '../../utils/foil'
 import { formatUsd, getCardUsdPrice } from '../../utils/price'
 import FoilShine from './FoilShine'
@@ -31,22 +31,8 @@ function SimilarCardsView({ onAddTagToSearch }: Props) {
   const { deck, dispatch, addCard, setCardPrinting } = useDeck()
 
   // Suggestions stay within the commander's color identity ("at most", same default as the
-  // advanced search Color identity filter), so they're actually castable in this deck. Partner
-  // commanders (or a commander + Background) union their identities together — a deck isn't
-  // limited to just whichever commander card happened to be first in the list.
-  const commanderIds = useMemo(
-    () => (deck.format === 'commander' ? deck.cards.filter((c) => c.isCommander).map((c) => c.scryfallId) : []),
-    [deck.format, deck.cards],
-  )
-  const [commanderSnapshots] = useCardSnapshots(commanderIds)
-  const commanderIdentity = useMemo(() => {
-    if (commanderIds.length === 0) return null
-    // Wait for every commander's snapshot before filtering — with partners, filtering as soon as
-    // just one has loaded would briefly show an over-restrictive identity missing the other's colors.
-    if (!commanderIds.every((id) => commanderSnapshots.has(id))) return null
-    const identity = commanderIds.flatMap((id) => commanderSnapshots.get(id)?.color_identity ?? [])
-    return new Set(identity.filter((c): c is Color => (WUBRG as readonly string[]).includes(c)))
-  }, [commanderIds, commanderSnapshots])
+  // advanced search Color identity filter), so they're actually castable in this deck.
+  const commanderIdentity = useCommanderColorIdentity()
 
   const [tagIndex, setTagIndex] = useState<TagIndexData | null>(null)
   const [indexStatus, setIndexStatus] = useState<Status>('idle')
@@ -264,6 +250,34 @@ function SimilarCardsView({ onAddTagToSearch }: Props) {
               </div>
             )}
 
+            {deckMatches.length > 0 && (
+              <div className="similar-cards-panel__foil-selection">
+                <h3>Foil</h3>
+                <div className="foil-swatches">
+                  <button
+                    type="button"
+                    className={`foil-swatch ${!currentFoil ? 'is-selected' : ''}`}
+                    onClick={() => handleSelectFoil(undefined)}
+                  >
+                    <span className="foil-swatch__none">None</span>
+                  </button>
+                  {FOIL_OPTIONS.map((option) => (
+                    <button
+                      type="button"
+                      key={option.id}
+                      className={`foil-swatch ${currentFoil === option.id ? 'is-selected' : ''}`}
+                      onClick={() => handleSelectFoil(option.id)}
+                    >
+                      <span className="foil-swatch__art">
+                        <FoilShine foil={option.id} preview />
+                      </span>
+                      <span className="foil-swatch__label">{option.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {printsStatus === 'error' && <p className="search-status search-status--error">Couldn't load other printings.</p>}
             {prints.length > 1 && (
               <div className="similar-cards-panel__art-selection">
@@ -289,34 +303,6 @@ function SimilarCardsView({ onAddTagToSearch }: Props) {
                       </button>
                     )
                   })}
-                </div>
-              </div>
-            )}
-
-            {deckMatches.length > 0 && (
-              <div className="similar-cards-panel__foil-selection">
-                <h3>Foil</h3>
-                <div className="foil-swatches">
-                  <button
-                    type="button"
-                    className={`foil-swatch ${!currentFoil ? 'is-selected' : ''}`}
-                    onClick={() => handleSelectFoil(undefined)}
-                  >
-                    <span className="foil-swatch__none">None</span>
-                  </button>
-                  {FOIL_OPTIONS.map((option) => (
-                    <button
-                      type="button"
-                      key={option.id}
-                      className={`foil-swatch ${currentFoil === option.id ? 'is-selected' : ''}`}
-                      onClick={() => handleSelectFoil(option.id)}
-                    >
-                      <span className="foil-swatch__art">
-                        <FoilShine foil={option.id} preview />
-                      </span>
-                      <span className="foil-swatch__label">{option.label}</span>
-                    </button>
-                  ))}
                 </div>
               </div>
             )}

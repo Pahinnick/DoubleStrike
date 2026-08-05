@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import './App.css'
 import CardHoverPreview from './components/shared/CardHoverPreview'
+import { CategoryRecommendationsProvider } from './components/shared/CategoryRecommendationsContext'
+import CategoryRecommendationsView from './components/shared/CategoryRecommendationsView'
 import { HoverPreviewProvider } from './components/shared/HoverPreviewContext'
 import { SimilarCardsProvider } from './components/shared/SimilarCardsContext'
 import SimilarCardsView from './components/shared/SimilarCardsView'
@@ -184,6 +186,7 @@ function AppShell() {
       {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
       <SimilarCardsView onAddTagToSearch={handleAddTagToSearch} />
+      <CategoryRecommendationsView />
     </div>
   )
 }
@@ -213,10 +216,12 @@ function Workspace() {
       <DeckWorkspaceProvider key={activeProfileId} profileId={activeProfileId}>
         <HoverPreviewProvider>
           <SimilarCardsProvider>
-            <JumpToCardProvider>
-              <AppShell />
-              <CardHoverPreview />
-            </JumpToCardProvider>
+            <CategoryRecommendationsProvider>
+              <JumpToCardProvider>
+                <AppShell />
+                <CardHoverPreview />
+              </JumpToCardProvider>
+            </CategoryRecommendationsProvider>
           </SimilarCardsProvider>
         </HoverPreviewProvider>
       </DeckWorkspaceProvider>

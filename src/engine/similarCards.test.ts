@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildTagIndex, type RawOracleTag } from '../storage/tagIndex'
-import { findSimilarCards, getTagsForCard } from './similarCards'
+import { findCardsForCategory, findSimilarCards, getTagsForCard } from './similarCards'
 
 function rawTag(slug: string, oracleIds: string[]): RawOracleTag {
   return { object: 'tag', slug, label: slug, type: 'oracle', taggings: oracleIds.map((oracle_id) => ({ oracle_id, weight: 'median' })) }
@@ -57,5 +57,45 @@ describe('findSimilarCards', () => {
     const index = buildTagIndex([rawTag('removal', ['a', 'b']), rawTag('ramp', ['a', 'b'])])
     const results = findSimilarCards(index, 'a')
     expect(results[0].matchedTags.sort()).toEqual(['ramp', 'removal'])
+  })
+})
+
+describe('findCardsForCategory', () => {
+  it('returns nothing for a category whose cards have no tags', () => {
+    const index = buildTagIndex([rawTag('removal', ['other'])])
+    expect(findCardsForCategory(index, ['a', 'b'])).toEqual([])
+  })
+
+  it("ranks a candidate higher for matching the category's most common tag", () => {
+    // Category is ['a', 'b']. Both are tagged 'ramp'; only 'a' is tagged 'draw'.
+    // 'c' matches just 'ramp' (frequency 2). 'd' matches just 'draw' (frequency 1).
+    const index = buildTagIndex([rawTag('ramp', ['a', 'b', 'c']), rawTag('draw', ['a', 'd'])])
+    const results = findCardsForCategory(index, ['a', 'b'])
+    expect(results.map((r) => r.oracleId)).toEqual(['c', 'd'])
+    expect(results[0].matchCount).toBe(2)
+    expect(results[1].matchCount).toBe(1)
+  })
+
+  it('never includes cards already in the category', () => {
+    const index = buildTagIndex([rawTag('ramp', ['a', 'b', 'c'])])
+    const results = findCardsForCategory(index, ['a', 'b'])
+    expect(results.some((r) => r.oracleId === 'a' || r.oracleId === 'b')).toBe(false)
+  })
+
+  it('respects the limit parameter', () => {
+    const index = buildTagIndex([rawTag('ramp', ['a', 'b', 'c', 'd', 'e'])])
+    const results = findCardsForCategory(index, ['a'], 2)
+    expect(results).toHaveLength(2)
+  })
+
+  it('sums frequency across multiple shared tags', () => {
+    // 'c' shares both 'ramp' and 'draw' with the category (frequency 1 each) -> total 2.
+    // 'd' shares only 'ramp' -> total 1.
+    const index = buildTagIndex([rawTag('ramp', ['a', 'c', 'd']), rawTag('draw', ['a', 'c'])])
+    const results = findCardsForCategory(index, ['a'])
+    expect(results[0].oracleId).toBe('c')
+    expect(results[0].matchCount).toBe(2)
+    expect(results[1].oracleId).toBe('d')
+    expect(results[1].matchCount).toBe(1)
   })
 })
