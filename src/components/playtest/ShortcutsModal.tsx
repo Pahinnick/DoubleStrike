@@ -25,7 +25,8 @@ const MOUSE_SHORTCUTS: Shortcut[] = [
   { keys: 'Right-click a card', description: 'Open its actions menu (tap, counters, flip, etc.)' },
   {
     keys: 'Left/right-click a counter pile',
-    description: 'Add or remove one — for a power/toughness pile, click directly on the power or toughness number to move just that stat',
+    description:
+      'Add or remove one — for a power/toughness pile, click the power or toughness number to move just that stat, or the "/" between them to move both',
   },
   {
     keys: 'Drag the top of your library',

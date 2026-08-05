@@ -527,6 +527,16 @@
   background-color: color-mix(in srgb, var(--pile-color, var(--accent)) 35%, transparent);
 }
 
+.playtest-card__counter-pile-sep {
+  cursor: pointer;
+  border-radius: 3px;
+  padding: 0 1px;
+}
+
+.playtest-card__counter-pile-sep:hover {
+  background-color: color-mix(in srgb, var(--pile-color, var(--accent)) 35%, transparent);
+}
+
 /* Just the × remove button now (the +/- buttons were replaced by left/right-click on the value
    itself) — still hover-revealed so a stack of piles doesn't show a permanent × on every chip. */
 .playtest-card__counter-pile-controls {

@@ -13,9 +13,9 @@ type Props = {
 }
 
 /** Power/toughness counterpart to CounterPileStack — same chip look and left/right-click
- *  interaction, but the power and toughness numbers are each their own click target (left: +1,
- *  right: -1) instead of one shared control, since a P/T pile can be (and often should be able to
- *  become) asymmetric. */
+ *  interaction. Power and toughness are each their own click target (left: +1, right: -1) so a
+ *  pile can become asymmetric (e.g. an Equipment's +1/+0), and the "/" between them is a third
+ *  click target that adjusts both at once, for the common symmetric case. */
 function PtCounterPileStack({ items, side, onAdjust, onRemove }: Props) {
   if (items.length === 0) return null
   const interactive = !!onAdjust
@@ -57,7 +57,29 @@ function PtCounterPileStack({ items, side, onAdjust, onRemove }: Props) {
             >
               {formatSigned(item.power)}
             </span>
-            /
+            <span
+              className="playtest-card__counter-pile-sep"
+              title={interactive ? 'Both — left-click: +1/+1 · right-click: -1/-1' : undefined}
+              onClick={
+                interactive
+                  ? (event) => {
+                      stop(event)
+                      onAdjust!(item.id, 1, 1)
+                    }
+                  : undefined
+              }
+              onContextMenu={
+                interactive
+                  ? (event) => {
+                      event.preventDefault()
+                      stop(event)
+                      onAdjust!(item.id, -1, -1)
+                    }
+                  : undefined
+              }
+            >
+              /
+            </span>
             <span
               className="playtest-card__counter-pile-stat"
               title={interactive ? 'Toughness — left-click: +1 · right-click: -1' : undefined}
