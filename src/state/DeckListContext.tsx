@@ -11,6 +11,7 @@ import {
 } from 'react'
 import type { ScryfallCard } from '../api/scryfallTypes'
 import BootstrapError from '../components/shared/BootstrapError'
+import { getAutoCategory } from '../engine/cardCategory'
 import { saveSnapshots } from '../storage/cardCache'
 import {
   deleteDeck as deleteDeckFromStore,
@@ -19,6 +20,7 @@ import {
   saveDeck,
 } from '../storage/deckRepository'
 import { storage } from '../storage/storage'
+import { loadOrBuildTagIndex, type TagIndexData } from '../storage/tagIndex'
 import { DeckContext } from './DeckContext'
 import { createEmptyDeck } from './deckReducer'
 import { deckHistoryReducer, initDeckHistory } from './deckHistory'
@@ -51,6 +53,20 @@ export function DeckWorkspaceProvider({ profileId, children }: { profileId: stri
   const [history, dispatch] = useReducer(deckHistoryReducer, undefined, () => initDeckHistory(createEmptyDeck('New Deck')))
   const deck = history.present
   const saveTimer = useRef<ReturnType<typeof setTimeout>>()
+  // Kicked off once on mount so it's very likely already resolved by the time the user adds their
+  // first card (loadOrBuildTagIndex caches in IndexedDB for 30 days, so this is a no-op network
+  // call after the first cold start). addCard reads whatever's in the ref at call time — if it's
+  // still loading, new cards just fall back to type-based categorization for that add.
+  const tagIndexRef = useRef<TagIndexData>()
+  useEffect(() => {
+    let cancelled = false
+    void loadOrBuildTagIndex().then((index) => {
+      if (!cancelled) tagIndexRef.current = index
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const refreshDecks = useCallback(async () => {
     setDecks(await listDecks(profileId))
@@ -157,10 +173,18 @@ export function DeckWorkspaceProvider({ profileId, children }: { profileId: stri
     [profileId, deck.id, refreshDecks],
   )
 
-  const addCard = useCallback((card: ScryfallCard, board: Board = 'mainboard', category?: string) => {
-    dispatch({ type: 'ADD_CARD', scryfallId: card.id, board, category })
-    void saveSnapshots([card])
-  }, [])
+  const addCard = useCallback(
+    (card: ScryfallCard, board: Board = 'mainboard', category?: string) => {
+      // Auto-categorize only genuinely new entries — an explicit category (drag onto a category
+      // header) always wins, and a repeat add of a card already on this board must never touch
+      // its existing category (see the matching comment on deckReducer's ADD_CARD case).
+      const isNewEntry = !deck.cards.some((c) => c.scryfallId === card.id && c.board === board)
+      const resolvedCategory = category ?? (isNewEntry ? getAutoCategory(card, tagIndexRef.current) : undefined)
+      dispatch({ type: 'ADD_CARD', scryfallId: card.id, board, category: resolvedCategory })
+      void saveSnapshots([card])
+    },
+    [deck.cards],
+  )
 
   const setCardPrinting = useCallback((card: ScryfallCard, fromScryfallId: string, board: Board) => {
     dispatch({ type: 'SET_PRINTING', fromScryfallId, toScryfallId: card.id, board })

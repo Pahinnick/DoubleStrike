@@ -21,6 +21,19 @@ describe('deckReducer', () => {
     expect(next.cards).toEqual([{ scryfallId: 'tok', quantity: 1, board: 'mainboard', category: 'Tokens', isToken: true }])
   })
 
+  it('creates a category supplied on ADD_CARD if the deck does not already have it', () => {
+    const deck = createEmptyDeck('Test')
+    const next = deckReducer(deck, { type: 'ADD_CARD', scryfallId: 'abc', category: 'Ramp' })
+    expect(next.categories).toEqual(['Ramp'])
+  })
+
+  it('does not duplicate a category that already exists when adding a card into it', () => {
+    let deck = createEmptyDeck('Test')
+    deck = deckReducer(deck, { type: 'ADD_CATEGORY', name: 'Ramp' })
+    deck = deckReducer(deck, { type: 'ADD_CARD', scryfallId: 'abc', category: 'Ramp' })
+    expect(deck.categories).toEqual(['Ramp'])
+  })
+
   it('keeps mainboard and sideboard copies of the same card separate', () => {
     let deck = createEmptyDeck('Test')
     deck = deckReducer(deck, { type: 'ADD_CARD', scryfallId: 'abc', board: 'mainboard' })

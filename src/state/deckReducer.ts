@@ -38,7 +38,12 @@ export function deckReducer(deck: Deck, action: DeckAction): Deck {
             c === existing ? { ...c, quantity: c.quantity + 1, ...(action.category !== undefined ? { category: action.category } : {}) } : c,
           )
         : [...deck.cards, { scryfallId: action.scryfallId, quantity: 1, board, category: action.category, isToken: action.isToken }]
-      return touch({ ...deck, cards })
+      // A caller-specified category (explicit drag, or auto-categorization on a fresh card) must
+      // actually exist in the deck's category list — otherwise groupByCategory can't find it and
+      // silently renders the card as Uncategorized instead.
+      const categories =
+        action.category !== undefined && !deck.categories.includes(action.category) ? [...deck.categories, action.category] : deck.categories
+      return touch({ ...deck, categories, cards })
     }
 
     case 'SET_PRINTING': {
