@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { storage } from '../../storage/storage'
 import type { StoragePaths } from '../../storage/storageAdapter'
 import { useProfiles } from '../../state/ProfileContext'
+import { useTutorialContext } from '../shared/TutorialContext'
 import './help.css'
 
 type Props = {
@@ -10,6 +11,7 @@ type Props = {
 
 function HelpModal({ onClose }: Props) {
   const { activeProfileId } = useProfiles()
+  const tutorial = useTutorialContext()
   const [paths, setPaths] = useState<StoragePaths | null>(null)
 
   useEffect(() => {
@@ -98,9 +100,20 @@ function HelpModal({ onClose }: Props) {
           )}
         </section>
 
-        <button type="button" onClick={onClose}>
-          Close
-        </button>
+        <div className="help-modal__footer">
+          <button
+            type="button"
+            onClick={() => {
+              tutorial.start()
+              onClose()
+            }}
+          >
+            Replay Tour
+          </button>
+          <button type="button" onClick={onClose}>
+            Close
+          </button>
+        </div>
       </div>
     </div>
   )

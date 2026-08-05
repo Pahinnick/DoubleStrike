@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import './App.css'
 import CardHoverPreview from './components/shared/CardHoverPreview'
 import { CategoryRecommendationsProvider } from './components/shared/CategoryRecommendationsContext'
@@ -18,6 +18,9 @@ import PlaytestView from './components/playtest/PlaytestView'
 import ProfileSwitcher from './components/profile/ProfileSwitcher'
 import WelcomeNameModal from './components/profile/WelcomeNameModal'
 import SettingsModal from './components/settings/SettingsModal'
+import { applyTutorialPreconDeck, resolveTutorialPreconDeck } from './components/shared/loadTutorialPreconDeck'
+import { hasSeenTutorial, TutorialProvider, useTutorialContext } from './components/shared/TutorialContext'
+import TutorialOverlay from './components/shared/TutorialOverlay'
 import { useCardSize } from './hooks/useCardSize'
 import { getPlaytestWindowMode } from './hooks/usePlaytestWindowMode'
 import { useProfileSettings } from './hooks/useProfileSettings'
@@ -39,7 +42,8 @@ function addTagToken(searchText: string, slug: string): string {
 }
 
 function AppShell() {
-  const { deck, addCard, undo, redo } = useDeck()
+  const { deck, dispatch: deckDispatch, addCard, undo, redo } = useDeck()
+  const tutorial = useTutorialContext()
   const [managerOpen, setManagerOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
@@ -90,6 +94,40 @@ function AppShell() {
     return onSwitchToInlineRequested(() => setPlaytestOpen(true))
   }, [])
 
+  // The tour drives navigation itself rather than waiting for the user to click their way
+  // there — each step names which top-level view its target lives in, so just follow it. A
+  // 'playtest' step never forces the switch on a still-empty deck (nothing to goldfish, and the
+  // Playtest button itself is disabled below for the same reason) — it stays put in the editor
+  // instead, degrading to a plain centered tooltip with no spotlight rather than dropping the
+  // tourist into an empty board where e.g. the library shuffle step has nothing to shuffle. In
+  // practice this is now a rare fallback — see the precon-seeding effect just below, which fills
+  // an empty deck before the tour ever gets this far.
+  useEffect(() => {
+    if (!tutorial.currentStep || isPlaytestWindow) return
+    setPlaytestOpen(tutorial.currentStep.view === 'playtest' && deck.cards.length > 0)
+    if (tutorial.currentStep.view !== 'editor') return
+    if (tutorial.currentStep.searchExpanded !== undefined) setSearchExpanded(tutorial.currentStep.searchExpanded)
+    if (tutorial.currentStep.statsExpanded !== undefined) setStatsExpanded(tutorial.currentStep.statsExpanded)
+  }, [tutorial.currentStep, isPlaytestWindow, deck.cards.length])
+
+  // Seeds a small precon (see loadTutorialPreconDeck) the moment the tour starts on a genuinely
+  // empty deck — without it the Playtest section would have nothing to goldfish, and adding a
+  // card during the deck-building section wouldn't demonstrate the legality warnings the Stats
+  // panel is capable of showing (the precon is already a legal, exactly-100-card singleton
+  // Commander deck, so any single addition immediately trips the deck-size check). Attempt-
+  // token-gated the same way PlaytestView's solo-save resume effect is: dev StrictMode's
+  // mount->cleanup->remount can fire this effect twice, and only the LATEST attempt's resolved
+  // cards should ever get applied.
+  const preconLoadAttemptRef = useRef(0)
+  useEffect(() => {
+    if (!tutorial.currentStep || tutorial.stepIndex !== 0 || deck.cards.length > 0 || isPlaytestWindow) return
+    const attempt = ++preconLoadAttemptRef.current
+    resolveTutorialPreconDeck().then((resolved) => {
+      if (preconLoadAttemptRef.current !== attempt) return
+      void applyTutorialPreconDeck(deckDispatch, resolved)
+    })
+  }, [tutorial.currentStep, tutorial.stepIndex, deck.cards.length, deckDispatch, isPlaytestWindow])
+
   if (isPlaytestWindow) {
     // window.close() closes this whole window (Electron: the dedicated Playtest
     // BrowserWindow; plain browser dev fallback: the window.open() popup) rather than
@@ -108,7 +146,12 @@ function AppShell() {
   }
 
   if (playtestOpen) {
-    return <PlaytestView onClose={() => setPlaytestOpen(false)} />
+    return (
+      <>
+        <PlaytestView onClose={() => setPlaytestOpen(false)} />
+        <TutorialOverlay />
+      </>
+    )
   }
 
   function handleOpenPlaytest() {
@@ -139,7 +182,7 @@ function AppShell() {
         <ProfileSwitcher />
         <span className="app-header__deck-name">{deck.name}</span>
         <FormatSelector />
-        <button type="button" onClick={handleOpenPlaytest} disabled={deck.cards.length === 0}>
+        <button type="button" data-tutorial-id="playtest-button" onClick={handleOpenPlaytest} disabled={deck.cards.length === 0}>
           Playtest
         </button>
         <button type="button" onClick={() => setImportOpen(true)}>
@@ -154,7 +197,13 @@ function AppShell() {
         <button type="button" className="app-header__help" aria-label="Settings" title="Settings" onClick={() => setSettingsOpen(true)}>
           ⚙
         </button>
-        <button type="button" className="app-header__help" aria-label="Help" onClick={() => setHelpOpen(true)}>
+        <button
+          type="button"
+          className="app-header__help"
+          data-tutorial-id="help-button"
+          aria-label="Help"
+          onClick={() => setHelpOpen(true)}
+        >
           ?
         </button>
       </header>
@@ -187,13 +236,23 @@ function AppShell() {
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
       <SimilarCardsView onAddTagToSearch={handleAddTagToSearch} />
       <CategoryRecommendationsView />
+      <TutorialOverlay />
     </div>
   )
 }
 
 function Workspace() {
+  return (
+    <TutorialProvider>
+      <WorkspaceInner />
+    </TutorialProvider>
+  )
+}
+
+function WorkspaceInner() {
   const { activeProfileId, profiles, renameProfile } = useProfiles()
   const [welcomeDismissed, setWelcomeDismissed] = useState(false)
+  const tutorial = useTutorialContext()
 
   // First-run only: replaces the silent "Player 1"/"Recovered Profile N" default with an
   // actual question, one time, gated by a localStorage flag so it never nags again — including
@@ -210,6 +269,16 @@ function Workspace() {
     localStorage.setItem(WELCOME_NAME_PROMPTED_KEY, 'true')
     setWelcomeDismissed(true)
   }
+
+  // Auto-starts the tour once, the first time a profile lands here without one queued up
+  // already — held off while the welcome-name prompt is still up so the two onboarding
+  // flows don't stack. Never fires again afterward: start()/skip() both flip the same
+  // "seen" flag the moment the tour actually runs, whether finished or skipped.
+  useEffect(() => {
+    if (needsWelcome || hasSeenTutorial()) return
+    tutorial.start()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needsWelcome])
 
   return (
     <>

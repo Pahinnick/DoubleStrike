@@ -185,7 +185,7 @@ function DeckStatsPanel({ expanded, onExpand, onCollapse }: Props) {
   if (!expanded) {
     return (
       <section className="app-pane stats-pane is-collapsed" aria-label="Deck statistics">
-        <button type="button" className="stats-pane__tab" onClick={onExpand} aria-expanded={false}>
+        <button type="button" className="stats-pane__tab" data-tutorial-id="stats-tab" onClick={onExpand} aria-expanded={false}>
           <span className="stats-pane__tab-icon" aria-hidden="true">
             📊
           </span>
@@ -208,7 +208,7 @@ function DeckStatsPanel({ expanded, onExpand, onCollapse }: Props) {
       ) : (
         <>
           <LegalityBanner cards={deck.cards} snapshots={snapshots} format={deck.format} />
-          <div className="stats-price-salt">
+          <div className="stats-price-salt" data-tutorial-id="stats-price-salt">
             <div className="stats-price-salt__stat">
               <span className="stats-price-salt__label">Estimated price</span>
               <span className="stats-price-salt__value">{formatUsd(priceTotal.total)}</span>
@@ -233,7 +233,7 @@ function DeckStatsPanel({ expanded, onExpand, onCollapse }: Props) {
           >
             {refreshing ? 'Refreshing…' : '↻ Refresh card data'}
           </button>
-          <div className="stats-charts">
+          <div className="stats-charts" data-tutorial-id="stats-charts">
             <div className="stats-charts__curve">
               <h3>Mana Curve</h3>
               <ManaCurveChart buckets={curveBuckets} />

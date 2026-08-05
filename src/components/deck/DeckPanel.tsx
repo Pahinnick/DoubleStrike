@@ -200,9 +200,9 @@ function DeckPanel({ cardSize, onCardSizeChange }: Props) {
   }
 
   return (
-    <section className="app-pane" aria-label="Deck list" ref={sectionRef}>
+    <section className="app-pane" data-tutorial-id="deck-list" aria-label="Deck list" ref={sectionRef}>
       <h2>Deck</h2>
-      <div className="board-tabs" role="tablist">
+      <div className="board-tabs" data-tutorial-id="board-tabs" role="tablist">
         {BOARDS.map((board) => (
           <button
             key={board}
@@ -218,7 +218,7 @@ function DeckPanel({ cardSize, onCardSizeChange }: Props) {
       </div>
 
       <div className="deck-view-controls">
-        <div className="deck-layout-toggle" role="group" aria-label="Deck layout">
+        <div className="deck-layout-toggle" data-tutorial-id="deck-layout-toggle" role="group" aria-label="Deck layout">
           <button type="button" className={layout === 'list' ? 'is-active' : ''} onClick={() => setLayout('list')}>
             List
           </button>
@@ -237,7 +237,7 @@ function DeckPanel({ cardSize, onCardSizeChange }: Props) {
         </label>
         <div className="deck-view-controls__spacer" />
         {groupBy === 'category' && (
-          <button type="button" onClick={() => setManagingCategories(true)}>
+          <button type="button" data-tutorial-id="manage-categories-button" onClick={() => setManagingCategories(true)}>
             Manage categories
           </button>
         )}
@@ -278,6 +278,7 @@ function DeckPanel({ cardSize, onCardSizeChange }: Props) {
                   <button
                     type="button"
                     className="deck-card-group__toggle"
+                    data-tutorial-id={isRecommendable ? 'deck-category-header' : group.label === 'Uncategorized' ? 'deck-uncategorized' : undefined}
                     aria-expanded={!isCollapsed}
                     title={isRecommendable ? 'Right-click for card recommendations based on this category' : undefined}
                     onClick={() => toggleGroup(group.label)}

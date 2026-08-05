@@ -51,3 +51,8 @@
   color: var(--text-dim);
   font-size: 0.8rem;
 }
+
+.help-modal__footer {
+  display: flex;
+  gap: 0.5rem;
+}

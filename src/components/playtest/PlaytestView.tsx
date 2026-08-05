@@ -48,6 +48,7 @@ import BattlefieldRunicCircle from './BattlefieldRunicCircle'
 import BattlefieldTriangleGrid from './BattlefieldTriangleGrid'
 import CardContextMenu, { type ContextMenuAction } from '../shared/CardContextMenu'
 import ConfirmModal from '../shared/ConfirmModal'
+import { useTutorialContext } from '../shared/TutorialContext'
 import { COUNTER_COLORS, formatPtCounters, formatSigned } from './counterFormat'
 import CounterPileStack from './CounterPileStack'
 import DeckManagerModal from '../deck/DeckManagerModal'
@@ -148,6 +149,7 @@ function initGame(deck: Deck): GameState {
 
 function PlaytestView({ onClose }: Props) {
   const { deck, dispatch: deckDispatch } = useDeck()
+  const tutorial = useTutorialContext()
   const { profiles, activeProfileId } = useProfiles()
   const playerName = profiles.find((p) => p.id === activeProfileId)?.name ?? 'Player'
   const [state, rawDispatch] = useReducer(gameReducer, deck, initGame)
@@ -1943,6 +1945,7 @@ function PlaytestView({ onClose }: Props) {
       key: 'shuffle',
       label: 'Shuffle Library',
       icon: '🔀',
+      tutorialId: 'action-shuffle-library',
       onClick: () => {
         dispatch({ type: 'SHUFFLE_LIBRARY', shuffledOrder: shuffle(library.map((c) => c.instanceId)) })
         playCue('shuffle')
@@ -2060,6 +2063,7 @@ function PlaytestView({ onClose }: Props) {
           <button
             type="button"
             className="playtest__mp-pill"
+            data-tutorial-id="multiplayer-button"
             onClick={() => setMpModalOpen(true)}
             title="Multiplayer session — click for details"
           >
@@ -2067,7 +2071,7 @@ function PlaytestView({ onClose }: Props) {
             {mpRoomCode ?? 'Pod'} · {1 + boards.size}p
           </button>
         ) : (
-          <button type="button" onClick={() => setMpModalOpen(true)} title="Host or join a multiplayer pod">
+          <button type="button" data-tutorial-id="multiplayer-button" onClick={() => setMpModalOpen(true)} title="Host or join a multiplayer pod">
             Multiplayer
           </button>
         )}
@@ -2121,7 +2125,13 @@ function PlaytestView({ onClose }: Props) {
         <button type="button" onClick={() => setSettingsOpen(true)} title="Settings" aria-label="Settings">
           ⚙
         </button>
-        <button type="button" onClick={() => setShortcutsOpen(true)} title="Keyboard/mouse shortcuts (press ?)" aria-label="Shortcuts">
+        <button
+          type="button"
+          data-tutorial-id="shortcuts-button"
+          onClick={() => setShortcutsOpen(true)}
+          title="Keyboard/mouse shortcuts (press ?)"
+          aria-label="Shortcuts"
+        >
           ❓
         </button>
         <button type="button" onClick={onClose}>
@@ -2543,7 +2553,10 @@ function PlaytestView({ onClose }: Props) {
             >
               Draw
             </button>
-            <ActionsTray actions={trayActions} />
+            <ActionsTray
+              actions={trayActions}
+              forceOpen={tutorial.currentStep?.view === 'playtest' ? !!tutorial.currentStep.actionsTrayOpen : undefined}
+            />
             {inPod && (
               <button
                 type="button"
@@ -2594,6 +2607,7 @@ function PlaytestView({ onClose }: Props) {
         <div className="playtest__zones">
           <ZonePile
             label="Library"
+            tutorialId="library-pile"
             count={library.length}
             onClick={library.length > 0 ? handleDraw : undefined}
             onContextMenu={library.length > 0 ? () => setViewerZone('library') : undefined}

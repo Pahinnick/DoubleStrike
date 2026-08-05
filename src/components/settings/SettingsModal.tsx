@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useProfileSettings } from '../../hooks/useProfileSettings'
 import ShortcutsModal from '../playtest/ShortcutsModal'
 import ThemePicker from '../shared/ThemePicker'
+import { useTutorialContext } from '../shared/TutorialContext'
 import './settings.css'
 
 type Props = {
@@ -11,6 +12,7 @@ type Props = {
 function SettingsModal({ onClose }: Props) {
   const { theme, setTheme, hoverPreviewMode, setHoverPreviewMode, soundVolume, setSoundVolume, goldfishStatsDefault, setGoldfishStatsDefault } =
     useProfileSettings()
+  const tutorial = useTutorialContext()
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
 
   return (
@@ -65,6 +67,19 @@ function SettingsModal({ onClose }: Props) {
           <h3>Keybinds</h3>
           <button type="button" onClick={() => setShortcutsOpen(true)}>
             View keyboard/mouse shortcuts
+          </button>
+        </section>
+
+        <section className="settings-modal__section">
+          <h3>Help</h3>
+          <button
+            type="button"
+            onClick={() => {
+              tutorial.start()
+              onClose()
+            }}
+          >
+            Replay Tour
           </button>
         </section>
 

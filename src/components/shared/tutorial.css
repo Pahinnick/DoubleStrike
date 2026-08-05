@@ -1,0 +1,70 @@
+.tutorial-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 4000;
+  /* Purely instructional — the tour advances via Next/Back, not by requiring the user to
+     click the spotlighted element, so nothing here should block interaction with the app
+     underneath. Only the tooltip card itself (pointer-events: auto below) is clickable. */
+  pointer-events: none;
+}
+
+.tutorial-overlay__spotlight {
+  position: fixed;
+  border-radius: 10px;
+  /* A giant spread box-shadow doubles as the dimming backdrop, with the target rect itself
+     left as the one undimmed "hole" — avoids a separate full-screen backdrop element. */
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.65);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  transition: left 0.2s ease, top 0.2s ease, width 0.2s ease, height 0.2s ease;
+}
+
+.tutorial-overlay__tooltip {
+  position: fixed;
+  width: 320px;
+  max-width: calc(100vw - 28px);
+  background-color: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: 1rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  pointer-events: auto;
+}
+
+.tutorial-overlay__progress {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  margin-bottom: 0.35rem;
+}
+
+.tutorial-overlay__tooltip h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
+
+.tutorial-overlay__tooltip p {
+  margin: 0 0 1rem;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+.tutorial-overlay__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.tutorial-overlay__skip {
+  background: none;
+  border-color: transparent;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  padding: 0.3em 0.4em;
+}
+
+.tutorial-overlay__nav {
+  display: flex;
+  gap: 0.5rem;
+}

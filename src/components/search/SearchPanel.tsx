@@ -61,7 +61,7 @@ function SearchPanel({ onAddCard, text, onTextChange, expanded, onExpand, onColl
   if (!expanded) {
     return (
       <section className="app-pane search-pane is-collapsed" aria-label="Card search">
-        <button type="button" className="search-pane__tab" onClick={onExpand} aria-expanded={false}>
+        <button type="button" className="search-pane__tab" data-tutorial-id="search-tab" onClick={onExpand} aria-expanded={false}>
           <span className="search-pane__tab-icon" aria-hidden="true">
             🔍
           </span>
@@ -72,7 +72,7 @@ function SearchPanel({ onAddCard, text, onTextChange, expanded, onExpand, onColl
   }
 
   return (
-    <section className="app-pane search-pane" aria-label="Card search">
+    <section className="app-pane search-pane" data-tutorial-id="search-pane" aria-label="Card search">
       <div className="search-pane__header">
         <h2>Search</h2>
         <button type="button" className="search-collapse-toggle" onClick={onCollapse} aria-label="Collapse search panel">
@@ -81,6 +81,7 @@ function SearchPanel({ onAddCard, text, onTextChange, expanded, onExpand, onColl
       </div>
       <input
         type="text"
+        data-tutorial-id="search-input"
         placeholder="Search cards..."
         value={text}
         onChange={(event) => onTextChange(event.target.value)}
