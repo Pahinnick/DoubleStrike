@@ -53,7 +53,10 @@ function DeckScanTray({ deck, snapshots, onSetMark }: Props) {
   const totalCount = entries.reduce((sum, entry) => sum + entry.deckCard.quantity, 0)
 
   return (
-    <div className={`playtest__deck-tray ${open ? 'is-open' : ''}`}>
+    <div
+      className={`playtest__deck-tray ${open ? 'is-open' : ''}`}
+      onWheel={(event) => event.stopPropagation()}
+    >
       <button
         type="button"
         className="playtest__deck-tray-tab"
