@@ -1,6 +1,7 @@
 type Shortcut = { keys: string; description: string }
 
 const KEYBOARD_SHORTCUTS: Shortcut[] = [
+  { keys: 'W A S D', description: 'Pan the camera' },
   { keys: '1 – 4', description: 'Center the camera on that seat (multiplayer pod only)' },
   { keys: '0', description: 'Fit the whole table in view (multiplayer pod only)' },
   {
@@ -9,6 +10,7 @@ const KEYBOARD_SHORTCUTS: Shortcut[] = [
       'Flip the hovered double-faced card to its other face; for any other card, turn it face down/up instead — or, hovering the library, flip its top card face-up/down',
   },
   { keys: 'R', description: 'Shuffle your library (while hovering the library pile)' },
+  { keys: 'T', description: 'Tap/untap the current multi-selection, all together' },
   { keys: 'Ctrl+Z / Cmd+Z', description: 'Undo' },
   { keys: 'Ctrl+Y or Ctrl+Shift+Z / Cmd+Shift+Z', description: 'Redo' },
   { keys: 'Esc', description: 'Close the open menu/dialog, or clear the current multi-selection' },
@@ -20,6 +22,7 @@ const MOUSE_SHORTCUTS: Shortcut[] = [
   { keys: 'Alt + click empty battlefield', description: 'Ping that spot for everyone in the pod' },
   { keys: 'Alt + click a card', description: 'Flash-highlight that card for everyone in the pod' },
   { keys: 'Shift + click a card', description: 'Add/remove it from the multi-select group' },
+  { keys: 'Click a card in the current multi-selection', description: 'Tap/untap the whole selection together (same as the T shortcut)' },
   { keys: 'Shift + drag empty battlefield', description: 'Marquee-select every card in the box' },
   { keys: 'Right-click empty battlefield', description: 'Create a token at that point' },
   { keys: 'Right-click a card', description: 'Open its actions menu (tap, counters, flip, etc.)' },

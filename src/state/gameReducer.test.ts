@@ -57,6 +57,22 @@ describe('gameReducer', () => {
     expect(zoneCards(state, 'library')[0].instanceId).toBe('c9')
   })
 
+  it('DRAW always lands the new card(s) in the leftmost hand slot, not wherever their original deck order falls', () => {
+    // c0..c6 is the opening hand, drawn in their deck-list order — that order isn't what's under
+    // test here, just a fixture. What matters is that the *next* draw (c7) ends up at hand[0],
+    // ahead of every card already in hand, instead of wherever c7 would otherwise sort.
+    const state = apply(startedGame(20), { type: 'DRAW', count: 1 })
+    expect(zoneCards(state, 'hand')[0].instanceId).toBe('c7')
+  })
+
+  it('DRAW of multiple cards at once places the top card leftmost, in library order', () => {
+    const state = apply(startedGame(20), { type: 'DRAW', count: 3 })
+    const handIds = zoneCards(state, 'hand')
+      .slice(0, 3)
+      .map((c) => c.instanceId)
+    expect(handIds).toEqual(['c7', 'c8', 'c9'])
+  })
+
   it('DRAW on an empty library is a no-op instead of erroring', () => {
     const state = apply(startedGame(7), { type: 'DRAW', count: 3 })
     expect(zoneCards(state, 'hand')).toHaveLength(7)
@@ -293,6 +309,34 @@ describe('gameReducer', () => {
     expect(state.poison).toBe(10)
     const clamped = gameReducer(state, { type: 'ADJUST_POISON', delta: -100 })
     expect(clamped.poison).toBe(0)
+  })
+
+  it('START_GAME starts with an empty floating mana pool', () => {
+    const state = startedGame(20)
+    expect(state.floatingMana).toEqual({ W: 0, U: 0, B: 0, R: 0, G: 0, C: 0 })
+  })
+
+  it('ADJUST_FLOATING_MANA applies a relative change to one color, clamped at 0, without touching the others', () => {
+    const state = apply(startedGame(20), { type: 'ADJUST_FLOATING_MANA', color: 'R', delta: 5 })
+    expect(state.floatingMana.R).toBe(5)
+    expect(state.floatingMana.U).toBe(0)
+    const clamped = gameReducer(state, { type: 'ADJUST_FLOATING_MANA', color: 'R', delta: -100 })
+    expect(clamped.floatingMana.R).toBe(0)
+  })
+
+  it('CLEAR_FLOATING_MANA zeroes every color at once', () => {
+    const state = apply(
+      startedGame(20),
+      { type: 'ADJUST_FLOATING_MANA', color: 'R', delta: 3 },
+      { type: 'ADJUST_FLOATING_MANA', color: 'G', delta: 2 },
+      { type: 'CLEAR_FLOATING_MANA' },
+    )
+    expect(state.floatingMana).toEqual({ W: 0, U: 0, B: 0, R: 0, G: 0, C: 0 })
+  })
+
+  it('NEXT_TURN empties the floating mana pool, matching real Magic (mana does not carry over)', () => {
+    const state = apply(startedGame(20), { type: 'ADJUST_FLOATING_MANA', color: 'G', delta: 7 }, { type: 'NEXT_TURN' })
+    expect(state.floatingMana.G).toBe(0)
   })
 
   it('ADJUST_COMMANDER_TAX adjusts one commander independently of the other, clamped at 0', () => {
@@ -632,6 +676,18 @@ describe('gameReducer', () => {
     const restored = gameReducer(after, { type: 'RESTORE_STATE', state: before })
     expect(restored).toBe(before)
     expect(restored.life).toBe(20)
+  })
+
+  it('RESTORE_STATE backfills floatingMana for a pre-existing save from before that field existed', () => {
+    // A solo autosave (see soloGameStorage.ts) can be older than a since-added GameState field —
+    // simulate that by stripping it, the same way `JSON.parse(localStorage...)` of an old save
+    // would produce a state object with the key simply absent.
+    const before = startedGame(20)
+    const legacySave = { ...before } as typeof before
+    // @ts-expect-error simulating a pre-floatingMana persisted save
+    delete legacySave.floatingMana
+    const restored = gameReducer(before, { type: 'RESTORE_STATE', state: legacySave })
+    expect(restored.floatingMana).toEqual({ W: 0, U: 0, B: 0, R: 0, G: 0, C: 0 })
   })
 
   it('RESTORE_STATE is exempt from the dev-only card-conservation invariant (undoing a give/remove legitimately changes counts)', () => {

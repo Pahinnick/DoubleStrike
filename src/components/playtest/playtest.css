@@ -40,197 +40,109 @@
   flex: 1;
 }
 
-.playtest__life-overlay {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  width: 90px;
-  height: 77px;
-  z-index: 40;
+/* Gold, not a seat color, matching .playtest__quadrant.is-active-turn's own gold glow — same
+   "gold = whose turn" language in the topbar as on the table itself, so it reads as one cue
+   rather than two unrelated ones. The seat-color dot inside still identifies *who*. */
+.playtest__active-turn-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid #d9a92e;
+  background-color: rgba(217, 169, 46, 0.14);
+  color: #d9a92e;
+  font-weight: 700;
+  font-size: 0.8rem;
+  white-space: nowrap;
+  animation: playtest-turn-badge-pop 400ms ease-out;
 }
 
-.playtest__life-bubble {
-  position: absolute;
+@keyframes playtest-turn-badge-pop {
+  0% {
+    transform: scale(0.85);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* Normal flow — this is how SeatOverlay embeds it, as its own row inside each seat card (see
+   .playtest__seat-overlay). Solo used to float this as fixed viewport chrome instead (it wasn't
+   inside any card there), but solo's life display is now a SeatOverlay card too — see
+   .playtest__player-panel. */
+.playtest__mana-pool {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px;
+  border-radius: 8px;
+  background-color: var(--bg-panel-raised);
+  border: 1px solid var(--border-subtle);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
+.playtest__mana-pool.is-readonly {
+  padding: 0;
+  gap: 2px;
+  background: none;
+  border: none;
+  box-shadow: none;
+}
+
+.playtest__mana-pip {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
   border-radius: 50%;
-  border-width: 2px;
-  /* Explicit: this used to be a <button>, which gets a default non-none border-style from the
-     UA stylesheet — border-width/color alone rendered nothing once it became a plain <div>. */
-  border-style: solid;
+  border: none;
+  padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0;
   font-weight: 700;
-  background-color: var(--bg-panel-raised);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
-  /* Kept small by default so a cluster of these doesn't dominate the view; hover/focus grows
-     the bubble back up (see below) so the click target is still comfortable when you mean to
-     use it. transform doesn't reflow layout, so neighbors don't jump when one grows. */
-  transition: transform 120ms ease;
+  font-size: 0.65rem;
+  color: #16171a;
 }
 
-/* :focus-visible (not :focus-within/:focus) deliberately — a click leaves the wedge button
-   focused in most browsers, and :focus-within would keep the bubble enlarged after the mouse
-   moved away until something else stole focus. :focus-visible only lights up for keyboard
-   navigation, so a click's lingering focus doesn't hold the grow open; :has(:focus-visible)
-   covers the wrapper div (life bubble's wedges are its children) and the bare :focus-visible
-   covers the poison/commander bubbles, which are buttons themselves with no children to check. */
-.playtest__life-bubble:hover,
-.playtest__life-bubble:focus-visible,
-.playtest__life-bubble:has(:focus-visible) {
-  transform: scale(1.5);
-  z-index: 1;
-}
-
-.playtest__life-bubble--life {
-  top: 0;
-  right: 16px;
-  width: 58px;
-  height: 58px;
-  font-size: 1.3rem;
-  color: var(--color-g);
-  border-color: var(--color-g);
-  /* Clips the four wedge buttons' corners (see .playtest__life-wedge) to the circle. Scoped to
-     --life specifically, not the shared .playtest__life-bubble base, since --commander's
-     .playtest__stat-chip-source corner tag deliberately overflows its circle. */
-  overflow: hidden;
-}
-
-/* Four full-size, clip-path-wedged buttons stacked inside a --life bubble (see HealthBubble.tsx):
-   two diagonals from center to each corner split the square into N/E/S/W triangles, which —
-   clipped to the circle by the parent's overflow: hidden — read as four pie-slice quadrants. */
-.playtest__life-wedge {
-  position: absolute;
-  inset: 0;
-  border: none;
-  padding: 0;
-  margin: 0;
-  background: transparent;
+.playtest__mana-pool:not(.is-readonly) .playtest__mana-pip {
   cursor: pointer;
 }
 
-.playtest__life-wedge:hover,
-.playtest__life-wedge:focus-visible {
-  background: rgba(255, 255, 255, 0.12);
-  outline: none;
+.playtest__mana-pip.is-empty {
+  opacity: 0.4;
 }
 
-.playtest__life-wedge--top {
-  clip-path: polygon(0 0, 100% 0, 50% 50%);
-}
+.playtest__mana-pip--w { background-color: var(--color-w); }
+.playtest__mana-pip--u { background-color: var(--color-u); color: #fff; }
+.playtest__mana-pip--b { background-color: var(--color-b); color: #fff; }
+.playtest__mana-pip--r { background-color: var(--color-r); color: #fff; }
+.playtest__mana-pip--g { background-color: var(--color-g); color: #fff; }
+.playtest__mana-pip--c { background-color: var(--color-c); }
 
-.playtest__life-wedge--bottom {
-  clip-path: polygon(0 100%, 100% 100%, 50% 50%);
-}
-
-.playtest__life-wedge--left {
-  clip-path: polygon(0 0, 0 100%, 50% 50%);
-}
-
-.playtest__life-wedge--right {
-  clip-path: polygon(100% 0, 100% 100%, 50% 50%);
-}
-
-/* Faint radial dividers along the two diagonals the wedges are clipped to (see above), so the
-   four click zones read as visible pie slices instead of an unmarked circle. Painted after the
-   wedge buttons in DOM order (so it draws on top of their hover highlight) but pointer-events:
-   none, so it never steals a click meant for the wedge beneath it. Hidden until hover/focus so
-   the bubble reads as a plain number the rest of the time — only shown once you're actually
-   about to use the click zones. */
-.playtest__life-bubble--life::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 120ms ease;
-  background: conic-gradient(
-    from 0deg,
-    transparent 0deg 42deg,
-    rgba(220, 220, 225, 0.35) 42deg 48deg,
-    transparent 48deg 132deg,
-    rgba(220, 220, 225, 0.35) 132deg 138deg,
-    transparent 138deg 222deg,
-    rgba(220, 220, 225, 0.35) 222deg 228deg,
-    transparent 228deg 312deg,
-    rgba(220, 220, 225, 0.35) 312deg 318deg,
-    transparent 318deg 360deg
-  );
-}
-
-.playtest__life-bubble--life:hover::after,
-.playtest__life-bubble--life:has(:focus-visible)::after {
-  opacity: 1;
-}
-
-/* Small delta labels ("+1", "-10", …) inside each wedge, offset toward that wedge's own outer
-   edge so they sit clear of both the center life total and the diagonal dividers. Hidden until
-   hover/focus, same as the dividers above — a plain number the rest of the time. */
-.playtest__life-wedge-label {
-  position: absolute;
-  transform: translate(-50%, -50%);
-  font-size: 0.5rem;
-  font-weight: 600;
-  color: var(--text-dim);
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 120ms ease;
-}
-
-.playtest__life-bubble--life:hover .playtest__life-wedge-label,
-.playtest__life-bubble--life:has(:focus-visible) .playtest__life-wedge-label {
-  opacity: 1;
-}
-
-.playtest__life-wedge-label--top {
-  left: 50%;
-  top: 18%;
-}
-
-.playtest__life-wedge-label--bottom {
-  left: 50%;
-  top: 82%;
-}
-
-.playtest__life-wedge-label--left {
-  left: 18%;
-  top: 50%;
-}
-
-.playtest__life-wedge-label--right {
-  left: 82%;
-  top: 50%;
-}
-
-.playtest__life-value {
-  position: absolute;
-  inset: 0;
+.playtest__mana-pool-clear {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  border: 1px solid var(--border-subtle);
+  padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  pointer-events: none;
-  font: inherit;
-  color: inherit;
+  font-size: 0.75rem;
+  line-height: 1;
+  color: var(--text-dim);
+  background: transparent;
+  margin-left: 2px;
 }
 
-.playtest__life-bubble--commander {
-  top: 42px;
-  right: 60px;
-  width: 30px;
-  height: 30px;
-  font-size: 0.7rem;
-  color: #d9a92e;
-  border-color: #d9a92e;
-}
-
-.playtest__life-bubble--poison {
-  top: 42px;
-  right: 0;
-  width: 30px;
-  height: 30px;
-  font-size: 0.7rem;
-  color: var(--accent);
-  border-color: var(--accent);
+.playtest__mana-pool-clear:hover,
+.playtest__mana-pool-clear:focus-visible {
+  color: var(--text);
+  border-color: var(--text-dim);
 }
 
 .playtest__table {
@@ -1342,6 +1254,9 @@
    seat's status in one place instead of scattering a cluster near each seat's own quadrant.
    Top-right was tried first but fought .playtest__zones (vertically centered on the right) for
    space; top-left leaves .playtest__zones' usual centered spot alone entirely. */
+/* Never scrolls — a Commander pod is capped at 4 seats (see MAX_PLAYERS), and each card below is
+   sized so all 4 comfortably fit stacked on any reasonable window without needing to scroll to
+   see the last one. */
 .playtest__player-panel {
   position: absolute;
   top: 12px;
@@ -1349,23 +1264,36 @@
   z-index: 40;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  max-height: calc(100% - 24px);
-  overflow-y: auto;
+  gap: 8px;
 }
 
+/* A row, not a column: .playtest__seat-commanders as a full-height portrait column on the
+   left (closer to where the eye already lingers, and a hover-preview popup for it doesn't
+   fire while reaching across the card for something else further right), .playtest__seat-main
+   (everything else) filling the rest — see the JSX comment in SeatOverlay.tsx. overflow:
+   hidden clips the portrait's square corners to the card's own rounded ones on its side; the
+   card's own padding moved onto .playtest__seat-main so the portrait can bleed flush to the
+   edge instead of sitting inset. */
 .playtest__seat-overlay {
   position: relative;
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  width: 168px;
+  align-items: stretch;
+  width: 316px;
   box-sizing: border-box;
-  padding: 6px 8px;
-  border-radius: 8px;
+  border-radius: 10px;
   border: 1px solid var(--border-subtle);
   background-color: var(--bg-panel-raised);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.playtest__seat-main {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
 }
 
 /* One-click emoji reaction, popping up centered over the sender's board quadrant then fading —
@@ -1539,22 +1467,25 @@
   font-size: 0.66rem;
 }
 
-/* Commander(s) this seat is playing (from the public command zone — see PublicBoard.command)
-   as a row of small hoverable thumbnails (CommanderChip) — hovering shows the full card via
-   the shared hover-preview portal, same as any other card in Playtest. */
+/* Commander(s) this seat is playing (from the public command zone — see PublicBoard.command) as
+   a full-height column of hoverable portraits (CommanderChip) on the card's left edge (see
+   .playtest__seat-overlay) — hovering shows the full card via the shared hover-preview portal,
+   same as any other card in Playtest. A real portrait, not a small chip near the nameplate: at
+   20px (and later 44px, still just a chip beside the name) it read as an afterthought rather
+   than the card that actually identifies the seat. Two+ commanders (partners) split the column
+   evenly instead of shrinking to fit a fixed chip size. */
 .playtest__seat-commanders {
   display: flex;
-  gap: 3px;
+  flex-direction: column;
+  flex: 0 0 auto;
+  width: 84px;
 }
 
 .playtest__seat-commander-chip {
   display: block;
-  width: 20px;
-  aspect-ratio: 1 / 1;
-  border-radius: 3px;
-  overflow: hidden;
-  border: 1px solid var(--border-subtle);
-  flex-shrink: 0;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
   cursor: help;
 }
 
@@ -1573,86 +1504,163 @@
   height: 100%;
   background-color: var(--bg-panel);
   color: var(--text-dim);
-  font-size: 0.6rem;
+  font-size: 1.6rem;
   font-weight: 700;
 }
 
-/* Life/poison/commander-damage, now flat rounded-rect chips instead of circular "bubbles" —
-   there's no more table-center-comparison reason for the circle shape once this whole cluster
-   lives in a static sidebar list (see .playtest__player-panel). */
-.playtest__seat-stats {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 5px;
+.playtest__health-bar-wrap {
+  position: relative;
 }
 
-.playtest__seat-stat-group {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-}
-
-/* Self-only, life: commander games start at 40, so a couple of quick ±10 buttons flanking the
-   usual click(+1)/right-click(-1) chip save a lot of clicking. */
+/* Self-only, life: commander games start at 40, so a couple of quick ±10 buttons save a lot of
+   clicking. Overlaid on the bar itself (not flanking it — see the JSX comment in
+   SeatOverlay.tsx) to save width; semi-transparent so the bar's own fill/number stay legible
+   underneath instead of getting fully hidden behind a solid button. */
 .playtest__stat-step {
-  padding: 1px 5px;
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1;
+  padding: 3px 7px;
   border-radius: 5px;
-  border: 1px solid var(--border-subtle);
-  background-color: var(--bg-panel-raised);
-  color: var(--text-dim);
-  font-size: 0.62rem;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background-color: rgba(0, 0, 0, 0.45);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 0.66rem;
   font-weight: 700;
   cursor: pointer;
+  backdrop-filter: blur(1px);
+}
+
+.playtest__stat-step--minus {
+  left: 4px;
+}
+
+.playtest__stat-step--plus {
+  right: 4px;
 }
 
 .playtest__stat-step:hover,
 .playtest__stat-step:focus-visible {
   border-color: var(--accent);
-  color: var(--text);
+  background-color: rgba(0, 0, 0, 0.65);
+  color: #fff;
 }
 
-.playtest__stat-chip {
+/* A real fillable bar (see HealthBar in SeatOverlay.tsx) instead of a bare number in a small
+   chip — the exact number is always shown as text on top of the fill, never just implied by
+   how full it looks. */
+.playtest__health-bar {
   position: relative;
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  background-color: var(--bg-panel);
+  overflow: hidden;
+  padding: 0;
+}
+
+.playtest__health-bar-fill {
+  position: absolute;
+  inset: 0;
+  right: auto;
+  transition: width 150ms ease, background-color 150ms ease;
+}
+
+.playtest__health-bar--full .playtest__health-bar-fill { background-color: var(--color-g); }
+.playtest__health-bar--mid .playtest__health-bar-fill { background-color: #d9a92e; }
+.playtest__health-bar--low .playtest__health-bar-fill { background-color: #d3542a; }
+.playtest__health-bar--critical .playtest__health-bar-fill { background-color: #7a2620; }
+
+.playtest__health-bar-value {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 30px;
-  height: 22px;
-  padding: 0 6px;
-  border-radius: 5px;
-  border: 1px solid var(--border-subtle);
-  font-weight: 700;
-  font-size: 0.72rem;
+  height: 100%;
+  font-weight: 800;
+  font-size: 0.9rem;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+  /* Purely a label — spans the bar's full width just to center itself over it, which put it in
+     the same z-index tier (both z-index: 1, no intervening stacking context) as the overlaid
+     ±10 buttons at the bar's edges. DOM order broke the tie in the value's favor over the
+     EARLIER -10 button (later element wins a tie) but not the LATER +10 button, so -10 silently
+     never received the click while +10 did. pointer-events: none removes it from hit-testing
+     entirely — same fix already used for .playtest__life-wedge-label, an identical case. */
+  pointer-events: none;
+}
+
+/* Labeled stat readouts (poison, commander damage) — a text label alongside the number instead
+   of relying on a hover tooltip, and per-opponent commander-damage pills just wrap in this row
+   like any other pill instead of needing a corner-overlay badge (see the removed
+   .playtest__stat-chip-source) once a second/third source shows up. */
+.playtest__seat-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.playtest__stat-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--pill-color, var(--border-subtle));
   background-color: var(--bg-panel-raised);
+  font-size: 0.7rem;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
 }
 
-.playtest__stat-chip.is-readonly {
+.playtest__stat-pill.is-readonly {
   cursor: default;
   opacity: 0.9;
 }
 
-.playtest__stat-chip--life {
-  color: var(--color-g);
-  border-color: var(--color-g);
+.playtest__stat-pill-label {
+  color: var(--pill-color, var(--text-dim));
+  font-weight: 600;
 }
 
-.playtest__stat-chip--poison {
-  color: var(--accent);
-  border-color: var(--accent);
+.playtest__stat-pill-value {
+  font-weight: 800;
 }
 
-.playtest__stat-chip--commander {
-  color: #d9a92e;
-  border-color: #d9a92e;
+/* Commander-damage source identity, conveyed by color alone (matching that seat's color
+   everywhere else — SEAT_COLORS) instead of a text tag ("Cmdr" didn't say whose commander it
+   was; a source tag like "S2" ran too long once a pill has no room for anything else). A thin
+   light ring keeps it legible against any background, including the lethal red below. */
+.playtest__stat-pill-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background-color: var(--pill-color, var(--text-dim));
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.4);
+}
+
+.playtest__stat-pill--poison {
+  --pill-color: var(--accent);
+}
+
+.playtest__stat-pill--commander {
+  --pill-color: #d9a92e;
 }
 
 /* 21 commander damage from a single source is lethal — call it out. */
-.playtest__stat-chip--commander.is-lethal {
-  color: #fff;
+.playtest__stat-pill--commander.is-lethal {
   background-color: #b3261e;
   border-color: #ff6b5e;
+}
+
+.playtest__stat-pill--commander.is-lethal .playtest__stat-pill-label,
+.playtest__stat-pill--commander.is-lethal .playtest__stat-pill-value {
+  color: #fff;
 }
 
 /* Clickable graveyard/exile chips on an opponent's overlay. */
@@ -1680,25 +1688,6 @@
 .playtest__seat-zone:disabled {
   opacity: 0.4;
   cursor: default;
-}
-
-/* Which opponent a commander-damage chip belongs to. */
-.playtest__stat-chip-source {
-  position: absolute;
-  top: -6px;
-  right: -6px;
-  min-width: 14px;
-  height: 14px;
-  padding: 0 2px;
-  border-radius: 7px;
-  background-color: var(--bg-app);
-  border: 1px solid var(--border-subtle);
-  font-size: 0.52rem;
-  font-weight: 700;
-  color: var(--text-dim);
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
 /* --- Multiplayer host/join (step 5) --------------------------------------- */
@@ -1847,38 +1836,104 @@
 
 /* --- Goldfish practice stat -------------------------------------------------- */
 
-/* Bottom-left — the one screen corner not already claimed by the roll log
-   (top-left), life overlay (top-right), or the zones panel (right edge). */
+/* Two 3-wide grids flanking .table-radio (top-center) rather than one row spanning the top: a
+   single row of every category ran off both edges of the screen once a deck had more than a
+   handful of categories (see GoldfishPanel's left/right split). Capped at 3 columns and growing
+   downward instead keeps it on screen regardless of category count.
+   Each side's box is bounded on BOTH horizontal edges — one edge a fixed gap off the sibling
+   panel it sits next to (.playtest__player-panel on the left, .playtest__zones on the right),
+   the other a fixed gap off .table-radio (26px half-width + 10px gap) — instead of just
+   shrink-wrapping outward from the radio. That geometric containment is deliberate: an earlier
+   version only pinned the inner (radio-side) edge and let the grid shrink-wrap outward from
+   there, which on a merely-average window let a wide row spill out from behind
+   .playtest__player-panel — half-covered, half-poking out past its edge — since the two boxes
+   didn't share an edge. Columns use minmax(0, 1fr) so cards shrink together to whatever width
+   the box actually has (ellipsizing a long label) rather than overflowing it. z-index below
+   .playtest__player-panel/.playtest__zones (both 40) stays as a last-resort net for a window so
+   cramped the box itself would go negative-width; it should no longer be doing the real work. */
 .playtest__goldfish-panel {
   position: absolute;
-  bottom: 12px;
-  left: 12px;
-  z-index: 40;
+  top: 12px;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  pointer-events: none;
+}
+
+.playtest__goldfish-panel--left {
+  /* Clears .playtest__player-panel's card (12px inset + 316px wide) with a small gap. */
+  left: 340px;
+  right: calc(50% + 36px);
+}
+
+.playtest__goldfish-panel--right {
+  left: calc(50% + 36px);
+  /* Clears .playtest__zones (12px inset + ~112px wide including its own padding) with a small gap. */
+  right: 140px;
+}
+
+.playtest__goldfish-title {
+  grid-column: 1 / -1;
+  font-weight: 700;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.playtest__goldfish-card {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 6px 10px;
+  align-items: center;
+  gap: 1px;
+  min-width: 0;
+  padding: 4px 4px;
   border-radius: 8px;
   border: 1px solid var(--border-subtle);
   background-color: var(--bg-panel-raised);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
-  font-size: 0.75rem;
-  pointer-events: none;
+  font-size: 0.66rem;
+  text-align: center;
 }
 
-.playtest__goldfish-title {
+.playtest__goldfish-card-label {
   font-weight: 700;
-  color: var(--text-dim);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.playtest__goldfish-delta {
-  color: var(--accent);
+.playtest__goldfish-card-count {
+  color: var(--text-dim);
+  font-size: 0.62rem;
+}
+
+.playtest__goldfish-card-delta {
+  font-weight: 700;
+}
+
+.playtest__goldfish-card--ahead .playtest__goldfish-card-delta {
+  color: var(--color-g);
+}
+
+.playtest__goldfish-card--behind .playtest__goldfish-card-delta {
+  /* Matches the existing eliminated/lethal-commander-damage accent (see .playtest__seat-tag--eliminated). */
+  color: #ff6b5e;
+}
+
+.playtest__goldfish-card--even .playtest__goldfish-card-delta {
+  color: var(--text-dim);
 }
 
 /* --- Dice / coin roll log --------------------------------------------------- */
 
-/* Viewport-anchored (like the life overlay/actions tray), opposite corner from the
-   life overlay so it never collides with it. Newest roll on top. */
+/* Viewport-anchored (like .playtest__player-panel), same top-left corner as .playtest__player-
+   panel (this is dormant — empty — until a roll actually happens, so it doesn't fight the
+   player panel for space in practice). Newest roll on top. */
 .playtest__roll-log {
   position: absolute;
   top: 12px;

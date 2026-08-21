@@ -54,9 +54,8 @@ import CounterPileStack from './CounterPileStack'
 import DeckManagerModal from '../deck/DeckManagerModal'
 import DeckScanTray from './DeckScanTray'
 import { getCurrentDragData, getGameDragData, type DraggedGameCard } from './dragGameCard'
-import GoldfishPanel from './GoldfishPanel'
+import GoldfishPanel, { type GoldfishRow } from './GoldfishPanel'
 import LibraryPeekModal, { type PeekEntry, type PeekPlacement } from './LibraryPeekModal'
-import LifeOverlay from './LifeOverlay'
 import MultiplayerModal from './MultiplayerModal'
 import NumberInputPrompt from './NumberInputPrompt'
 import PingMarker from './PingMarker'
@@ -75,6 +74,7 @@ import ZonePile from './ZonePile'
 import ZoneViewerModal from './ZoneViewerModal'
 import { drawsByTurn } from '../../engine/castability'
 import { collectDeckTokens } from '../../engine/deckTokens'
+import { UNCATEGORIZED_LABEL } from '../../engine/deckGrouping'
 import './playtest.css'
 
 // Distinct border/text colors for each commander's tax circle, in commander order — a partner
@@ -508,11 +508,22 @@ function PlaytestView({ onClose }: Props) {
     ...opponentBoards.map((b) => [b.seat, !!b.scooped] as const),
   ])
   const isEliminated = (seat: Seat) => (lifeBySeat.get(seat) ?? 0) <= 0 || scoopedBySeat.get(seat) === true
+  // Every seat's name, keyed by seat — needed to label an opponent's incoming commander-damage
+  // pills (see the SeatOverlay calls below): a source dealing damage to opponent B could be us
+  // or any other opponent C, not just whoever's card we're currently rendering.
+  const seatNameBySeat = new Map<Seat, string>([[mySeatResolved, playerName], ...opponentBoards.map((b) => [b.seat, b.name] as const)])
   const activeSeat: Seat | null = spinSeat ?? (mockBoards !== null ? mockActiveSeat : mpActiveSeat)
 
   // Only the player whose turn it currently is may pass it on; before anyone's gone
   // (activeSeat === null) it's up for grabs so the first Pass Turn click can kick things off.
-  const canPassTurn = activeSeat === null || activeSeat === mySeatResolved
+  // Also up for grabs if activeSeat belonged to someone who's since left the pod (their board
+  // drops out of opponentBoards on 'playerLeft' — see useMultiplayer) — otherwise activeSeat
+  // stays pointed at a vacated seat forever and canPassTurn is false for every remaining real
+  // player, softlocking turn rotation. nextActiveSeat already tolerates a `current` seat that
+  // isn't in its own occupied list (falls back to the first occupied seat — see podLayout), so
+  // the fix is purely this gate.
+  const occupiedSeats: Seat[] = [mySeatResolved, ...opponentBoards.map((b) => b.seat)]
+  const canPassTurn = activeSeat === null || activeSeat === mySeatResolved || !occupiedSeats.includes(activeSeat)
 
   function handlePassTurn() {
     if (!canPassTurn) return
@@ -781,6 +792,80 @@ function PlaytestView({ onClose }: Props) {
     return () => window.removeEventListener('keydown', onKey)
   }, [inPod, centerOnSeat, fitAll])
 
+  // WASD: continuous camera pan while held, game-style — not gated by inPod, useful solo too.
+  // Same direction convention as the mouse drag-pan in handleCanvasMouseDown (dragging the
+  // table down/right increases camera.x/y — you're moving the *table*, not a "camera" per se),
+  // so W (pan view up) increases camera.y just like dragging the table down would, D (pan view
+  // right) decreases camera.x like dragging the table left, etc.
+  // heldKeys/rAF state lives in this effect's own closure rather than React state — this runs
+  // every animation frame while a key's held, and re-rendering the component that often just to
+  // read a Set would be wasteful; setCamera is the only piece that actually needs to be state.
+  useEffect(() => {
+    const PAN_SPEED = 700 // px/sec at zoom 1; divided by zoom below so it feels the same zoomed in/out
+    const heldKeys = new Set<string>()
+    let rafId: number
+    let lastTime: number | null = null
+
+    function tick(now: number) {
+      rafId = requestAnimationFrame(tick)
+      if (heldKeys.size === 0) {
+        lastTime = null
+        return
+      }
+      if (lastTime === null) {
+        lastTime = now
+        return
+      }
+      const dt = (now - lastTime) / 1000
+      lastTime = now
+      setCamera((prev) => {
+        const distance = (PAN_SPEED / prev.zoom) * dt
+        let dx = 0
+        let dy = 0
+        if (heldKeys.has('w')) dy += distance
+        if (heldKeys.has('s')) dy -= distance
+        if (heldKeys.has('a')) dx += distance
+        if (heldKeys.has('d')) dx -= distance
+        return dx === 0 && dy === 0 ? prev : { ...prev, x: prev.x + dx, y: prev.y + dy }
+      })
+    }
+    rafId = requestAnimationFrame(tick)
+
+    function onKeyDown(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) {
+        return
+      }
+      if (event.ctrlKey || event.metaKey || event.altKey) return
+      const key = event.key.toLowerCase()
+      if (key !== 'w' && key !== 'a' && key !== 's' && key !== 'd') return
+      if (!heldKeys.has(key)) {
+        // A fresh press, not an OS auto-repeat re-firing the same key: cancel any in-flight
+        // animateCameraTo glide (center-on-seat, fit-all) the moment manual panning starts, same
+        // as a mouse-drag pan already does — otherwise the two fight over camera state.
+        cancelCameraAnim()
+        heldKeys.add(key)
+      }
+    }
+    function onKeyUp(event: KeyboardEvent) {
+      heldKeys.delete(event.key.toLowerCase())
+    }
+    // Alt-tabbing away (or anything else that steals focus) mid-hold never fires keyup, which
+    // would otherwise pan forever in one direction — the classic "stuck key" bug.
+    function onBlur() {
+      heldKeys.clear()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    window.addEventListener('blur', onBlur)
+    return () => {
+      cancelAnimationFrame(rafId)
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('blur', onBlur)
+    }
+  }, [cancelCameraAnim])
+
   // Ctrl+Z / Cmd+Z: undo. Ctrl+Y, or the Ctrl+Shift+Z / Cmd+Shift+Z convention most Mac (and
   // some Windows) apps use instead, redoes — walks back the other way to the state as it was
   // before the last undo. Not gated by inPod (useful in solo play too), unlike the seat-focused
@@ -927,15 +1012,37 @@ function PlaytestView({ onClose }: Props) {
   const battlefield = zoneCards(state, 'battlefield')
   const battlefieldIdsKey = battlefield.map((c) => c.instanceId).join(',')
 
-  // Goldfish practice stat: lands actually drawn (any zone but library) vs. what the deck's own
-  // land ratio predicts by this turn (see engine/castability's drawsByTurn, the same sample-size
-  // convention the Mana Base panel's castability odds already use). Scoped to the cards that
-  // actually started in the library — commanders/tokens never did, so they'd skew both counts.
+  // Goldfish practice stat: how many cards of a category (lands, or one of the deck's own
+  // below) have actually been drawn (any zone but library) vs. what the deck's own ratio for
+  // that category predicts by this turn (see engine/castability's drawsByTurn, the same
+  // sample-size convention the Mana Base panel's castability odds already use). Scoped to the
+  // cards that actually started in the library — commanders/tokens never did, so they'd skew
+  // every count.
   const deckPopulationCards = state.cards.filter((c) => !c.isCommander && !c.isToken)
-  const totalLandsInDeck = deckPopulationCards.filter((c) => snapshots.get(c.scryfallId)?.type_line.includes('Land')).length
-  const landsDrawn = deckPopulationCards.filter((c) => c.zone !== 'library' && snapshots.get(c.scryfallId)?.type_line.includes('Land')).length
-  const landsExpected =
-    deckPopulationCards.length > 0 ? drawsByTurn(state.turn, true) * (totalLandsInDeck / deckPopulationCards.length) : 0
+  function goldfishStat(matches: (scryfallId: string) => boolean) {
+    const size = deckPopulationCards.filter((c) => matches(c.scryfallId)).length
+    const drawn = deckPopulationCards.filter((c) => c.zone !== 'library' && matches(c.scryfallId)).length
+    const expected = deckPopulationCards.length > 0 ? drawsByTurn(state.turn, true) * (size / deckPopulationCards.length) : 0
+    return { size, drawn, expected }
+  }
+  const landsStat = goldfishStat((id) => snapshots.get(id)?.type_line.includes('Land') ?? false)
+
+  // Same category bucketing the deck list uses (see engine/deckGrouping's groupByCategory):
+  // Uncategorized leads, the rest sort alphabetically. Mainboard-only, and never a commander/
+  // token — matches deckPopulationCards above.
+  const categoryByScryfallId = new Map<string, string>()
+  for (const dc of deck.cards) {
+    if (dc.board !== 'mainboard' || dc.isCommander || dc.isToken) continue
+    categoryByScryfallId.set(dc.scryfallId, dc.category && deck.categories.includes(dc.category) ? dc.category : UNCATEGORIZED_LABEL)
+  }
+  const categoryOrder = [UNCATEGORIZED_LABEL, ...[...deck.categories].sort((a, b) => a.localeCompare(b))]
+  const goldfishRows: GoldfishRow[] = [
+    { label: 'Lands', drawn: landsStat.drawn, expected: landsStat.expected },
+    ...categoryOrder
+      .map((label) => ({ label, ...goldfishStat((id) => categoryByScryfallId.get(id) === label) }))
+      .filter((row) => row.size > 0)
+      .map(({ label, drawn, expected }) => ({ label, drawn, expected })),
+  ]
 
   // One playmat "skin" layer per seat, each showing *that player's own* choice (not mine) —
   // multiplayer request: "It would also be cool to see each players personal playmat choice."
@@ -1114,11 +1221,34 @@ function PlaytestView({ onClose }: Props) {
     playCue('draw')
   }
 
+  /** Mass tap: taps/untaps every card in `ids` together, as one group — the multi-select
+   *  equivalent of clicking a single card. Toggles by consensus rather than flipping each
+   *  card's own state independently (which would leave the group in a mixed, harder-to-read
+   *  state): if every one of them is already tapped, this untaps the whole group; otherwise it
+   *  taps whatever in the group isn't already tapped. Skips cards already in the target state so
+   *  a repeat call (e.g. holding T) doesn't spam no-op dispatches.
+   *  useCallback (rather than a plain function, like most handlers in this file) purely so the
+   *  T-shortcut effect below has a stable dependency instead of resubscribing every render. */
+  const tapSelection = useCallback(
+    (ids: Set<string>) => {
+      const selected = battlefield.filter((c) => ids.has(c.instanceId))
+      if (selected.length === 0) return
+      const nextTapped = !selected.every((c) => c.tapped)
+      for (const c of selected) {
+        if (c.tapped !== nextTapped) dispatch({ type: 'SET_TAPPED', instanceId: c.instanceId, tapped: nextTapped })
+      }
+    },
+    [battlefield, dispatch],
+  )
+
   /** Shift-click toggles a battlefield card into/out of the multi-select group instead of
-   *  tapping it; a plain click taps as usual and drops any existing selection (a "click" only
-   *  fires when the gesture didn't turn into a drag — see PlaytestCard's didDrag guard).
-   *  Alt+click instead flash-highlights the card for the pod (see sendHighlight) — same
-   *  modifier-key precedent as Alt+click on empty battlefield dropping a position ping. */
+   *  tapping it. A plain click on a card that's part of an active multi-selection (2+ cards)
+   *  mass-taps the whole group instead — the group stays selected, so a repeat click (or the T
+   *  shortcut — see the keydown effect below) keeps working on it, e.g. through several combat
+   *  steps. A plain click on anything else taps just that one card and drops any selection, as
+   *  before (a "click" only fires when the gesture didn't turn into a drag — see PlaytestCard's
+   *  didDrag guard). Alt+click instead flash-highlights the card for the pod (see sendHighlight)
+   *  — same modifier-key precedent as Alt+click on empty battlefield dropping a position ping. */
   function handleBattlefieldCardClick(gameCard: (typeof battlefield)[number], event: ReactMouseEvent) {
     if (event.altKey) {
       sendHighlight(gameCard.instanceId)
@@ -1138,6 +1268,10 @@ function PlaytestView({ onClose }: Props) {
       })
       return
     }
+    if (selectedIds.size > 1 && selectedIds.has(gameCard.instanceId)) {
+      tapSelection(selectedIds)
+      return
+    }
     setSelectedIds(new Set())
     dispatch({ type: 'SET_TAPPED', instanceId: gameCard.instanceId, tapped: !gameCard.tapped })
   }
@@ -1146,6 +1280,27 @@ function PlaytestView({ onClose }: Props) {
     const { x, y } = clampToCanvas((source.x ?? 0) + 16, (source.y ?? 0) + 16)
     dispatch({ type: 'CREATE_TOKEN', sourceInstanceId: source.instanceId, x, y })
   }
+
+  // T: the keyboard version of clicking a card within an active multi-selection (see
+  // tapSelection/handleBattlefieldCardClick) — mass-tap without needing to click one of the
+  // selected cards specifically. Guarded against event.repeat: held down, an OS auto-repeat
+  // would otherwise refire this every ~30-50ms and rapidly flip the group back and forth
+  // between tapped/untapped instead of applying it once.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) {
+        return
+      }
+      if (event.repeat || event.ctrlKey || event.metaKey || event.altKey) return
+      if (event.key.toLowerCase() !== 't') return
+      if (selectedIds.size === 0) return
+      event.preventDefault()
+      tapSelection(selectedIds)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [selectedIds, tapSelection])
 
   /** Opens a card's Scryfall page (which includes its rulings) in a new tab. The trimmed-down
    *  CardSnapshot this app caches deliberately drops set/collector_number (see storage/cardCache.ts),
@@ -1720,7 +1875,7 @@ function PlaytestView({ onClose }: Props) {
       name,
       seat,
       life: 40 - seat * 4,
-      commanderDamage: 0,
+      commanderDamage: {},
       poison: seat === 3 ? 3 : 0,
       handCount: 4 + seat,
       battlefield: cards,
@@ -2001,6 +2156,17 @@ function PlaytestView({ onClose }: Props) {
       <div className="playtest__topbar">
         <span className="playtest__deck-name">{deck.name}</span>
         <span className="playtest__turn">Turn {state.turn}</span>
+        {/* Whose turn it is, front and center in the topbar — not just the quadrant's gold glow
+            (.playtest__quadrant.is-active-turn), which is easy to miss once you've panned/zoomed
+            away from that seat. Same gold accent as that glow so "gold = whose turn" reads as one
+            consistent visual language; `key={activeSeat}` remounts it on every turn pass so the
+            pop-in animation actually replays instead of only firing once. */}
+        {inPod && activeSeat !== null && (
+          <span key={activeSeat} className="playtest__active-turn-badge" style={{ '--seat-color': SEAT_COLORS[activeSeat] } as CSSProperties}>
+            <span className="playtest__seat-color-dot" />
+            {activeSeat === mySeatResolved ? 'Your Turn' : `${seatNameBySeat.get(activeSeat) ?? `Seat ${activeSeat + 1}`}'s Turn`}
+          </span>
+        )}
         {inPod ? (
           <button
             type="button"
@@ -2443,80 +2609,89 @@ function PlaytestView({ onClose }: Props) {
               every camera state/viewport size. */}
           <TableRadio station={radioStation} onChangeStation={handleChangeRadioStation} />
 
-          {/* Life / hand overlays. Solo keeps the single fixed cluster; a pod shows one static
-              sidebar panel (see .playtest__player-panel) listing every seat, yours interactive —
-              fixed to the screen, never anchored to the table, so it can't read as part of the
-              battlefield no matter how the camera pans/zooms. */}
-          {inPod ? (
-            <div className="playtest__player-panel">
-              <SeatOverlay
-                seat={mySeatResolved}
-                name={playerName}
-                life={state.life}
-                scooped={state.scooped}
-                commanderDamage={maxCommanderDamage(state.commanderDamage)}
-                commanderSources={opponentBoards.map((b) => ({
-                  seat: b.seat,
-                  name: b.name,
-                  damage: state.commanderDamage[b.seat] ?? 0,
-                }))}
-                commanders={command.map((c) => ({
-                  scryfallId: c.scryfallId,
-                  name: snapshotFor(c.scryfallId)?.name ?? c.scryfallId,
-                  snapshot: snapshotFor(c.scryfallId),
-                }))}
-                poison={state.poison}
-                showCommanderDamage={deck.format === 'commander' || maxCommanderDamage(state.commanderDamage) > 0}
-                handCount={hand.length}
-                isSelf
-                onFocus={() => centerOnSeat(mySeatResolved)}
-                onLifeChange={(delta) => {
-                  dispatch({ type: 'ADJUST_LIFE', delta })
-                  playCue(delta > 0 ? 'life-up' : 'life-down')
-                }}
-                onCommanderDamageFrom={(fromSeat, delta) => dispatch({ type: 'ADJUST_COMMANDER_DAMAGE', fromSeat, delta })}
-                onPoisonChange={(delta) => dispatch({ type: 'ADJUST_POISON', delta })}
-              />
-              {opponentBoards.map((board) => (
+          {/* Life / hand overlay: one static top-left panel (see .playtest__player-panel) for
+              every seat, yours interactive — fixed to the screen, never anchored to the table,
+              so it can't read as part of the battlefield no matter how the camera pans/zooms.
+              Solo is just a pod of one: same card, no opponent cards listed below it. */}
+          <div className="playtest__player-panel">
+            <SeatOverlay
+              seat={mySeatResolved}
+              name={playerName}
+              life={state.life}
+              startingLife={state.startingLife}
+              scooped={state.scooped}
+              commanderSources={
+                inPod
+                  ? opponentBoards.map((b) => ({
+                      seat: b.seat,
+                      name: b.name,
+                      damage: state.commanderDamage[b.seat] ?? 0,
+                    }))
+                  : undefined
+              }
+              soloCommanderDamage={
+                inPod
+                  ? undefined
+                  : {
+                      value: state.commanderDamage[SOLO_CMDR_SOURCE] ?? 0,
+                      onChange: (delta) => dispatch({ type: 'ADJUST_COMMANDER_DAMAGE', fromSeat: SOLO_CMDR_SOURCE, delta }),
+                    }
+              }
+              commanders={command.map((c) => ({
+                scryfallId: c.scryfallId,
+                name: snapshotFor(c.scryfallId)?.name ?? c.scryfallId,
+                snapshot: snapshotFor(c.scryfallId),
+              }))}
+              poison={state.poison}
+              showCommanderDamage={
+                deck.format === 'commander' ||
+                (inPod ? maxCommanderDamage(state.commanderDamage) > 0 : (state.commanderDamage[SOLO_CMDR_SOURCE] ?? 0) > 0)
+              }
+              handCount={hand.length}
+              floatingMana={state.floatingMana}
+              isSelf
+              onFocus={() => centerOnSeat(mySeatResolved)}
+              onLifeChange={(delta) => {
+                dispatch({ type: 'ADJUST_LIFE', delta })
+                playCue(delta > 0 ? 'life-up' : 'life-down')
+              }}
+              onCommanderDamageFrom={(fromSeat, delta) => dispatch({ type: 'ADJUST_COMMANDER_DAMAGE', fromSeat, delta })}
+              onPoisonChange={(delta) => dispatch({ type: 'ADJUST_POISON', delta })}
+              onFloatingManaChange={(color, delta) => dispatch({ type: 'ADJUST_FLOATING_MANA', color, delta })}
+              onClearFloatingMana={() => dispatch({ type: 'CLEAR_FLOATING_MANA' })}
+            />
+            {inPod &&
+              opponentBoards.map((board) => (
                 <SeatOverlay
                   key={board.playerId}
                   seat={board.seat}
                   name={board.name}
                   life={board.life}
+                  startingLife={board.startingLife}
                   scooped={board.scooped}
-                  commanderDamage={board.commanderDamage}
+                  commanderSources={Object.entries(board.commanderDamage).map(([seatKey, damage]) => {
+                    const srcSeat = Number(seatKey) as Seat
+                    return { seat: srcSeat, name: seatNameBySeat.get(srcSeat) ?? `Seat ${srcSeat + 1}`, damage: damage ?? 0 }
+                  })}
                   commanders={(board.command ?? []).map((c) => ({
                     scryfallId: c.scryfallId,
                     name: snapshotFor(c.scryfallId)?.name ?? c.scryfallId,
                     snapshot: snapshotFor(c.scryfallId),
                   }))}
                   poison={board.poison}
-                  showCommanderDamage={deck.format === 'commander' || board.commanderDamage > 0}
+                  showCommanderDamage={deck.format === 'commander' || Object.keys(board.commanderDamage).length > 0}
                   handCount={board.handCount}
                   graveyardCount={board.graveyard?.length ?? 0}
                   exileCount={board.exile?.length ?? 0}
                   handRevealed={board.hand !== undefined}
+                  floatingMana={board.floatingMana}
                   isSelf={false}
                   onFocus={() => centerOnSeat(board.seat)}
                   onViewZone={(zone) => setOppZoneView({ board, zone })}
                 />
               ))}
-            </div>
-          ) : (
-            <LifeOverlay
-              life={state.life}
-              commanderDamage={state.commanderDamage[SOLO_CMDR_SOURCE] ?? 0}
-              poison={state.poison}
-              showCommanderDamage={deck.format === 'commander' || (state.commanderDamage[SOLO_CMDR_SOURCE] ?? 0) > 0}
-              onLifeChange={(delta) => {
-                dispatch({ type: 'ADJUST_LIFE', delta })
-                playCue(delta > 0 ? 'life-up' : 'life-down')
-              }}
-              onCommanderDamageChange={(delta) => dispatch({ type: 'ADJUST_COMMANDER_DAMAGE', fromSeat: SOLO_CMDR_SOURCE, delta })}
-              onPoisonChange={(delta) => dispatch({ type: 'ADJUST_POISON', delta })}
-            />
-          )}
-          {!inPod && goldfishOn && <GoldfishPanel turn={state.turn} landsDrawn={landsDrawn} landsExpected={landsExpected} />}
+          </div>
+          {!inPod && goldfishOn && <GoldfishPanel turn={state.turn} rows={goldfishRows} />}
           <RollLog entries={rollLogEntries} />
           <DeckScanTray
             deck={deck}

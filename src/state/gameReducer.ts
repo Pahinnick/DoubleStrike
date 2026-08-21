@@ -1,4 +1,6 @@
 import type { CounterColor, CounterPile, GivenCard, PtCounterPile, Seat } from '../net/protocol'
+import type { ManaColorKey } from '../utils/colors'
+import { zeroManaPool } from '../utils/colors'
 import type { Deck } from './types'
 
 export type GameZone = 'library' | 'hand' | 'battlefield' | 'graveyard' | 'exile' | 'command'
@@ -77,6 +79,12 @@ export type GameState = {
    *  everywhere it's checked (see PlaytestView's isEliminated); never reset except a fresh
    *  START_GAME. There's no "unscoop" — Ctrl+Z (see gameReducer's RESTORE_STATE) covers a misclick. */
   scooped: boolean
+  /** Mana currently "floating" — generated but not yet spent, tracked per color so a big mana
+   *  turn (ritual + rocks + dorks, easily double digits) doesn't have to be kept in your head.
+   *  Real Magic empties this between turns (mana doesn't carry over), so NEXT_TURN resets it to
+   *  all zero same as START_GAME; CLEAR_FLOATING_MANA (a manual "spent it all" button) does the
+   *  same thing mid-turn without waiting for the turn to pass. */
+  floatingMana: Record<ManaColorKey, number>
 }
 
 export type GameAction =
@@ -146,6 +154,13 @@ export type GameAction =
   | { type: 'RESTORE_STATE'; state: GameState }
   /** Voluntary concede ("Scoop") — see GameState.scooped. */
   | { type: 'SCOOP' }
+  /** Adjust one color's floating mana by `delta` — left-click +1/right-click -1 on a mana pip
+   *  (see ManaPool.tsx). Clamped at 0, same as ADJUST_POISON: floating mana can't go negative. */
+  | { type: 'ADJUST_FLOATING_MANA'; color: ManaColorKey; delta: number }
+  /** Zeroes every color at once — the manual "I've spent it all" button, for when clicking each
+   *  color down individually would be tedious. See GameState.floatingMana for the automatic
+   *  every-color-empties-on-NEXT_TURN behavior this complements. */
+  | { type: 'CLEAR_FLOATING_MANA' }
 
 export const OPENING_HAND_SIZE = 7
 
@@ -163,13 +178,22 @@ export function zoneCards(state: GameState, zone: GameZone): GameCard[] {
 
 function drawCards(cards: GameCard[], count: number): GameCard[] {
   // Library order is array order, so "the top N" are simply the first N
-  // library-zone cards encountered.
+  // library-zone cards encountered. Pulled out and re-prepended (rather than left in place,
+  // which used to strand a newly drawn card wherever its original deck-list position happened
+  // to fall relative to the rest of the hand) so a draw always lands in the leftmost hand slot
+  // — array order is render order for the hand fan (see PlaytestView's `hand.map`).
   let remaining = count
-  return cards.map((c) => {
-    if (c.zone !== 'library' || remaining <= 0) return c
-    remaining--
-    return { ...c, zone: 'hand' as GameZone, tapped: false }
-  })
+  const drawn: GameCard[] = []
+  const rest: GameCard[] = []
+  for (const c of cards) {
+    if (c.zone === 'library' && remaining > 0) {
+      remaining--
+      drawn.push({ ...c, zone: 'hand' as GameZone, tapped: false })
+    } else {
+      rest.push(c)
+    }
+  }
+  return [...drawn, ...rest]
 }
 
 function nonTokenCount(cards: GameCard[]): number {
@@ -213,6 +237,7 @@ function gameReducerInner(state: GameState, action: GameAction): GameState {
         revealTopOfLibrary: false,
         revealHand: false,
         scooped: false,
+        floatingMana: zeroManaPool(),
       }
     }
 
@@ -453,6 +478,8 @@ function gameReducerInner(state: GameState, action: GameAction): GameState {
           state.cards.map((c) => (c.zone === 'battlefield' && c.tapped ? { ...c, tapped: false } : c)),
           1,
         ),
+        // Real Magic: mana doesn't carry over between turns.
+        floatingMana: zeroManaPool(),
       }
 
     case 'REMOVE_CARD':
@@ -494,10 +521,27 @@ function gameReducerInner(state: GameState, action: GameAction): GameState {
       return { ...state, revealHand: !state.revealHand }
 
     case 'RESTORE_STATE':
-      return action.state
+      // `action.state` isn't always this session's own live state — it's also how a solo
+      // autosave (see soloGameStorage.ts) re-enters the reducer, and that snapshot can be older
+      // than a since-added GameState field. floatingMana is the first field here whose absence
+      // actually crashes (a plain `undefined` boolean like scooped/revealHand fails open, but
+      // ManaPool indexes straight into this one), so patch it in rather than trusting every
+      // persisted save to already have it. Falls back to returning `action.state` completely
+      // unchanged (same reference) whenever it already has the field — every same-session
+      // caller (undo, a fresh autosave) does — so this stays a true no-op there.
+      return action.state.floatingMana ? action.state : { ...action.state, floatingMana: zeroManaPool() }
 
     case 'SCOOP':
       return { ...state, scooped: true }
+
+    case 'ADJUST_FLOATING_MANA':
+      return {
+        ...state,
+        floatingMana: { ...state.floatingMana, [action.color]: Math.max(0, state.floatingMana[action.color] + action.delta) },
+      }
+
+    case 'CLEAR_FLOATING_MANA':
+      return { ...state, floatingMana: zeroManaPool() }
 
     default:
       return state

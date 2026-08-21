@@ -34,9 +34,13 @@ export function toSnapshot(card: ScryfallCard): CardSnapshot {
     oracle_id: card.oracle_id,
     name: card.name,
     mana_cost: getCastingManaCost(card),
-    cmc: card.cmc,
-    type_line: card.type_line,
-    colors: card.colors ?? [],
+    // Reversible cards (layout "reversible_card" — e.g. the ECL "Steam Vents" or SLD "Dragonlord
+    // Atarka") have no top-level cmc/type_line/colors at all; each face is really its own full
+    // card, so these only exist per-face. Fall back to the front face's, the same "prefer
+    // card_faces[0]" resolution getCastingManaCost already does for mana_cost.
+    cmc: card.cmc ?? card.card_faces?.[0]?.cmc ?? 0,
+    type_line: card.type_line ?? card.card_faces?.[0]?.type_line ?? '',
+    colors: card.colors ?? card.card_faces?.[0]?.colors ?? [],
     color_identity: card.color_identity,
     produced_mana: card.produced_mana,
     image_uris: card.image_uris,

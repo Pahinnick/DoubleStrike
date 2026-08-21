@@ -12,9 +12,13 @@
  * which is what makes the protocol idempotent, order-independent and
  * self-healing after a dropped packet or a late join.
  */
+import { MANA_COLOR_KEYS, type ManaColorKey } from '../utils/colors'
 
-/** Bump when the wire shape changes incompatibly. Receivers reject other versions. */
-export const PROTOCOL_VERSION = 1
+/** Bump when the wire shape changes incompatibly. Receivers reject other versions.
+ *  v2: PublicBoard.commanderDamage changed from a single number (worst single source) to a
+ *  per-source record keyed by seat — an incompatible shape change, unlike every other field
+ *  added to PublicBoard so far (those were purely additive/optional). */
+export const PROTOCOL_VERSION = 2
 
 /** 4-player Commander pod. Seats are 0..3; the host always takes seat 0. */
 export const MAX_PLAYERS = 4
@@ -100,7 +104,17 @@ export type PublicBoard = {
   name: string
   seat: Seat
   life: number
-  commanderDamage: number
+  /** Starting life for this player's format (e.g. 40 for Commander, 20 for most others) — the
+   *  reference point a life *bar* fills against (see SeatOverlay), not just the raw number a
+   *  chip would show. Optional so an older sender simply falls back to the Commander default
+   *  (see SeatOverlay's own fallback) rather than failing validation. */
+  startingLife?: number
+  /** Commander damage taken, keyed by the *seat* whose commander dealt it — real Commander
+   *  rules make each source's damage against you public knowledge (visible on a real table),
+   *  not just your worst single total, so seat overlays can show one dot per source the same
+   *  way for every player, not just your own. Sparse: a source dealing 0 is omitted, same
+   *  convention as counters/floatingMana. */
+  commanderDamage: Partial<Record<Seat, number>>
   poison: number
   handCount: number
   battlefield: PublicCard[]
@@ -126,6 +140,11 @@ export type PublicBoard = {
    *  PlaytestView's isEliminated. Omitted (not false) when not scooped, keeping the wire
    *  payload sparse like every other optional flag here. */
   scooped?: boolean
+  /** Mana currently floating (generated but not yet spent), per color — visible to the whole pod
+   *  same as life/poison, since a real table's floating mana sits in plain view next to your
+   *  library. Sparse like counters/ptCounters: only nonzero colors are included, and the field
+   *  is omitted entirely (not an all-zero object) once nothing's floating. */
+  floatingMana?: Partial<Record<ManaColorKey, number>>
 }
 
 /**
@@ -644,6 +663,19 @@ function isOptionalPile(v: unknown): v is PublicPileCard[] | undefined {
   return v === undefined || (Array.isArray(v) && v.every(isPublicPileCard))
 }
 
+function isFloatingMana(v: unknown): v is Partial<Record<ManaColorKey, number>> | undefined {
+  if (v === undefined) return true
+  if (typeof v !== 'object' || v === null) return false
+  const m = v as Record<string, unknown>
+  return Object.keys(m).every((key) => (MANA_COLOR_KEYS as readonly string[]).includes(key) && typeof m[key] === 'number')
+}
+
+function isCommanderDamage(v: unknown): v is Partial<Record<Seat, number>> {
+  if (typeof v !== 'object' || v === null) return false
+  const m = v as Record<string, unknown>
+  return Object.keys(m).every((key) => isSeat(Number(key)) && typeof m[key] === 'number')
+}
+
 function isPublicBoard(v: unknown): v is PublicBoard {
   if (typeof v !== 'object' || v === null) return false
   const b = v as Record<string, unknown>
@@ -652,7 +684,8 @@ function isPublicBoard(v: unknown): v is PublicBoard {
     isString(b.name) &&
     isSeat(b.seat) &&
     typeof b.life === 'number' &&
-    typeof b.commanderDamage === 'number' &&
+    (b.startingLife === undefined || typeof b.startingLife === 'number') &&
+    isCommanderDamage(b.commanderDamage) &&
     typeof b.poison === 'number' &&
     typeof b.handCount === 'number' &&
     Array.isArray(b.battlefield) &&
@@ -662,6 +695,7 @@ function isPublicBoard(v: unknown): v is PublicBoard {
     isOptionalPile(b.command) &&
     isOptionalPile(b.hand) &&
     (b.battlefieldSkin === undefined || typeof b.battlefieldSkin === 'string') &&
-    (b.scooped === undefined || typeof b.scooped === 'boolean')
+    (b.scooped === undefined || typeof b.scooped === 'boolean') &&
+    isFloatingMana(b.floatingMana)
   )
 }

@@ -11,7 +11,8 @@
  * scryfallId ever appears in the output).
  */
 import type { GameState } from '../state/gameReducer'
-import { maxCommanderDamage, zoneCards } from '../state/gameReducer'
+import { zoneCards } from '../state/gameReducer'
+import { MANA_COLOR_KEYS, type ManaColorKey } from '../utils/colors'
 import { FACE_DOWN_SCRYFALL_ID, type CounterPile, type PtCounterPile, type PublicBoard, type PublicCard, type PublicPileCard, type Seat } from './protocol'
 
 export type LocalIdentity = {
@@ -69,15 +70,40 @@ function toPublicPileCard(card: { instanceId: string; scryfallId: string; showBa
   return pub
 }
 
+/** Strips zero-value colors — same sparse convention as counters/ptCounters — and returns
+ *  undefined instead of an empty object once nothing's floating, so the field can be omitted
+ *  from the wire payload entirely rather than sent as `{}`. */
+function toPublicFloatingMana(mana: Record<ManaColorKey, number>): Partial<Record<ManaColorKey, number>> | undefined {
+  const sparse: Partial<Record<ManaColorKey, number>> = {}
+  for (const color of MANA_COLOR_KEYS) {
+    if (mana[color] > 0) sparse[color] = mana[color]
+  }
+  return Object.keys(sparse).length > 0 ? sparse : undefined
+}
+
+/** Reshapes the locally-tracked per-source damage (keyed by source seat, including solo's
+ *  synthetic SOLO_CMDR_SOURCE key) into the sparse, Seat-only shape PublicBoard sends — real
+ *  Commander rules make each source's damage against you public, not just your worst single
+ *  total, so every seat overlay (not just your own) can show one dot per source. */
+function toPublicCommanderDamage(commanderDamage: Record<number, number>): Partial<Record<Seat, number>> {
+  const sparse: Partial<Record<Seat, number>> = {}
+  for (const [key, value] of Object.entries(commanderDamage)) {
+    const seat = Number(key)
+    if (value > 0 && (seat === 0 || seat === 1 || seat === 2 || seat === 3)) sparse[seat] = value
+  }
+  return sparse
+}
+
 export function toPublicBoard(state: GameState, identity: LocalIdentity): PublicBoard {
   const board: PublicBoard = {
     playerId: identity.playerId,
     name: identity.name,
     seat: identity.seat,
     life: state.life,
-    // The wire carries the worst single-source total (what the 21-is-lethal rule
-    // cares about); the per-source breakdown stays local to the owner.
-    commanderDamage: maxCommanderDamage(state.commanderDamage),
+    // The reference point opponents' life *bars* fill against (see SeatOverlay) — Commander's
+    // usual 40, but not necessarily (a non-Commander format starts at 20/25/30).
+    startingLife: state.startingLife,
+    commanderDamage: toPublicCommanderDamage(state.commanderDamage),
     poison: state.poison,
     // Count only — the actual hand cards never leave this client.
     handCount: zoneCards(state, 'hand').length,
@@ -92,5 +118,7 @@ export function toPublicBoard(state: GameState, identity: LocalIdentity): Public
   if (state.revealHand) board.hand = zoneCards(state, 'hand').map(toPublicPileCard)
   if (identity.battlefieldSkin) board.battlefieldSkin = identity.battlefieldSkin
   if (state.scooped) board.scooped = true
+  const floatingMana = toPublicFloatingMana(state.floatingMana)
+  if (floatingMana) board.floatingMana = floatingMana
   return board
 }

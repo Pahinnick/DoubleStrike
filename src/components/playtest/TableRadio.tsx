@@ -147,7 +147,16 @@ function TableRadio({ station, onChangeStation }: Props) {
   const current = RADIO_STATIONS.find((s) => s.id === station) ?? null
 
   return (
-    <div ref={rootRef} className="table-radio">
+    <div
+      ref={rootRef}
+      className="table-radio"
+      // The whole radio sits inside .playtest__battlefield (positioned fixed, but still a DOM
+      // descendant — see the placement comment on <TableRadio> in PlaytestView.tsx), which has
+      // its own onWheel for camera zoom. Without stopping it here, scrolling the station list
+      // (or even just scrolling over the radio icon) bubbled up and zoomed the table instead of
+      // scrolling — or, when the list itself did scroll, zoomed the camera at the same time.
+      onWheel={(event) => event.stopPropagation()}
+    >
       <button
         type="button"
         className={`table-radio__body ${current ? 'is-playing' : ''}`}

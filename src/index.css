@@ -244,7 +244,12 @@ button:hover {
     filter: none;
   }
 }
-button:focus,
+/* :focus-visible only, not plain :focus — a mouse click sets :focus too, and Chrome/Firefox
+   don't clear it just because focus moved to a non-focusable target afterward, so a plain
+   :focus rule here made every button click leave a lingering accent-colored outline behind
+   (looking like a stuck selection ring) until something else stole focus. :focus-visible only
+   matches when the browser's own heuristic decides the outline is actually useful (keyboard
+   navigation), which is exactly what real accessibility needs it for. */
 button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;

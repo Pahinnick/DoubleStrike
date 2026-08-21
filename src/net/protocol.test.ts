@@ -24,7 +24,7 @@ function board(overrides: Partial<PublicBoard> = {}): PublicBoard {
     name: 'Alice',
     seat: 0,
     life: 40,
-    commanderDamage: 0,
+    commanderDamage: {},
     poison: 0,
     handCount: 7,
     battlefield: [
@@ -182,6 +182,56 @@ describe('serialization round-trips', () => {
   it('rejects a STATE whose scooped flag is not a boolean', () => {
     const bad = { ...board(), scooped: 'yes' }
     expect(deserialize(JSON.stringify({ type: 'STATE', v: PROTOCOL_VERSION, board: bad }))).toBeNull()
+  })
+
+  it('STATE carrying startingLife round-trips, and tolerates it being absent', () => {
+    const withStarting = board({ startingLife: 30 })
+    expect(deserialize(serialize({ type: 'STATE', v: PROTOCOL_VERSION, board: withStarting }))).toEqual({
+      type: 'STATE',
+      v: PROTOCOL_VERSION,
+      board: withStarting,
+    })
+    const without = deserialize(serialize({ type: 'STATE', v: PROTOCOL_VERSION, board: board() }))
+    expect((without as { board: PublicBoard }).board.startingLife).toBeUndefined()
+  })
+
+  it('rejects a STATE whose startingLife is not a number', () => {
+    const bad = { ...board(), startingLife: '40' }
+    expect(deserialize(JSON.stringify({ type: 'STATE', v: PROTOCOL_VERSION, board: bad }))).toBeNull()
+  })
+
+  it('STATE carrying floatingMana round-trips, and omits it when nothing is floating', () => {
+    const floating = board({ floatingMana: { R: 3, G: 2 } })
+    expect(deserialize(serialize({ type: 'STATE', v: PROTOCOL_VERSION, board: floating }))).toEqual({
+      type: 'STATE',
+      v: PROTOCOL_VERSION,
+      board: floating,
+    })
+    const empty = deserialize(serialize({ type: 'STATE', v: PROTOCOL_VERSION, board: board() }))
+    expect((empty as { board: PublicBoard }).board.floatingMana).toBeUndefined()
+  })
+
+  it('rejects a STATE whose floatingMana has a non-color key or a non-numeric value', () => {
+    const badKey = { ...board(), floatingMana: { Q: 3 } }
+    expect(deserialize(JSON.stringify({ type: 'STATE', v: PROTOCOL_VERSION, board: badKey }))).toBeNull()
+    const badValue = { ...board(), floatingMana: { R: '3' } }
+    expect(deserialize(JSON.stringify({ type: 'STATE', v: PROTOCOL_VERSION, board: badValue }))).toBeNull()
+  })
+
+  it('STATE carrying per-source commanderDamage round-trips (v2 shape: keyed by seat, not a single worst-source number)', () => {
+    const withDamage = board({ commanderDamage: { 1: 5, 3: 21 } })
+    expect(deserialize(serialize({ type: 'STATE', v: PROTOCOL_VERSION, board: withDamage }))).toEqual({
+      type: 'STATE',
+      v: PROTOCOL_VERSION,
+      board: withDamage,
+    })
+  })
+
+  it('rejects a STATE whose commanderDamage has a non-seat key or a non-numeric value', () => {
+    const badKey = { ...board(), commanderDamage: { 7: 5 } }
+    expect(deserialize(JSON.stringify({ type: 'STATE', v: PROTOCOL_VERSION, board: badKey }))).toBeNull()
+    const badValue = { ...board(), commanderDamage: { 1: '5' } }
+    expect(deserialize(JSON.stringify({ type: 'STATE', v: PROTOCOL_VERSION, board: badValue }))).toBeNull()
   })
 
   it('GIVE_CARD with ptCounters round-trips', () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { FACE_DOWN_SCRYFALL_ID } from './protocol'
 import type { GameCard, GameState } from '../state/gameReducer'
+import { zeroManaPool } from '../utils/colors'
 import { toPublicBoard } from './publicBoard'
 
 function card(overrides: Partial<GameCard> & Pick<GameCard, 'instanceId' | 'scryfallId' | 'zone'>): GameCard {
@@ -19,6 +20,7 @@ function state(overrides: Partial<GameState> = {}): GameState {
     revealTopOfLibrary: false,
     revealHand: false,
     scooped: false,
+    floatingMana: zeroManaPool(),
     ...overrides,
   }
 }
@@ -43,12 +45,25 @@ describe('toPublicBoard', () => {
       name: 'Alice',
       seat: 1,
       life: 33,
-      // Wire carries the worst single-source total, not the per-source breakdown.
-      commanderDamage: 12,
+      // Wire carries the full per-source breakdown (public knowledge at a real table), not
+      // just the worst single total — see toPublicCommanderDamage.
+      commanderDamage: { 2: 5, 3: 12 },
       poison: 2,
       handCount: 2,
     })
     expect(pub.battlefield).toEqual([])
+  })
+
+  it('strips zero/negative commander-damage sources from the wire, sparse like counters/floatingMana', () => {
+    const s = state({ commanderDamage: { 1: 5, 2: 0, 3: -1 } })
+    const pub = toPublicBoard(s, identity)
+    expect(pub.commanderDamage).toEqual({ 1: 5 })
+  })
+
+  it('drops the solo-only synthetic commander-damage source (SOLO_CMDR_SOURCE) from the wire', () => {
+    const s = state({ commanderDamage: { [-1]: 7 } })
+    const pub = toPublicBoard(s, identity)
+    expect(pub.commanderDamage).toEqual({})
   })
 
   it('includes only battlefield cards, carrying their public fields', () => {
@@ -164,6 +179,22 @@ describe('toPublicBoard', () => {
       { instanceId: 'h1', scryfallId: 'hand-a' },
       { instanceId: 'h2', scryfallId: 'hand-b', showBackFace: true },
     ])
+  })
+
+  it('shares startingLife, the reference point a life bar fills against', () => {
+    const pub = toPublicBoard(state({ startingLife: 30, life: 30 }), identity)
+    expect(pub.startingLife).toBe(30)
+  })
+
+  it('shares floating mana, sparse (zero colors omitted)', () => {
+    const s = state({ floatingMana: { ...zeroManaPool(), R: 3, G: 2 } })
+    const pub = toPublicBoard(s, identity)
+    expect(pub.floatingMana).toEqual({ R: 3, G: 2 })
+  })
+
+  it('omits floatingMana entirely once nothing is floating, rather than sending an all-zero object', () => {
+    const pub = toPublicBoard(state(), identity)
+    expect(pub.floatingMana).toBeUndefined()
   })
 
   it('NEVER leaks hand or library card identities onto the wire (command IS shared — see the zone-mirroring test above)', () => {

@@ -12,6 +12,7 @@ export type ImageUris = {
 export type CardFace = {
   name: string
   mana_cost: string
+  cmc?: number
   type_line?: string
   colors?: string[]
   image_uris?: ImageUris

@@ -18,6 +18,16 @@
       style-src needs 'unsafe-inline' because this app sets React inline styles (card-size
       CSS vars, popover positioning) extensively — refactoring that away wasn't worth the
       much-lower-risk tradeoff (inline styles can't execute script on their own).
+      stun:/turn: are listed as bare schemes, NOT host-qualified (e.g. NOT
+      "stun:stun.l.google.com:19302") — STUN/TURN URIs have no "//" after the scheme (RFC
+      7064/7065), which doesn't fit CSP's host-source grammar, so a host-qualified entry is
+      silently rejected as invalid and dropped from the allow-list (visible as a "contains an
+      invalid source" console warning). That left ICE gathering unable to reach ANY STUN/TURN
+      server, forcing WebRTC down to local/host candidates only — connections a guest happened
+      to establish via other paths (e.g. a same-LAN host candidate) would work initially but
+      had no STUN/TURN fallback to recover through, so any mid-session ICE hiccup (far more
+      likely with 3-4 simultaneous host<->guest links than with just 1 in a 2-player game)
+      dropped that connection for good instead of renegotiating.
     -->
     <meta
       http-equiv="Content-Security-Policy"
@@ -26,7 +36,7 @@
         style-src 'self' 'unsafe-inline';
         img-src 'self' https://cards.scryfall.io data:;
         media-src 'self' https://ice6.somafm.com;
-        connect-src 'self' https://api.scryfall.com https://data.scryfall.io https://json.edhrec.com https://0.peerjs.com wss://0.peerjs.com stun:stun.l.google.com:19302 turn:eu-0.turn.peerjs.com:3478 turn:us-0.turn.peerjs.com:3478;
+        connect-src 'self' https://api.scryfall.com https://data.scryfall.io https://json.edhrec.com https://0.peerjs.com wss://0.peerjs.com stun: turn:;
         font-src 'self';
         object-src 'none';
         base-uri 'self';
