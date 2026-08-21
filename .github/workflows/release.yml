@@ -8,6 +8,10 @@ name: Release
 #
 # workflow_dispatch is here so you can smoke-test the pipeline without tagging; it builds and
 # uploads nothing.
+#
+# The release lands as a draft either way — running apps only auto-update once you publish it
+# from the Releases page (electron-updater, see electron/updater.cjs, only sees non-draft
+# releases), so that's still the actual "go live" moment.
 on:
   push:
     tags:
@@ -55,6 +59,11 @@ jobs:
       # (it infers a publish target from package.json's "repository" field once it detects CI plus
       # a tag). Uploading is done explicitly below instead, so the installers and SHA256SUMS.txt
       # land in one release rather than racing each other.
+      # artifactName (see package.json's build.nsis/build.portable) deliberately avoids spaces:
+      # GitHub silently replaces spaces in an uploaded release asset's filename with dots, but
+      # latest.yml's own `url` field (electron-builder's update feed, matched against installer
+      # filenames literally) isn't rewritten to match — a space in artifactName would make every
+      # future auto-update silently fail to find the file it just uploaded.
       - name: Build installers
         run: |
           npm run build
@@ -65,7 +74,7 @@ jobs:
 
       - name: Show what will be published
         shell: bash
-        run: ls -lh release/*.exe release/SHA256SUMS.txt
+        run: ls -lh release/*.exe release/SHA256SUMS.txt release/latest.yml
 
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/v')
@@ -75,6 +84,8 @@ jobs:
           files: |
             release/*.exe
             release/SHA256SUMS.txt
+            release/latest.yml
+            release/*.blockmap
           body: |
             ## Downloads
 

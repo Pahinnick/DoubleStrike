@@ -4,6 +4,7 @@ const fs = require('node:fs')
 const http = require('node:http')
 const { registerStorageIpc } = require('./storage.cjs')
 const { registerNetIpc } = require('./net.cjs')
+const { registerUpdaterIpc } = require('./updater.cjs')
 const {
   registerPlaytestWindowIpc,
   maybeReopenPlaytestWindow,
@@ -142,8 +143,9 @@ app.whenReady().then(async () => {
   registerNetIpc()
   const baseUrl = await resolveBaseUrl()
   registerPlaytestWindowIpc(baseUrl)
-  createMainWindow(baseUrl)
+  const mainWindow = createMainWindow(baseUrl)
   maybeReopenPlaytestWindow(baseUrl)
+  registerUpdaterIpc(mainWindow)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow(baseUrl)

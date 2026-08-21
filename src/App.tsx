@@ -18,6 +18,7 @@ import PlaytestView from './components/playtest/PlaytestView'
 import ProfileSwitcher from './components/profile/ProfileSwitcher'
 import WelcomeNameModal from './components/profile/WelcomeNameModal'
 import SettingsModal from './components/settings/SettingsModal'
+import UpdateBanner from './components/shared/UpdateBanner'
 import { applyTutorialPreconDeck, resolveTutorialPreconDeck } from './components/shared/loadTutorialPreconDeck'
 import { hasSeenTutorial, TutorialProvider, useTutorialContext } from './components/shared/TutorialContext'
 import TutorialOverlay from './components/shared/TutorialOverlay'
@@ -312,6 +313,10 @@ function App() {
   return (
     <ProfileProvider>
       <Workspace />
+      {/* Skipped on the dedicated Playtest window (see isPlaytestWindow) — it and the main
+          window share one Electron process, so mounting this there too would just show the
+          same restart prompt twice. */}
+      {!isPlaytestWindow && <UpdateBanner />}
     </ProfileProvider>
   )
 }

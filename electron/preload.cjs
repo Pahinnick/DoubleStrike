@@ -23,6 +23,15 @@ contextBridge.exposeInMainWorld('electronNet', {
   fetchArchidektDeck: (deckId) => ipcRenderer.invoke('net:fetchArchidektDeck', deckId),
 })
 
+contextBridge.exposeInMainWorld('electronUpdater', {
+  onUpdateDownloaded: (callback) => {
+    const listener = (_event, info) => callback(info)
+    ipcRenderer.on('updater:downloaded', listener)
+    return () => ipcRenderer.removeListener('updater:downloaded', listener)
+  },
+  quitAndInstall: () => ipcRenderer.invoke('updater:quitAndInstall'),
+})
+
 contextBridge.exposeInMainWorld('electronPlaytest', {
   open: () => ipcRenderer.invoke('playtest:open'),
   switchToInline: () => ipcRenderer.invoke('playtest:switchToInline'),

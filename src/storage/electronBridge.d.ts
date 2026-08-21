@@ -35,10 +35,19 @@ export type ElectronPlaytestBridge = {
   onSwitchToInline(callback: () => void): () => void
 }
 
+export type ElectronUpdaterBridge = {
+  /** Subscribes to the main process finishing a background update download. Returns an
+   *  unsubscribe function. */
+  onUpdateDownloaded(callback: (info: { version: string }) => void): () => void
+  /** Quits and relaunches into the version that's already been downloaded. */
+  quitAndInstall(): Promise<void>
+}
+
 declare global {
   interface Window {
     electronStorage?: ElectronStorageBridge
     electronNet?: ElectronNetBridge
     electronPlaytest?: ElectronPlaytestBridge
+    electronUpdater?: ElectronUpdaterBridge
   }
 }
