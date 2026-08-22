@@ -603,6 +603,73 @@ describe('gameReducer', () => {
     expect(state.cards.find((c) => c.instanceId === cardId)!.ptCounters).toBeUndefined()
   })
 
+  it('MOVE_COUNTER_PILE relocates a pile to a card with no pile of that color yet', () => {
+    const before = startedGame(20)
+    const [fromId, toId] = zoneCards(before, 'hand').map((c) => c.instanceId)
+    let state = apply(
+      before,
+      { type: 'MOVE_CARD', instanceId: fromId, toZone: 'battlefield', x: 0, y: 0 },
+      { type: 'MOVE_CARD', instanceId: toId, toZone: 'battlefield', x: 10, y: 10 },
+      { type: 'ADD_COUNTER_PILE', instanceId: fromId, color: 'green' },
+    )
+    const pileId = state.cards.find((c) => c.instanceId === fromId)!.counters![0].id
+    state = gameReducer(state, { type: 'MOVE_COUNTER_PILE', fromInstanceId: fromId, pileId, toInstanceId: toId })
+    expect(state.cards.find((c) => c.instanceId === fromId)!.counters).toBeUndefined()
+    expect(state.cards.find((c) => c.instanceId === toId)!.counters).toEqual([{ id: pileId, color: 'green', value: 1 }])
+  })
+
+  it('MOVE_COUNTER_PILE merges into a same-color pile already on the target instead of stacking two', () => {
+    const before = startedGame(20)
+    const [fromId, toId] = zoneCards(before, 'hand').map((c) => c.instanceId)
+    let state = apply(
+      before,
+      { type: 'MOVE_CARD', instanceId: fromId, toZone: 'battlefield', x: 0, y: 0 },
+      { type: 'MOVE_CARD', instanceId: toId, toZone: 'battlefield', x: 10, y: 10 },
+      { type: 'ADD_COUNTER_PILE', instanceId: fromId, color: 'green' },
+      { type: 'ADD_COUNTER_PILE', instanceId: toId, color: 'green' },
+    )
+    const fromPileId = state.cards.find((c) => c.instanceId === fromId)!.counters![0].id
+    state = gameReducer(state, { type: 'ADJUST_COUNTER_PILE', instanceId: fromId, pileId: fromPileId, delta: 3 })
+    state = gameReducer(state, { type: 'MOVE_COUNTER_PILE', fromInstanceId: fromId, pileId: fromPileId, toInstanceId: toId })
+    expect(state.cards.find((c) => c.instanceId === fromId)!.counters).toBeUndefined()
+    const toPiles = state.cards.find((c) => c.instanceId === toId)!.counters!
+    expect(toPiles).toHaveLength(1)
+    expect(toPiles[0].value).toBe(5) // target's original 1 + moved pile's 4
+  })
+
+  it('MOVE_COUNTER_PILE ignores a target not on the battlefield', () => {
+    const before = startedGame(20)
+    const [fromId, toId] = zoneCards(before, 'hand').map((c) => c.instanceId)
+    const state = apply(
+      before,
+      { type: 'MOVE_CARD', instanceId: fromId, toZone: 'battlefield', x: 0, y: 0 },
+      { type: 'ADD_COUNTER_PILE', instanceId: fromId, color: 'green' },
+    )
+    const pileId = state.cards.find((c) => c.instanceId === fromId)!.counters![0].id
+    const after = gameReducer(state, { type: 'MOVE_COUNTER_PILE', fromInstanceId: fromId, pileId, toInstanceId: toId })
+    expect(after).toBe(state)
+  })
+
+  it('MOVE_PT_COUNTER_PILE relocates, merging power and toughness independently into a same-color pile', () => {
+    const before = startedGame(20)
+    const [fromId, toId] = zoneCards(before, 'hand').map((c) => c.instanceId)
+    let state = apply(
+      before,
+      { type: 'MOVE_CARD', instanceId: fromId, toZone: 'battlefield', x: 0, y: 0 },
+      { type: 'MOVE_CARD', instanceId: toId, toZone: 'battlefield', x: 10, y: 10 },
+      { type: 'ADD_PT_COUNTER_PILE', instanceId: fromId, color: 'green' },
+      { type: 'ADD_PT_COUNTER_PILE', instanceId: toId, color: 'green' },
+    )
+    const fromPileId = state.cards.find((c) => c.instanceId === fromId)!.ptCounters![0].id
+    // Make the source pile asymmetric (+2/+0) before moving it, to confirm power/toughness merge independently.
+    state = gameReducer(state, { type: 'ADJUST_PT_COUNTER_PILE', instanceId: fromId, pileId: fromPileId, powerDelta: 1, toughnessDelta: -1 })
+    state = gameReducer(state, { type: 'MOVE_PT_COUNTER_PILE', fromInstanceId: fromId, pileId: fromPileId, toInstanceId: toId })
+    expect(state.cards.find((c) => c.instanceId === fromId)!.ptCounters).toBeUndefined()
+    const toPiles = state.cards.find((c) => c.instanceId === toId)!.ptCounters!
+    expect(toPiles).toHaveLength(1)
+    expect(toPiles[0]).toMatchObject({ power: 3, toughness: 1 }) // target's +1/+1 + moved pile's +2/+0
+  })
+
   it('RECEIVE_GIVEN_CARD carries counter piles through', () => {
     const state = gameReducer(startedGame(20), {
       type: 'RECEIVE_GIVEN_CARD',

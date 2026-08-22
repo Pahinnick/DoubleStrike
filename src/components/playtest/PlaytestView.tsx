@@ -54,6 +54,7 @@ import CounterPileStack from './CounterPileStack'
 import DeckManagerModal from '../deck/DeckManagerModal'
 import DeckScanTray from './DeckScanTray'
 import TurnOrderTray from './TurnOrderTray'
+import { getCounterDragData, isDraggingCounterPile } from './dragCounterPile'
 import { getCurrentDragData, getGameDragData, type DraggedGameCard } from './dragGameCard'
 import GoldfishPanel, { type GoldfishRow } from './GoldfishPanel'
 import LibraryPeekModal, { type PeekEntry, type PeekPlacement } from './LibraryPeekModal'
@@ -638,6 +639,10 @@ function PlaytestView({ onClose }: Props) {
   useEffect(() => {
     function clearPreview() {
       setDragPreview(null)
+      // Same cancelled/dropped-outside-a-target cleanup, for a counter-pile drag's own hover
+      // highlight (see counterDropTargetId) — a normal drop already clears it itself, this just
+      // covers Esc/dropping somewhere that isn't a card.
+      setCounterDropTargetId(null)
     }
     window.addEventListener('dragend', clearPreview)
     return () => window.removeEventListener('dragend', clearPreview)
@@ -658,6 +663,10 @@ function PlaytestView({ onClose }: Props) {
   // own cards' wrapper divs, never opponents' (killing another player's permanent by hotkey
   // isn't something a keyboard shortcut should be able to do).
   const [hoveredInstanceId, setHoveredInstanceId] = useState<string | null>(null)
+  // Which of your own battlefield cards a dragged counter pile is currently hovering over — a
+  // drop-target highlight, distinct from hoveredInstanceId above (a plain mouseover, unrelated
+  // to a drag in progress). See the wrapper div's onDragEnter/onDragLeave/onDrop below.
+  const [counterDropTargetId, setCounterDropTargetId] = useState<string | null>(null)
   // Separate from hoveredInstanceId (battlefield cards only) since the library pile shows at
   // most one card (its top) but isn't itself a GameCard the F-key handler can look up by id —
   // see the F-key effect below and TOGGLE_REVEAL_TOP.
@@ -1871,6 +1880,25 @@ function PlaytestView({ onClose }: Props) {
     }
   }
 
+  /** Drop target for dragging a counter-pile chip (see CounterPileStack/PtCounterPileStack) onto
+   *  one of your own OTHER battlefield cards — moves the whole pile there, merging into a
+   *  same-color pile already on the target (see gameReducer's MOVE_COUNTER_PILE doc). Own cards
+   *  only, same scope the chips are even draggable in the first place (only interactive — i.e.
+   *  your own — piles carry a sourceInstanceId to drag with). */
+  function handleCounterPileDrop(event: DragEvent, toInstanceId: string) {
+    const data = getCounterDragData(event)
+    if (!data) return
+    event.preventDefault()
+    event.stopPropagation()
+    setCounterDropTargetId(null)
+    if (data.fromInstanceId === toInstanceId) return
+    if (data.kind === 'generic') {
+      dispatch({ type: 'MOVE_COUNTER_PILE', fromInstanceId: data.fromInstanceId, pileId: data.pileId, toInstanceId })
+    } else {
+      dispatch({ type: 'MOVE_PT_COUNTER_PILE', fromInstanceId: data.fromInstanceId, pileId: data.pileId, toInstanceId })
+    }
+  }
+
   function handleMulligan() {
     const ids = [...hand, ...library].map((c) => c.instanceId)
     dispatch({ type: 'MULLIGAN', shuffledOrder: shuffle(ids) })
@@ -2540,7 +2568,7 @@ function PlaytestView({ onClose }: Props) {
               return (
               <div
                 key={gameCard.instanceId}
-                className={`playtest__battlefield-card ${foreign ? 'is-foreign' : ''} ${highlightedIds.has(gameCard.instanceId) ? 'is-highlighted' : ''}`}
+                className={`playtest__battlefield-card ${foreign ? 'is-foreign' : ''} ${highlightedIds.has(gameCard.instanceId) ? 'is-highlighted' : ''} ${counterDropTargetId === gameCard.instanceId ? 'is-counter-drop-target' : ''}`}
                 style={{
                   left: pos.x,
                   top: pos.y,
@@ -2548,6 +2576,18 @@ function PlaytestView({ onClose }: Props) {
                 } as CSSProperties}
                 onMouseEnter={() => setHoveredInstanceId(gameCard.instanceId)}
                 onMouseLeave={() => setHoveredInstanceId((cur) => (cur === gameCard.instanceId ? null : cur))}
+                onDragOver={(event) => {
+                  if (isDraggingCounterPile(event)) event.preventDefault()
+                }}
+                onDragEnter={(event) => {
+                  if (!isDraggingCounterPile(event)) return
+                  setCounterDropTargetId(gameCard.instanceId)
+                }}
+                onDragLeave={(event) => {
+                  if (!isDraggingCounterPile(event)) return
+                  setCounterDropTargetId((cur) => (cur === gameCard.instanceId ? null : cur))
+                }}
+                onDrop={(event) => handleCounterPileDrop(event, gameCard.instanceId)}
               >
                 <PlaytestCard
                   gameCard={gameCard}
@@ -2563,12 +2603,14 @@ function PlaytestView({ onClose }: Props) {
                 <CounterPileStack
                   items={(gameCard.counters ?? []).map((p) => ({ id: p.id, color: p.color, text: formatSigned(p.value) }))}
                   side="left"
+                  sourceInstanceId={gameCard.instanceId}
                   onAdjust={(pileId, delta) => dispatch({ type: 'ADJUST_COUNTER_PILE', instanceId: gameCard.instanceId, pileId, delta })}
                   onRemove={(pileId) => dispatch({ type: 'REMOVE_COUNTER_PILE', instanceId: gameCard.instanceId, pileId })}
                 />
                 <PtCounterPileStack
                   items={gameCard.ptCounters ?? []}
                   side="right"
+                  sourceInstanceId={gameCard.instanceId}
                   onAdjust={(pileId, powerDelta, toughnessDelta) =>
                     dispatch({ type: 'ADJUST_PT_COUNTER_PILE', instanceId: gameCard.instanceId, pileId, powerDelta, toughnessDelta })
                   }

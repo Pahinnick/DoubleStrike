@@ -116,6 +116,11 @@ export type GameAction =
   | { type: 'ADD_COUNTER_PILE'; instanceId: string; color: CounterColor }
   | { type: 'ADJUST_COUNTER_PILE'; instanceId: string; pileId: string; delta: number }
   | { type: 'REMOVE_COUNTER_PILE'; instanceId: string; pileId: string }
+  /** Moves a whole generic counter pile from one battlefield card to another (drag the chip onto
+   *  the target — see CounterPileStack). Merges into a same-color pile already there, matching
+   *  ADD_COUNTER_PILE's own "a card can carry multiple differently-colored piles" model rather
+   *  than ever stacking two same-color piles side by side. */
+  | { type: 'MOVE_COUNTER_PILE'; fromInstanceId: string; pileId: string; toInstanceId: string }
   /** Creates a new power/toughness counter pile of the given color, starting at +1/+1 — nudge
    *  power and toughness independently afterward via ADJUST_PT_COUNTER_PILE to represent an
    *  asymmetric bonus (e.g. an Equipment's +1/+0). */
@@ -126,6 +131,10 @@ export type GameAction =
    *  same value for both. */
   | { type: 'ADJUST_PT_COUNTER_PILE'; instanceId: string; pileId: string; powerDelta: number; toughnessDelta: number }
   | { type: 'REMOVE_PT_COUNTER_PILE'; instanceId: string; pileId: string }
+  /** Power/toughness counterpart to MOVE_COUNTER_PILE — merges into a same-color pt pile already
+   *  on the target by summing power and toughness separately, consistent with
+   *  ADJUST_PT_COUNTER_PILE treating them as independent stats. */
+  | { type: 'MOVE_PT_COUNTER_PILE'; fromInstanceId: string; pileId: string; toInstanceId: string }
   | { type: 'FLIP_CARD'; instanceId: string }
   | { type: 'SET_FACE_DOWN'; instanceId: string; faceDown: boolean }
   | { type: 'SET_TAPPED'; instanceId: string; tapped: boolean }
@@ -375,6 +384,32 @@ function gameReducerInner(state: GameState, action: GameAction): GameState {
       }
     }
 
+    case 'MOVE_COUNTER_PILE': {
+      if (action.fromInstanceId === action.toInstanceId) return state
+      const fromCard = state.cards.find((c) => c.instanceId === action.fromInstanceId)
+      const toCard = state.cards.find((c) => c.instanceId === action.toInstanceId)
+      if (!fromCard || fromCard.zone !== 'battlefield' || !toCard || toCard.zone !== 'battlefield') return state
+      const pile = (fromCard.counters ?? []).find((p) => p.id === action.pileId)
+      if (!pile) return state
+      return {
+        ...state,
+        cards: state.cards.map((c) => {
+          if (c.instanceId === action.fromInstanceId) {
+            const remaining = (c.counters ?? []).filter((p) => p.id !== action.pileId)
+            return { ...c, counters: remaining.length > 0 ? remaining : undefined }
+          }
+          if (c.instanceId === action.toInstanceId) {
+            const existing = (c.counters ?? []).find((p) => p.color === pile.color)
+            const counters = existing
+              ? (c.counters ?? []).map((p) => (p.id === existing.id ? { ...p, value: p.value + pile.value } : p))
+              : [...(c.counters ?? []), pile]
+            return { ...c, counters }
+          }
+          return c
+        }),
+      }
+    }
+
     case 'ADD_PT_COUNTER_PILE': {
       const card = state.cards.find((c) => c.instanceId === action.instanceId)
       if (!card || card.zone !== 'battlefield') return state
@@ -414,6 +449,34 @@ function gameReducerInner(state: GameState, action: GameAction): GameState {
           if (c.instanceId !== action.instanceId) return c
           const remaining = (c.ptCounters ?? []).filter((p) => p.id !== action.pileId)
           return { ...c, ptCounters: remaining.length > 0 ? remaining : undefined }
+        }),
+      }
+    }
+
+    case 'MOVE_PT_COUNTER_PILE': {
+      if (action.fromInstanceId === action.toInstanceId) return state
+      const fromCard = state.cards.find((c) => c.instanceId === action.fromInstanceId)
+      const toCard = state.cards.find((c) => c.instanceId === action.toInstanceId)
+      if (!fromCard || fromCard.zone !== 'battlefield' || !toCard || toCard.zone !== 'battlefield') return state
+      const pile = (fromCard.ptCounters ?? []).find((p) => p.id === action.pileId)
+      if (!pile) return state
+      return {
+        ...state,
+        cards: state.cards.map((c) => {
+          if (c.instanceId === action.fromInstanceId) {
+            const remaining = (c.ptCounters ?? []).filter((p) => p.id !== action.pileId)
+            return { ...c, ptCounters: remaining.length > 0 ? remaining : undefined }
+          }
+          if (c.instanceId === action.toInstanceId) {
+            const existing = (c.ptCounters ?? []).find((p) => p.color === pile.color)
+            const ptCounters = existing
+              ? (c.ptCounters ?? []).map((p) =>
+                  p.id === existing.id ? { ...p, power: p.power + pile.power, toughness: p.toughness + pile.toughness } : p,
+                )
+              : [...(c.ptCounters ?? []), pile]
+            return { ...c, ptCounters }
+          }
+          return c
         }),
       }
     }

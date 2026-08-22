@@ -1,10 +1,14 @@
-import type { CSSProperties, MouseEvent } from 'react'
+import type { CSSProperties, DragEvent, MouseEvent } from 'react'
 import type { PtCounterPile } from '../../net/protocol'
 import { formatSigned, swatchFor } from './counterFormat'
+import { setCounterDragData } from './dragCounterPile'
 
 type Props = {
   items: PtCounterPile[]
   side: 'left' | 'right'
+  /** The battlefield card these piles live on — only needed to tag an outgoing drag with where
+   *  it came from (see `sourceInstanceId` doc below); a static stack has nothing to drag. */
+  sourceInstanceId?: string
   /** Present only for your own battlefield cards — omitting it renders a static, non-interactive
    *  stack. Power and toughness move independently (see gameReducer's ADJUST_PT_COUNTER_PILE doc)
    *  so a default +1/+1 pile can be nudged to an asymmetric bonus like +1/+0 for an Equipment. */
@@ -15,8 +19,10 @@ type Props = {
 /** Power/toughness counterpart to CounterPileStack — same chip look and left/right-click
  *  interaction. Power and toughness are each their own click target (left: +1, right: -1) so a
  *  pile can become asymmetric (e.g. an Equipment's +1/+0), and the "/" between them is a third
- *  click target that adjusts both at once, for the common symmetric case. */
-function PtCounterPileStack({ items, side, onAdjust, onRemove }: Props) {
+ *  click target that adjusts both at once, for the common symmetric case. Interactive chips are
+ *  also draggable onto another of your own battlefield cards to move the whole pile there — see
+ *  PlaytestView's per-card onDrop and gameReducer's MOVE_PT_COUNTER_PILE. */
+function PtCounterPileStack({ items, side, sourceInstanceId, onAdjust, onRemove }: Props) {
   if (items.length === 0) return null
   const interactive = !!onAdjust
 
@@ -31,6 +37,16 @@ function PtCounterPileStack({ items, side, onAdjust, onRemove }: Props) {
           key={item.id}
           className={`playtest-card__counter-pile ${interactive ? 'playtest-card__counter-pile--interactive' : ''}`}
           style={{ '--pile-color': swatchFor(item.color) } as CSSProperties}
+          title={interactive ? 'Drag onto another card to move the pile there' : undefined}
+          draggable={interactive && !!sourceInstanceId}
+          onDragStart={
+            interactive && sourceInstanceId
+              ? (event: DragEvent) => {
+                  stop(event)
+                  setCounterDragData(event, { fromInstanceId: sourceInstanceId, pileId: item.id, kind: 'pt' })
+                }
+              : undefined
+          }
           onMouseDown={interactive ? stop : undefined}
         >
           <span className="playtest-card__counter-pile-value">
