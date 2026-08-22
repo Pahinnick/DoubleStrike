@@ -53,6 +53,7 @@ import { COUNTER_COLORS, formatPtCounters, formatSigned } from './counterFormat'
 import CounterPileStack from './CounterPileStack'
 import DeckManagerModal from '../deck/DeckManagerModal'
 import DeckScanTray from './DeckScanTray'
+import TurnOrderTray from './TurnOrderTray'
 import { getCurrentDragData, getGameDragData, type DraggedGameCard } from './dragGameCard'
 import GoldfishPanel, { type GoldfishRow } from './GoldfishPanel'
 import LibraryPeekModal, { type PeekEntry, type PeekPlacement } from './LibraryPeekModal'
@@ -2727,6 +2728,7 @@ function PlaytestView({ onClose }: Props) {
             snapshots={snapshots}
             onSetMark={(scryfallId, mark) => deckDispatch({ type: 'SET_CARD_MARK', scryfallId, board: 'mainboard', mark })}
           />
+          <TurnOrderTray />
           <button
             type="button"
             className="playtest__hand-sort-tab"
