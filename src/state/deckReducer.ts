@@ -8,6 +8,7 @@ export type DeckAction =
   | { type: 'MOVE_CARD_BOARD'; scryfallId: string; fromBoard: Board; toBoard: Board }
   | { type: 'SET_FORMAT'; format: Deck['format'] }
   | { type: 'SET_MANA_OVERRIDE'; override: ManaBaseOverride | undefined }
+  | { type: 'SET_LAND_DROP_CONFIDENCE'; confidence: number }
   | { type: 'RENAME_DECK'; name: string }
   | { type: 'LOAD_DECK'; deck: Deck }
   | { type: 'ADD_CATEGORY'; name: string }
@@ -103,6 +104,9 @@ export function deckReducer(deck: Deck, action: DeckAction): Deck {
 
     case 'SET_MANA_OVERRIDE':
       return touch({ ...deck, manaBaseOverride: action.override })
+
+    case 'SET_LAND_DROP_CONFIDENCE':
+      return touch({ ...deck, landDropConfidence: action.confidence })
 
     case 'RENAME_DECK':
       return touch({ ...deck, name: action.name })

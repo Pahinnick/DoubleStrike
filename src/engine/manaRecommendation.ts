@@ -1,5 +1,5 @@
 import { WUBRG, type Color } from '../utils/colors'
-import { HIGH_CONFIDENCE_THRESHOLD, probCastableByTurn } from './castability'
+import { probCastableByTurn } from './castability'
 import type { PipRequirement } from './manaCost'
 import type { LandSource, ManaBase } from './manaSources'
 
@@ -14,10 +14,25 @@ export function averageManaValue(entries: Pick<CardCostEntry, 'cmc' | 'quantity'
 }
 
 /**
- * Minimum total *lands* (out of the deck's fixed size) for ~90% confidence of hitting land drops
- * through the deck's own average mana value. Reuses probCastableByTurn's colorless branch — a
- * generic-only requirement equal to the target turn — scanning upward for the first land count
- * that clears HIGH_CONFIDENCE_THRESHOLD.
+ * Default land-drop confidence for `recommendTotalLands` when the player hasn't set their own via
+ * the Mana Base panel's slider. Deliberately lower than castability.ts's HIGH_CONFIDENCE_THRESHOLD
+ * (0.9, "tournament-grade" consistency by Frank Karsten's source tables) — that stricter bar is
+ * what made this tool's land recommendations read as "more than typical" to players used to a
+ * looser, more casual manabase. 0.8 lands closer to what a casual/EDH manabase actually runs while
+ * still being a deliberate, explainable choice rather than an arbitrary lower number.
+ */
+export const DEFAULT_LAND_DROP_CONFIDENCE = 0.8
+
+/**
+ * Minimum total *lands* (out of the deck's fixed size) for `confidence` probability of hitting
+ * land drops through the deck's own average mana value. Reuses probCastableByTurn's colorless
+ * branch — a generic-only requirement equal to the target turn — scanning upward for the first
+ * land count that clears `confidence`.
+ *
+ * `confidence` is user-facing (the Mana Base panel's "Target land-drop rate" slider) precisely
+ * because it's a preference, not a fact — how many lands is "enough" depends on how much
+ * inconsistency a player is willing to accept in exchange for more spell slots. See
+ * DEFAULT_LAND_DROP_CONFIDENCE for why 0.8 is the baseline rather than castability's stricter 0.9.
  *
  * `ramp` (mana rocks/dorks) is layered on top of every candidate land count as an already-present
  * bonus, so a deck that already runs ramp needs fewer additional lands to reach the same
@@ -27,7 +42,12 @@ export function averageManaValue(entries: Pick<CardCostEntry, 'cmc' | 'quantity'
  * (Frank Karsten's source tables count rocks/dorks alongside lands the same way) and avoids
  * modeling casting sequencing that nothing else in this engine attempts either.
  */
-export function recommendTotalLands(avgNonlandCmc: number, deckSize: number, ramp: LandSource[] = []): number {
+export function recommendTotalLands(
+  avgNonlandCmc: number,
+  deckSize: number,
+  ramp: LandSource[] = [],
+  confidence: number = DEFAULT_LAND_DROP_CONFIDENCE,
+): number {
   const targetTurn = Math.max(1, Math.round(avgNonlandCmc))
   const genericReq: PipRequirement = { generic: targetTurn, colored: {}, hybrid: [], phyrexian: [], twobrid: [] }
   const rampTotal = ramp.reduce((sum, r) => sum + r.quantity, 0)
@@ -35,7 +55,7 @@ export function recommendTotalLands(avgNonlandCmc: number, deckSize: number, ram
     const allLands: LandSource[] = [...ramp]
     if (lands > 0) allLands.push({ quantity: lands, colors: [] })
     const manaBase: ManaBase = { totalLands: lands + rampTotal, lands: allLands, exact: true }
-    if (probCastableByTurn(genericReq, manaBase, deckSize, targetTurn, true) >= HIGH_CONFIDENCE_THRESHOLD) return lands
+    if (probCastableByTurn(genericReq, manaBase, deckSize, targetTurn, true) >= confidence) return lands
   }
   return deckSize
 }
@@ -74,4 +94,28 @@ export function splitLandsByColorNeed(
     result[color] = Math.round((totalLands * (pipTotals[color] ?? 0)) / totalPips)
   }
   return result
+}
+
+export type CoverageVerdict = 'low' | 'good' | 'high'
+
+// A dual land legitimately counts toward more than one color's target (see splitLandsByColorNeed's
+// doc comment), so "current" routinely and correctly overshoots "suggested" — that's not a problem
+// worth flagging. These bands only need to catch a genuine shortfall or a genuine glut.
+const LOW_RATIO = 0.85
+const HIGH_RATIO = 1.4
+
+/**
+ * Buckets an actual source/land count against its suggested target into a plain-language verdict
+ * instead of leaving players to eyeball two numbers side by side. Comparing the raw numbers reads
+ * as broken once dual lands are in the mix — "Current: 27" next to "Suggested: 19" looks like a
+ * bug even though it's the correct, expected result of overlapping color coverage. A qualitative
+ * verdict sidesteps that entirely: it never asks the player to reconcile numbers that were never
+ * meant to match.
+ */
+export function evaluateCoverage(actual: number, suggested: number): CoverageVerdict {
+  if (suggested <= 0) return 'good'
+  const ratio = actual / suggested
+  if (ratio < LOW_RATIO) return 'low'
+  if (ratio > HIGH_RATIO) return 'high'
+  return 'good'
 }

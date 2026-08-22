@@ -146,10 +146,13 @@
 /* Grid, not flex-wrap: four stats of different label lengths (Mana value vs Power) used to wrap
    into a ragged, unaligned mess. `display: contents` on each .advanced-search__stat row dissolves
    its own box so its three children (label, comparator, value) become direct grid items instead —
-   giving every row's comparator and value input the same column start regardless of label width. */
+   giving every row's comparator and value input the same column start regardless of label width.
+   max-content, not auto: a bare `auto` track (unlike flex's auto) stretches to absorb the grid's
+   leftover width when nothing else claims it — with this panel far wider than "Mana value" + a
+   comparator + a number box, that stretch was the whole gap, not the 0.6rem column-gap below. */
 .advanced-search__stats {
   display: grid;
-  grid-template-columns: auto auto minmax(3.5rem, auto);
+  grid-template-columns: max-content max-content minmax(3.5rem, max-content);
   align-items: center;
   gap: 0.4rem 0.6rem;
 }

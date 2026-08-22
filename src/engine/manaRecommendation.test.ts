@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { HIGH_CONFIDENCE_THRESHOLD, probCastableByTurn } from './castability'
+import { probCastableByTurn } from './castability'
 import { parseManaCost } from './manaCost'
-import { averageManaValue, recommendTotalLands, splitLandsByColorNeed } from './manaRecommendation'
+import {
+  averageManaValue,
+  DEFAULT_LAND_DROP_CONFIDENCE,
+  evaluateCoverage,
+  recommendTotalLands,
+  splitLandsByColorNeed,
+} from './manaRecommendation'
 import type { ManaBase } from './manaSources'
 
 describe('averageManaValue', () => {
@@ -22,13 +28,13 @@ describe('recommendTotalLands', () => {
     expect(high).toBeGreaterThan(low)
   })
 
-  it('the recommendation actually clears the confidence threshold at that average mana value', () => {
+  it('the recommendation actually clears the default confidence threshold at that average mana value', () => {
     const deckSize = 100
     const avgCmc = 3
     const lands = recommendTotalLands(avgCmc, deckSize)
     const req = parseManaCost('{3}')
     const manaBase: ManaBase = { totalLands: lands, lands: [{ quantity: lands, colors: [] }], exact: true }
-    expect(probCastableByTurn(req, manaBase, deckSize, avgCmc, true)).toBeGreaterThanOrEqual(HIGH_CONFIDENCE_THRESHOLD)
+    expect(probCastableByTurn(req, manaBase, deckSize, avgCmc, true)).toBeGreaterThanOrEqual(DEFAULT_LAND_DROP_CONFIDENCE)
   })
 
   it('recommends fewer additional lands when the deck already runs ramp', () => {
@@ -36,6 +42,23 @@ describe('recommendTotalLands', () => {
     const withoutRamp = recommendTotalLands(3, deckSize)
     const withRamp = recommendTotalLands(3, deckSize, [{ quantity: 8, colors: [] }])
     expect(withRamp).toBeLessThan(withoutRamp)
+  })
+
+  it('recommends more lands for a higher chosen confidence, at the same average mana value', () => {
+    const deckSize = 100
+    const relaxed = recommendTotalLands(3, deckSize, [], 0.6)
+    const strict = recommendTotalLands(3, deckSize, [], 0.95)
+    expect(strict).toBeGreaterThan(relaxed)
+  })
+
+  it('the recommendation clears whatever confidence is explicitly requested, not just the default', () => {
+    const deckSize = 100
+    const avgCmc = 3
+    const confidence = 0.65
+    const lands = recommendTotalLands(avgCmc, deckSize, [], confidence)
+    const req = parseManaCost('{3}')
+    const manaBase: ManaBase = { totalLands: lands, lands: [{ quantity: lands, colors: [] }], exact: true }
+    expect(probCastableByTurn(req, manaBase, deckSize, avgCmc, true)).toBeGreaterThanOrEqual(confidence)
   })
 })
 
@@ -65,5 +88,30 @@ describe('splitLandsByColorNeed', () => {
     expect(split).toEqual({ W: 2, U: 2 })
     const sum = Object.values(split).reduce((s, n) => s + (n ?? 0), 0)
     expect(sum).toBeGreaterThan(3)
+  })
+})
+
+describe('evaluateCoverage', () => {
+  it('is good when there is no suggested target at all', () => {
+    expect(evaluateCoverage(0, 0)).toBe('good')
+    expect(evaluateCoverage(5, 0)).toBe('good')
+  })
+
+  it('is good on an exact match', () => {
+    expect(evaluateCoverage(19, 19)).toBe('good')
+  })
+
+  it('is good when a dual-heavy manabase overshoots the target, as designed', () => {
+    // Matches the splitLandsByColorNeed scenario: two colors each "want" more than their fair
+    // share of duals would provide once overlap is accounted for.
+    expect(evaluateCoverage(24, 19)).toBe('good')
+  })
+
+  it('is low when meaningfully under the target', () => {
+    expect(evaluateCoverage(10, 19)).toBe('low')
+  })
+
+  it('is high when wildly over the target', () => {
+    expect(evaluateCoverage(40, 19)).toBe('high')
   })
 })

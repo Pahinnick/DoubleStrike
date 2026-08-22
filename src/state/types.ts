@@ -41,6 +41,10 @@ export type Deck = {
   cards: DeckCard[]
   categories: string[]
   manaBaseOverride?: ManaBaseOverride
+  /** Target confidence (0-1) for the Mana Base panel's "Total lands" recommendation — the Mana
+   *  Base panel's slider. Undefined means the engine's own default (see
+   *  engine/manaRecommendation.ts's DEFAULT_LAND_DROP_CONFIDENCE), not "0% confidence". */
+  landDropConfidence?: number
   createdAt: string
   updatedAt: string
 }

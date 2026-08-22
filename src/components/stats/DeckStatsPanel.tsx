@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { computeCastabilityIndex } from '../../engine/castability'
 import { computeColorPipTotals, computeManaCurve } from '../../engine/deckStats'
 import { parseManaCost } from '../../engine/manaCost'
-import { averageManaValue, recommendTotalLands, splitLandsByColorNeed } from '../../engine/manaRecommendation'
+import { averageManaValue, DEFAULT_LAND_DROP_CONFIDENCE, recommendTotalLands, splitLandsByColorNeed } from '../../engine/manaRecommendation'
 import { deriveManaBase, deriveRampSources, manaBaseFromOverride, withRampSources, type DeckLandInput } from '../../engine/manaSources'
 import { useCardSnapshots } from '../../hooks/useCardSnapshots'
 import { useSaltScores } from '../../hooks/useSaltScores'
@@ -150,9 +150,10 @@ function DeckStatsPanel({ expanded, onExpand, onCollapse }: Props) {
   const curveBuckets = useMemo(() => computeManaCurve(manaCostEntries), [manaCostEntries])
   const colorPipTotals = useMemo(() => computeColorPipTotals(manaCostEntries), [manaCostEntries])
 
+  const landDropConfidence = deck.landDropConfidence ?? DEFAULT_LAND_DROP_CONFIDENCE
   const recommendedTotalLands = useMemo(
-    () => (deckSize === 0 ? 0 : recommendTotalLands(averageManaValue(manaCostEntries), deckSize, rampSources)),
-    [manaCostEntries, deckSize, rampSources],
+    () => (deckSize === 0 ? 0 : recommendTotalLands(averageManaValue(manaCostEntries), deckSize, rampSources, landDropConfidence)),
+    [manaCostEntries, deckSize, rampSources, landDropConfidence],
   )
   // The suggested total divided across colors by their share of mana symbols, so the per-color
   // numbers always add up to the total — a straight "what should my mana base look like" answer.
@@ -163,6 +164,10 @@ function DeckStatsPanel({ expanded, onExpand, onCollapse }: Props) {
 
   function handleOverrideChange(override: ManaBaseOverride | undefined) {
     dispatch({ type: 'SET_MANA_OVERRIDE', override })
+  }
+
+  function handleLandDropConfidenceChange(confidence: number) {
+    dispatch({ type: 'SET_LAND_DROP_CONFIDENCE', confidence })
   }
 
   const [refreshing, setRefreshing] = useState(false)
@@ -249,6 +254,8 @@ function DeckStatsPanel({ expanded, onExpand, onCollapse }: Props) {
             onChangeOverride={handleOverrideChange}
             recommendedTotalLands={recommendedTotalLands}
             suggestedLandsByColor={suggestedLandsByColor}
+            landDropConfidence={landDropConfidence}
+            onChangeLandDropConfidence={handleLandDropConfidenceChange}
           />
           <RampSources entries={rampEntries} castabilityIndex={castabilityIndex} />
           <AvgTurnTable entries={nonlandEntries} castabilityIndex={castabilityIndex} />

@@ -1,0 +1,66 @@
+.otag-browser-panel {
+  width: min(1100px, 95vw);
+}
+
+.otag-browser-header h2 {
+  margin: 0 0 0.3rem 0;
+  font-size: 1.4rem;
+}
+
+.otag-browser-columns {
+  display: flex;
+  gap: 1.25rem;
+  min-height: 0;
+}
+
+.otag-browser-tags {
+  flex: 0 0 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.otag-browser-tag-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  overflow-y: auto;
+  max-height: 60vh;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 0.3rem;
+}
+
+.otag-browser-tag-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  padding: 0.2rem 0.3rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.otag-browser-tag-row:hover {
+  background-color: var(--bg-panel-raised);
+}
+
+.otag-browser-tag-row__label {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.otag-browser-tag-row__count {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.otag-browser-results {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-y: auto;
+  max-height: 60vh;
+}

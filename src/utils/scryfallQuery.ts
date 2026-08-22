@@ -62,6 +62,13 @@ export type SearchFilters = {
   /** Type-line words (e.g. ["Legendary", "Creature"]) — each becomes its own `t:` clause (see
    *  buildScryfallQuery) so a card must match all of them, not just contain the words somewhere. */
   types: string[]
+  /** Free text searched against a card's oracle/rules text (Scryfall's `o:` clause) — deliberately
+   *  separate from the main name/text search box up top, which despite its label only ever
+   *  matches a card's *name*: Scryfall's default unprefixed search does not look at rules text at
+   *  all (confirmed against the live API — a bare `flying` query returns the ~10 cards actually
+   *  named that, not the thousands of creatures with the flying keyword). This is the only way to
+   *  find "cards that say X", e.g. keywords, reminder text, or a specific triggered ability. */
+  cardText: string
   cmcComparator?: NumericComparator
   cmcValue?: number
   powerComparator?: NumericComparator
@@ -84,6 +91,7 @@ export const EMPTY_FILTERS: SearchFilters = {
   colorIdentity: [],
   colorIdentityMatch: '<=',
   types: [],
+  cardText: '',
   set: '',
 }
 
@@ -104,6 +112,14 @@ export function buildScryfallQuery(text: string, filters: SearchFilters): string
     const word = type.trim()
     if (word.length === 0) continue
     clauses.push(`t:${word.includes(' ') ? `"${word}"` : word}`)
+  }
+  if (filters.cardText.trim().length > 0) {
+    // Always quoted, even for a single word — quoting a lone word is a no-op in Scryfall's syntax,
+    // but for a phrase it's what makes "when this creature enters" one required substring instead
+    // of several independently-required bare words (each of which, unprefixed, would search names
+    // again — the exact bug already fixed for multi-word types, see the `types` loop above).
+    // Stripped quotes guard against the user's own input breaking out of the wrapping quotes.
+    clauses.push(`o:"${filters.cardText.trim().replace(/"/g, '')}"`)
   }
   if (filters.cmcValue !== undefined) clauses.push(`cmc${filters.cmcComparator ?? '='}${filters.cmcValue}`)
   if (filters.powerValue !== undefined) clauses.push(`pow${filters.powerComparator ?? '='}${filters.powerValue}`)

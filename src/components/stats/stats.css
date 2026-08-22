@@ -230,6 +230,44 @@
   cursor: help;
 }
 
+.mana-base-controls__confidence {
+  padding: 0.3rem 0 0.5rem 0;
+  margin-bottom: 0.2rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.mana-base-controls__confidence-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.85rem;
+}
+
+.mana-base-controls__confidence-value {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.mana-base-controls__confidence input[type='range'] {
+  width: 100%;
+  margin: 0.3rem 0;
+}
+
+.mana-base-controls__confidence-hint {
+  margin: 0.2rem 0 0 0;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+
+.mana-base-controls__hint--low {
+  color: var(--color-r, #d9534f);
+}
+
+.mana-base-controls__hint--high {
+  color: var(--color-u, #5bc0de);
+}
+
 .ramp-sources {
   background-color: var(--bg-panel);
   border-radius: 8px;
@@ -251,12 +289,51 @@
   color: var(--text-dim);
 }
 
-/* Rendered at its natural pixel size (matching the width/height attributes set from
-   BAR_WIDTH/CHART_HEIGHT in RampSources.tsx) instead of stretched to fill the panel —
-   stretching a narrow viewBox (few ramp sources) to 100% width blew its height up too,
-   since width:100%/height:auto scales by the viewBox's aspect ratio. */
+/* Plain flexbox bars, not a scaled SVG — see the comment in RampSources.tsx for why: a deck
+   running many distinct-cost ramp sources needs many bars, and every SVG-viewBox-scaling
+   approach tried here first broke down at that point (aspect-ratio-preserving scale-to-fit
+   squashed the whole chart into a dead-space sliver; preserveAspectRatio="none" fixed that but
+   stretched the axis-label text glyphs unevenly instead). Each column caps at its natural
+   34px width (matching the old BAR_WIDTH) via flex-basis and only shrinks (flex-shrink) once
+   there are too many buckets to fit — so a chart with few buckets stays at its natural small
+   size instead of stretching fat, and a chart with many just narrows instead of overflowing or
+   distorting. Height is a plain fixed 95px, completely decoupled from width. */
 .ramp-chart {
-  display: block;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  height: 95px;
+}
+
+.ramp-chart__col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 0 1 34px;
+  min-width: 4px;
+  height: 100%;
+  gap: 0.2rem;
+}
+
+.ramp-chart__bar {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  border-radius: 2px 2px 0 0;
+  overflow: hidden;
+}
+
+.ramp-chart__segment {
+  width: 100%;
+}
+
+.ramp-chart__label {
+  font-size: 0.62rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   max-width: 100%;
 }
 

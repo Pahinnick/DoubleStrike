@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { COLOR_NAMES, WUBRG, type Color } from '../../utils/colors'
 import {
   NUMERIC_COMPARATORS,
@@ -7,6 +8,7 @@ import {
   type Rarity,
   type SearchFilters,
 } from '../../utils/scryfallQuery'
+import OracleTagBrowser from './OracleTagBrowser'
 import TypeMultiSelect from './TypeMultiSelect'
 
 type Filters = Omit<SearchFilters, 'format'>
@@ -21,6 +23,8 @@ type Props = {
 }
 
 function AdvancedSearchPanel({ filters, onChange }: Props) {
+  const [otagBrowserOpen, setOtagBrowserOpen] = useState(false)
+
   function set<K extends keyof Filters>(key: K, value: Filters[K]) {
     onChange((prev) => ({ ...prev, [key]: value }))
   }
@@ -98,6 +102,18 @@ function AdvancedSearchPanel({ filters, onChange }: Props) {
         </label>
       </div>
 
+      <div className="advanced-search__row">
+        <label className="advanced-search__select-field advanced-search__select-field--grow">
+          <span>Card text</span>
+          <input
+            type="text"
+            placeholder='e.g. flying, or "draw a card"'
+            value={filters.cardText}
+            onChange={(event) => set('cardText', event.target.value)}
+          />
+        </label>
+      </div>
+
       {renderColorGroup('Colors', 'colors', 'colorMatch', 'Colors')}
       {renderColorGroup('Color Identity', 'colorIdentity', 'colorIdentityMatch', 'Color identity')}
 
@@ -132,7 +148,11 @@ function AdvancedSearchPanel({ filters, onChange }: Props) {
             onChange={(event) => set('set', event.target.value)}
           />
         </label>
+        <button type="button" onClick={() => setOtagBrowserOpen(true)}>
+          OTags
+        </button>
       </div>
+      <OracleTagBrowser open={otagBrowserOpen} onClose={() => setOtagBrowserOpen(false)} />
     </div>
   )
 }

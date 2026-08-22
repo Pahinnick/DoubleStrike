@@ -13,11 +13,6 @@ type Props = {
 
 type RampBucket = { label: string; sortKey: number; total: number; byColor: Partial<Record<CurveColorKey, number>> }
 
-const BAR_WIDTH = 34
-const GAP = 8
-const CHART_HEIGHT = 95
-const LABEL_SPACE = 18
-
 function colorFill(color: CurveColorKey): string {
   return `var(--color-${color.toLowerCase()})`
 }
@@ -60,7 +55,6 @@ function RampSources({ entries, castabilityIndex }: Props) {
 
   const totalSources = rows.reduce((sum, row) => sum + row.quantity, 0)
   const maxTotal = Math.max(1, ...buckets.map((b) => b.total))
-  const width = buckets.length * (BAR_WIDTH + GAP)
 
   return (
     <div
@@ -70,36 +64,32 @@ function RampSources({ entries, castabilityIndex }: Props) {
       <h3>
         Ramp <span className="ramp-sources__count">({totalSources} source{totalSources > 1 ? 's' : ''})</span>
       </h3>
-      <svg
-        viewBox={`0 0 ${width} ${CHART_HEIGHT + LABEL_SPACE}`}
-        width={width}
-        height={CHART_HEIGHT + LABEL_SPACE}
-        className="ramp-chart"
-        role="img"
-        aria-label="Ramp sources by average turn online"
-      >
-        {buckets.map((bucket, index) => {
-          const x = index * (BAR_WIDTH + GAP)
-          let yOffset = CHART_HEIGHT - (bucket.total / maxTotal) * CHART_HEIGHT
+      {/* Plain flexbox bars, not a scaled SVG — a deck with many distinct-cost ramp sources needs
+       *  many bars, and an SVG viewBox stretched or shrunk to fit distorts (via preserveAspectRatio)
+       *  either the whole chart's height (aspect-ratio-preserving scale, squashing it flat) or, with
+       *  preserveAspectRatio="none", the axis-label text glyphs themselves (non-uniform x/y scaling
+       *  stretches or squishes the letterforms). Flex items just shrink in width like any other
+       *  responsive layout, and text stays normal DOM text at a fixed, legible size regardless of
+       *  how many buckets there are. */}
+      <div className="ramp-chart" role="img" aria-label="Ramp sources by average turn online">
+        {buckets.map((bucket) => {
           const segments = sortManaStack(bucket.byColor)
-
           return (
-            <g key={bucket.label}>
-              {segments.map(([color, count]) => {
-                const segmentHeight = (count / maxTotal) * CHART_HEIGHT
-                const rect = (
-                  <rect key={color} x={x} y={yOffset} width={BAR_WIDTH} height={segmentHeight} fill={colorFill(color)} />
-                )
-                yOffset += segmentHeight
-                return rect
-              })}
-              <text x={x + BAR_WIDTH / 2} y={CHART_HEIGHT + 12} textAnchor="middle" fontSize="9" fill="var(--text-dim)">
-                {bucket.label}
-              </text>
-            </g>
+            <div key={bucket.label} className="ramp-chart__col">
+              <div className="ramp-chart__bar" style={{ height: `${(bucket.total / maxTotal) * 100}%` }}>
+                {segments.map(([color, count]) => (
+                  <div
+                    key={color}
+                    className="ramp-chart__segment"
+                    style={{ height: `${(count / bucket.total) * 100}%`, backgroundColor: colorFill(color) }}
+                  />
+                ))}
+              </div>
+              <span className="ramp-chart__label">{bucket.label}</span>
+            </div>
           )
         })}
-      </svg>
+      </div>
       <p className="ramp-chart__axis-label">Avg turn online</p>
     </div>
   )

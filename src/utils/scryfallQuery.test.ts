@@ -32,6 +32,20 @@ describe('buildScryfallQuery', () => {
     expect(query).toBe('t:"Time Lord"')
   })
 
+  it('quotes a card-text search into an o: clause, even a single word', () => {
+    expect(buildScryfallQuery('', { ...EMPTY_FILTERS, cardText: 'flying' })).toBe('o:"flying"')
+  })
+
+  it('keeps a card-text phrase as one clause instead of splitting on whitespace', () => {
+    const query = buildScryfallQuery('', { ...EMPTY_FILTERS, cardText: 'draw a card' })
+    expect(query).toBe('o:"draw a card"')
+  })
+
+  it('strips stray quotes out of a card-text search so they cannot break out of the wrapping quotes', () => {
+    const query = buildScryfallQuery('', { ...EMPTY_FILTERS, cardText: '"draw a card"' })
+    expect(query).toBe('o:"draw a card"')
+  })
+
   it('omits clauses for unset filter fields', () => {
     const query = buildScryfallQuery('', { ...EMPTY_FILTERS, format: 'commander' })
     expect(query).toBe('f:commander')
