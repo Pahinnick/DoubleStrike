@@ -1334,6 +1334,50 @@
   }
 }
 
+/* "Whose turn" banner — see PlaytestView's turnAnnouncement/TURN_ANNOUNCE_TTL_MS. Fixed dead
+   center of the battlefield (not anchored to a table point like the ping/reaction markers above),
+   since the whole point is to be impossible to miss regardless of where the camera's panned to.
+   Gold, matching .playtest__active-turn-badge/.playtest__quadrant.is-active-turn's own "gold =
+   whose turn" language — the seat-color glow underneath still identifies *who*. */
+.playtest__turn-announce {
+  position: absolute;
+  left: 50%;
+  top: 18%;
+  transform: translate(-50%, -50%);
+  z-index: 50;
+  padding: 0.6rem 1.4rem;
+  border-radius: 10px;
+  border: 2px solid #d9a92e;
+  background-color: rgba(20, 18, 10, 0.82);
+  box-shadow: 0 0 24px 4px rgba(var(--accent-rgb), 0.25), inset 0 0 0 1px var(--seat-color, transparent);
+  color: #d9a92e;
+  font-size: 1.4rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: playtest-turn-announce 2.6s ease-out forwards;
+}
+
+@keyframes playtest-turn-announce {
+  0% {
+    transform: translate(-50%, -50%) scale(0.85);
+    opacity: 0;
+  }
+  12% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+  }
+  78% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 0;
+  }
+}
+
 /* Quickbar reaction tab + popover — same pattern as .playtest__actions-wrap/tab/tray, just its
    own classes since the tray auto-closes on pick (see ReactionsTray) instead of staying open. */
 .playtest__reactions-wrap {

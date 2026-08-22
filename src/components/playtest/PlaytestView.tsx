@@ -97,6 +97,9 @@ const PING_TTL_MS = 1700
 const HIGHLIGHT_TTL_MS = 1600
 // How long a one-click emoji reaction stays visible near a nameplate before it self-clears.
 const REACTION_TTL_MS = 2000
+// How long the "whose turn" banner stays up after a pass — long enough to actually read a
+// name, short enough to not still be sitting there several actions into the new turn.
+const TURN_ANNOUNCE_TTL_MS = 2600
 // Small fixed set of one-click pod reactions — pure fun, not meant to be exhaustive.
 const REACTION_EMOJIS = ['👍', '😂', '😱', '😡', '🎉', '🤔']
 
@@ -513,6 +516,32 @@ function PlaytestView({ onClose }: Props) {
   // or any other opponent C, not just whoever's card we're currently rendering.
   const seatNameBySeat = new Map<Seat, string>([[mySeatResolved, playerName], ...opponentBoards.map((b) => [b.seat, b.name] as const)])
   const activeSeat: Seat | null = spinSeat ?? (mockBoards !== null ? mockActiveSeat : mpActiveSeat)
+
+  // "Whose turn" banner — a brief, hard-to-miss announcement on every genuine pass (Pass Turn or
+  // Who Goes First landing), complementing the always-on topbar badge above (easy to miss once
+  // you've panned/zoomed away from the table). Watches the *synced* seat rather than `activeSeat`
+  // itself, since spinSeat overrides that one on every frame of Who Goes First's spin animation —
+  // watching it directly would fire one of these per frame instead of once at the end. Skips the
+  // very first value it ever observes so joining a game already in progress (which hydrates this
+  // same seat from the host) doesn't announce a "pass" that never actually happened.
+  const syncedActiveSeat = mockBoards !== null ? mockActiveSeat : mpActiveSeat
+  const [turnAnnouncement, setTurnAnnouncement] = useState<{ seat: Seat; key: string } | null>(null)
+  const turnAnnounceTimeoutRef = useRef<number | null>(null)
+  const prevSyncedActiveSeatRef = useRef<Seat | null | undefined>(undefined)
+  useEffect(() => {
+    if (!inPod) return
+    const prev = prevSyncedActiveSeatRef.current
+    prevSyncedActiveSeatRef.current = syncedActiveSeat
+    if (prev === undefined || syncedActiveSeat === null || syncedActiveSeat === prev) return
+    setTurnAnnouncement({ seat: syncedActiveSeat, key: crypto.randomUUID() })
+    if (turnAnnounceTimeoutRef.current) window.clearTimeout(turnAnnounceTimeoutRef.current)
+    turnAnnounceTimeoutRef.current = window.setTimeout(() => setTurnAnnouncement(null), TURN_ANNOUNCE_TTL_MS)
+  }, [inPod, syncedActiveSeat])
+  useEffect(() => {
+    return () => {
+      if (turnAnnounceTimeoutRef.current) window.clearTimeout(turnAnnounceTimeoutRef.current)
+    }
+  }, [])
 
   // Only the player whose turn it currently is may pass it on; before anyone's gone
   // (activeSeat === null) it's up for grabs so the first Pass Turn click can kick things off.
@@ -2716,6 +2745,17 @@ function PlaytestView({ onClose }: Props) {
           {reactionMarkers.map((r) => (
             <ReactionMarker key={r.id} emoji={r.emoji} style={r.style} />
           ))}
+          {turnAnnouncement && (
+            <div
+              key={turnAnnouncement.key}
+              className="playtest__turn-announce"
+              style={{ '--seat-color': SEAT_COLORS[turnAnnouncement.seat] } as CSSProperties}
+            >
+              {turnAnnouncement.seat === mySeatResolved
+                ? 'Your Turn'
+                : `${seatNameBySeat.get(turnAnnouncement.seat) ?? `Seat ${turnAnnouncement.seat + 1}`}'s Turn`}
+            </div>
+          )}
           <div className="playtest__quickbar">
             <button type="button" className="playtest__quickbar-btn" onClick={() => dispatch({ type: 'UNTAP_ALL' })}>
               Untap
