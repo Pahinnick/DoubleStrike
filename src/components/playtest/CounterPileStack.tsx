@@ -8,6 +8,9 @@ export type CounterPileItem = {
   color: CounterColor
   /** Pre-formatted display text — the stack itself doesn't know generic vs power/toughness. */
   text: string
+  /** Optional full name shown in the tooltip ahead of the click hint (e.g. "Flying") — omitted
+   *  for freeform color piles, which have no inherent meaning. */
+  name?: string
 }
 
 type Props = {
@@ -43,7 +46,11 @@ function CounterPileStack({ items, side, sourceInstanceId, onAdjust, onRemove }:
           key={item.id}
           className={`playtest-card__counter-pile ${interactive ? 'playtest-card__counter-pile--interactive' : ''}`}
           style={{ '--pile-color': swatchFor(item.color) } as CSSProperties}
-          title={interactive ? 'Left-click: +1 · Right-click: -1 · drag onto another card to move the pile there' : undefined}
+          title={
+            interactive
+              ? `${item.name ? `${item.name} — ` : ''}Left-click: +1 · Right-click: -1 · drag onto another card to move the pile there`
+              : undefined
+          }
           draggable={interactive && !!sourceInstanceId}
           onDragStart={
             interactive && sourceInstanceId

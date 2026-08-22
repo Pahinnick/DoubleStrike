@@ -82,6 +82,13 @@ export type ScryfallError = {
   details: string
 }
 
+/** Response shape for both `/cards/autocomplete` (name suggestions) and `/catalog/*` (e.g.
+ *  card-types, creature-types — the full vocabulary of type-line words). */
+export type ScryfallCatalog = {
+  object: 'catalog'
+  data: string[]
+}
+
 export type CardIdentifier = { id: string } | { oracle_id: string } | { name: string } | { set: string; collector_number: string }
 
 /** Minimal shape needed to open the Similar Cards view — satisfied by both ScryfallCard and CardSnapshot. */

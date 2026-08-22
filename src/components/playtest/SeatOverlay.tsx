@@ -29,9 +29,12 @@
  * attribute commander damage to, so it passes `soloCommanderDamage` instead of
  * `commanderSources` — see that prop's doc comment.
  */
-import type { CSSProperties, MouseEvent } from 'react'
+import { useLayoutEffect, useRef, useState, type CSSProperties, type MouseEvent } from 'react'
+import { createPortal } from 'react-dom'
 import type { Seat } from '../../net/protocol'
+import { SOLO_CMDR_SOURCE } from '../../state/gameReducer'
 import type { CardSnapshot } from '../../storage/cardCache'
+import { useChangeLog } from '../../hooks/useChangeLog'
 import type { ManaColorKey } from '../../utils/colors'
 import CommanderChip from './CommanderChip'
 import ManaPool from './ManaPool'
@@ -211,6 +214,48 @@ function StatPill({ variant, label, fullLabel, value, lethal, color, dot, onChan
   )
 }
 
+/** Small "what just changed" flyout, shown only while the card itself is hovered (see SeatOverlay's
+ *  onMouseEnter/onMouseLeave below) — portaled to document.body rather than positioned as a normal
+ *  child, since .playtest__seat-overlay clips overflow (for the commander portrait's square-to-
+ *  rounded corner, see that rule's own comment) which would otherwise clip a flyout reaching past
+ *  the card's own edge. Same clamp-after-measure two-pass as CardContextMenu, for the same reason:
+ *  the flyout's real size isn't known until it's actually rendered once. */
+function ChangeLogPopover({ anchor, entries }: { anchor: HTMLElement; entries: ReturnType<typeof useChangeLog> }) {
+  const popoverRef = useRef<HTMLDivElement>(null)
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
+
+  useLayoutEffect(() => {
+    const anchorRect = anchor.getBoundingClientRect()
+    const popover = popoverRef.current
+    const width = popover?.offsetWidth ?? 0
+    const height = popover?.offsetHeight ?? 0
+    const left = Math.min(anchorRect.right + 8, window.innerWidth - width - 4)
+    const top = Math.max(4, Math.min(anchorRect.top, window.innerHeight - height - 4))
+    setPos({ left, top })
+  }, [anchor, entries])
+
+  return createPortal(
+    <div
+      ref={popoverRef}
+      className="playtest__seat-changelog"
+      style={pos ? { left: pos.left, top: pos.top } : { left: -9999, top: -9999 }}
+    >
+      <div className="playtest__seat-changelog-title">Recent changes</div>
+      <ul>
+        {entries.map((entry) => (
+          <li key={entry.id}>
+            <span className="playtest__seat-changelog-text">{entry.text}</span>
+            <span className="playtest__seat-changelog-time">
+              {new Date(entry.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>,
+    document.body,
+  )
+}
+
 function SeatOverlay({
   seat,
   name,
@@ -242,6 +287,19 @@ function SeatOverlay({
   // table-side quadrant scrim.
   const eliminated = life <= 0 || !!scooped
 
+  const cardRef = useRef<HTMLDivElement>(null)
+  const [hovered, setHovered] = useState(false)
+
+  // Commander damage keyed by source, regardless of pod vs solo — see useChangeLog's doc comment
+  // on why this diffs cleanly even for opponents' cards (it's the same public total everyone
+  // already renders, not an actual event stream).
+  const commanderDamageBySource: Record<number, number> = soloCommanderDamage
+    ? { [SOLO_CMDR_SOURCE]: soloCommanderDamage.value }
+    : Object.fromEntries(commanderSources.map((src) => [src.seat, src.damage]))
+  const changeLog = useChangeLog({ life, poison, commanderDamage: commanderDamageBySource }, (source) =>
+    source === SOLO_CMDR_SOURCE ? 'Cmdr Dmg' : `${commanderSources.find((src) => src.seat === source)?.name ?? `Seat ${source + 1}`} dmg`,
+  )
+
   const commanderPills = !showCommanderDamage
     ? []
     : soloCommanderDamage
@@ -272,8 +330,11 @@ function SeatOverlay({
 
   return (
     <div
+      ref={cardRef}
       className={`playtest__seat-overlay ${isSelf ? 'is-self' : ''} ${eliminated ? 'is-eliminated' : ''}`}
       style={{ '--seat-color': seatColor } as CSSProperties}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
     >
       {/* Left, not right: the important per-turn info (life, poison, commander damage) sits
           closer to where the eye already lingers reading top-to-bottom/left-to-right, and a
@@ -367,6 +428,7 @@ function SeatOverlay({
           </div>
         )}
       </div>
+      {hovered && changeLog.length > 0 && cardRef.current && <ChangeLogPopover anchor={cardRef.current} entries={changeLog} />}
     </div>
   )
 }

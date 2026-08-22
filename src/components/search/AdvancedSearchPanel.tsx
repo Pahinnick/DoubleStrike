@@ -2,13 +2,12 @@ import { COLOR_NAMES, WUBRG, type Color } from '../../utils/colors'
 import {
   NUMERIC_COMPARATORS,
   RARITIES,
-  SORT_ORDERS,
   type ColorMatch,
   type NumericComparator,
   type Rarity,
   type SearchFilters,
-  type SortOrder,
 } from '../../utils/scryfallQuery'
+import TypeMultiSelect from './TypeMultiSelect'
 
 type Filters = Omit<SearchFilters, 'format'>
 type ColorKey = 'colors' | 'colorIdentity'
@@ -95,12 +94,7 @@ function AdvancedSearchPanel({ filters, onChange }: Props) {
       <div className="advanced-search__row">
         <label className="advanced-search__select-field advanced-search__select-field--grow">
           <span>Type line</span>
-          <input
-            type="text"
-            placeholder="e.g. legendary creature"
-            value={filters.type}
-            onChange={(event) => set('type', event.target.value)}
-          />
+          <TypeMultiSelect types={filters.types} onChange={(types) => set('types', types)} ariaLabel="Card type" />
         </label>
       </div>
 
@@ -137,20 +131,6 @@ function AdvancedSearchPanel({ filters, onChange }: Props) {
             value={filters.set}
             onChange={(event) => set('set', event.target.value)}
           />
-        </label>
-        <label className="advanced-search__select-field">
-          <span>Sort by</span>
-          <select
-            value={filters.sort ?? ''}
-            onChange={(event) => set('sort', (event.target.value || undefined) as SortOrder | undefined)}
-          >
-            <option value="">Relevance</option>
-            {SORT_ORDERS.map((order) => (
-              <option key={order.value} value={order.value}>
-                {order.label}
-              </option>
-            ))}
-          </select>
         </label>
       </div>
     </div>

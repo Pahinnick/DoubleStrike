@@ -59,7 +59,9 @@ export type SearchFilters = {
   colorMatch: ColorMatch
   colorIdentity: Color[]
   colorIdentityMatch: ColorMatch
-  type: string
+  /** Type-line words (e.g. ["Legendary", "Creature"]) — each becomes its own `t:` clause (see
+   *  buildScryfallQuery) so a card must match all of them, not just contain the words somewhere. */
+  types: string[]
   cmcComparator?: NumericComparator
   cmcValue?: number
   powerComparator?: NumericComparator
@@ -81,7 +83,7 @@ export const EMPTY_FILTERS: SearchFilters = {
   colorMatch: '<=',
   colorIdentity: [],
   colorIdentityMatch: '<=',
-  type: '',
+  types: [],
   set: '',
 }
 
@@ -93,7 +95,16 @@ export function buildScryfallQuery(text: string, filters: SearchFilters): string
   if (filters.format) clauses.push(`f:${filters.format}`)
   if (filters.colors.length > 0) clauses.push(`c${filters.colorMatch}${filters.colors.join('')}`)
   if (filters.colorIdentity.length > 0) clauses.push(`id${filters.colorIdentityMatch}${filters.colorIdentity.join('')}`)
-  if (filters.type.trim().length > 0) clauses.push(`t:${filters.type.trim()}`)
+  // Each type gets its own t: clause rather than one clause with all the words in it — Scryfall's
+  // query parser splits on whitespace outside quotes, so a single unquoted `t:legendary creature`
+  // clause silently turned into a `t:legendary` type filter plus a bare `creature` text search
+  // (matching name/oracle text too, not just the type line). Quoting only the multi-word entries
+  // (a handful of subtypes, e.g. "Time Lord") keeps single-word clauses readable.
+  for (const type of filters.types) {
+    const word = type.trim()
+    if (word.length === 0) continue
+    clauses.push(`t:${word.includes(' ') ? `"${word}"` : word}`)
+  }
   if (filters.cmcValue !== undefined) clauses.push(`cmc${filters.cmcComparator ?? '='}${filters.cmcValue}`)
   if (filters.powerValue !== undefined) clauses.push(`pow${filters.powerComparator ?? '='}${filters.powerValue}`)
   if (filters.toughnessValue !== undefined) clauses.push(`tou${filters.toughnessComparator ?? '='}${filters.toughnessValue}`)

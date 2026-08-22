@@ -26,10 +26,31 @@ export const HOST_SEAT = 0
 
 export type Seat = 0 | 1 | 2 | 3
 
-/** A player-chosen visual tag for a counter pile — not tied to Magic color identity, just a way
- *  to tell independent piles on the same card apart (e.g. a green +1/+1-style pile vs a black
- *  poison-style pile). */
-export type CounterColor = 'green' | 'red' | 'blue' | 'black' | 'gold' | 'colorless'
+/** A visual tag for a counter pile — either a player-chosen generic color (not tied to Magic color
+ *  identity, just a way to tell independent piles on the same card apart, e.g. a green +1/+1-style
+ *  pile vs a black poison-style pile) or one of the curated keyword-ability kinds (flying,
+ *  deathtouch, etc. — see counterFormat's KEYWORD_COUNTERS) used to mark a card as having gained
+ *  that ability. Both live in the same id space so a pile's identity and its display swatch are
+ *  always the same lookup. */
+export type CounterColor =
+  | 'green'
+  | 'red'
+  | 'blue'
+  | 'black'
+  | 'gold'
+  | 'colorless'
+  | 'flying'
+  | 'firststrike'
+  | 'doublestrike'
+  | 'deathtouch'
+  | 'trample'
+  | 'vigilance'
+  | 'lifelink'
+  | 'hexproof'
+  | 'indestructible'
+  | 'menace'
+  | 'reach'
+  | 'haste'
 
 /** An independent generic counter pile (loyalty, charge, poison, etc.) — a card can carry several
  *  of these at once, each its own color and signed running total. */
@@ -580,8 +601,29 @@ function isSeat(v: unknown): v is Seat {
   return v === 0 || v === 1 || v === 2 || v === 3
 }
 
+const COUNTER_COLOR_IDS: readonly CounterColor[] = [
+  'green',
+  'red',
+  'blue',
+  'black',
+  'gold',
+  'colorless',
+  'flying',
+  'firststrike',
+  'doublestrike',
+  'deathtouch',
+  'trample',
+  'vigilance',
+  'lifelink',
+  'hexproof',
+  'indestructible',
+  'menace',
+  'reach',
+  'haste',
+]
+
 function isCounterColor(v: unknown): v is CounterColor {
-  return v === 'green' || v === 'red' || v === 'blue' || v === 'black' || v === 'gold' || v === 'colorless'
+  return typeof v === 'string' && (COUNTER_COLOR_IDS as readonly string[]).includes(v)
 }
 
 function isCounterPile(v: unknown): v is CounterPile {

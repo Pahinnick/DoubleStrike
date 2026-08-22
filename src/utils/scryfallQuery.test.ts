@@ -15,11 +15,21 @@ describe('buildScryfallQuery', () => {
       ...EMPTY_FILTERS,
       format: 'modern',
       colors: ['U', 'R'],
-      type: 'creature',
+      types: ['creature'],
       cmcComparator: '>=',
       cmcValue: 2,
     })
     expect(query).toBe('dragon f:modern c<=UR t:creature cmc>=2')
+  })
+
+  it('gives each selected type its own t: clause, so a card must match all of them', () => {
+    const query = buildScryfallQuery('', { ...EMPTY_FILTERS, types: ['Legendary', 'Creature'] })
+    expect(query).toBe('t:Legendary t:Creature')
+  })
+
+  it('quotes a multi-word type so it stays one clause instead of splitting into a bare text search', () => {
+    const query = buildScryfallQuery('', { ...EMPTY_FILTERS, types: ['Time Lord'] })
+    expect(query).toBe('t:"Time Lord"')
   })
 
   it('omits clauses for unset filter fields', () => {

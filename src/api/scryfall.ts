@@ -1,5 +1,5 @@
 import type { SortOrder } from '../utils/scryfallQuery'
-import type { BulkDataInfo, CardIdentifier, ImageUris, ScryfallCard, ScryfallError, ScryfallList } from './scryfallTypes'
+import type { BulkDataInfo, CardIdentifier, ImageUris, ScryfallCard, ScryfallCatalog, ScryfallError, ScryfallList } from './scryfallTypes'
 
 const API_BASE = 'https://api.scryfall.com'
 // Scryfall asks integrations to stay under ~10 req/sec; spacing requests by
@@ -112,6 +112,54 @@ export async function searchCards(
   evictOldestIfFull(searchCache, QUERY_CACHE_MAX_ENTRIES)
   searchCache.set(cacheKey, { value: result, cachedAt: Date.now() })
   return result
+}
+
+/** Card-name suggestions for the search box's autocomplete dropdown — thin wrapper around
+ *  Scryfall's own `/cards/autocomplete`, which does the prefix matching server-side. */
+export async function autocompleteCardNames(query: string, signal?: AbortSignal): Promise<string[]> {
+  const trimmed = query.trim()
+  if (trimmed.length < 2) return []
+  const result = await scryfallFetch<ScryfallCatalog>(`${API_BASE}/cards/autocomplete?q=${encodeURIComponent(trimmed)}`, { signal })
+  return result.data
+}
+
+// Every catalog that can contribute a word to a type-line clause: the high-level card types,
+// the supertypes (Legendary, Snow, etc.), and every card type's own subtype list. Fetched once
+// per session and merged into one flat, deduped vocabulary for the type-line autocomplete.
+const TYPE_CATALOGS = [
+  'card-types',
+  'supertypes',
+  'creature-types',
+  'planeswalker-types',
+  'land-types',
+  'artifact-types',
+  'enchantment-types',
+  'spell-types',
+] as const
+
+let typeWordsPromise: Promise<string[]> | null = null
+
+/** The full vocabulary of type-line words (Creature, Legendary, Human, Equipment, ...), merged
+ *  from every relevant Scryfall catalog and cached for the life of the page — this list changes
+ *  only when new sets add new subtypes, so a session-long cache (rather than the TTL'd caches
+ *  above) is the right lifetime. Resets on failure so a dropped request doesn't wedge every
+ *  future caller into a permanently-rejected promise. */
+export function getTypeWords(): Promise<string[]> {
+  if (!typeWordsPromise) {
+    typeWordsPromise = Promise.all(TYPE_CATALOGS.map((catalog) => scryfallFetch<ScryfallCatalog>(`${API_BASE}/catalog/${catalog}`)))
+      .then((catalogs) => {
+        const words = new Set<string>()
+        for (const catalog of catalogs) {
+          for (const word of catalog.data) words.add(word)
+        }
+        return [...words].sort((a, b) => a.localeCompare(b))
+      })
+      .catch((err: unknown) => {
+        typeWordsPromise = null
+        throw err
+      })
+  }
+  return typeWordsPromise
 }
 
 /**

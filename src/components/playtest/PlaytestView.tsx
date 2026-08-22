@@ -49,7 +49,7 @@ import BattlefieldTriangleGrid from './BattlefieldTriangleGrid'
 import CardContextMenu, { type ContextMenuAction } from '../shared/CardContextMenu'
 import ConfirmModal from '../shared/ConfirmModal'
 import { useTutorialContext } from '../shared/TutorialContext'
-import { COUNTER_COLORS, formatPtCounters, formatSigned } from './counterFormat'
+import { COUNTER_COLORS, counterPileLabel, counterPileName, formatPtCounters, KEYWORD_COUNTERS } from './counterFormat'
 import CounterPileStack from './CounterPileStack'
 import DeckManagerModal from '../deck/DeckManagerModal'
 import DeckScanTray from './DeckScanTray'
@@ -1388,6 +1388,13 @@ function PlaytestView({ onClose }: Props) {
         })),
       },
       {
+        label: 'Add Keyword Counter',
+        submenu: KEYWORD_COUNTERS.map((k) => ({
+          label: k.label,
+          onSelect: () => dispatch({ type: 'ADD_COUNTER_PILE', instanceId: gameCard.instanceId, color: k.id }),
+        })),
+      },
+      {
         label: 'Add Power/Toughness Counter',
         submenu: COUNTER_COLORS.map((c) => ({
           label: c.label,
@@ -2531,7 +2538,7 @@ function PlaytestView({ onClose }: Props) {
                     />
                     {pc.isToken && <span className="playtest-card__token-badge" title="Token">T</span>}
                     <CounterPileStack
-                      items={(pc.counters ?? []).map((p) => ({ id: p.id, color: p.color, text: formatSigned(p.value) }))}
+                      items={(pc.counters ?? []).map((p) => ({ id: p.id, color: p.color, text: counterPileLabel(p), name: counterPileName(p.color) }))}
                       side="left"
                     />
                     <CounterPileStack
@@ -2601,7 +2608,7 @@ function PlaytestView({ onClose }: Props) {
                 />
                 {gameCard.isToken && <span className="playtest-card__token-badge" title="Token">T</span>}
                 <CounterPileStack
-                  items={(gameCard.counters ?? []).map((p) => ({ id: p.id, color: p.color, text: formatSigned(p.value) }))}
+                  items={(gameCard.counters ?? []).map((p) => ({ id: p.id, color: p.color, text: counterPileLabel(p), name: counterPileName(p.color) }))}
                   side="left"
                   sourceInstanceId={gameCard.instanceId}
                   onAdjust={(pileId, delta) => dispatch({ type: 'ADJUST_COUNTER_PILE', instanceId: gameCard.instanceId, pileId, delta })}

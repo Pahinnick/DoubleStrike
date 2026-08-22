@@ -116,7 +116,19 @@ function PlaytestCard({ gameCard, snapshot, onClick, onContextMenu, readOnly, re
           onClick?.(event)
         }}
         {...readOnlyDragHandlers}
-        {...(snapshot && !hidden ? { ...hoverHandlers, onMouseEnter: handleMouseEnter } : {})}
+        {...(snapshot
+          ? hidden
+            // Still attach the leave/blur handlers even while hidden (just not enter/move/focus,
+            // which would reveal this card's identity) — this is the top-of-library slot, whose
+            // `hidden` flips on the F "reveal top card" toggle. Dropping every handler while hidden
+            // (as this used to) meant that toggling F back to hidden *while still hovering* removed
+            // onMouseLeave out from under a cursor that never actually left the element — no native
+            // mouseleave event follows a prop change, so the shared preview stayed pinned on the
+            // last-revealed card forever, the same "no browser event fires" trap the dragstart and
+            // node-removal cases in HoverPreviewContext already guard against.
+            ? { onMouseLeave: hoverHandlers.onMouseLeave, onBlur: hoverHandlers.onBlur }
+            : { ...hoverHandlers, onMouseEnter: handleMouseEnter }
+          : {})}
       >
         {hidden ? (
           <img src={cardBackImage} alt={name} draggable={false} />

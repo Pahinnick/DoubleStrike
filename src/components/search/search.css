@@ -48,6 +48,54 @@
 .color-swatch--r { background-color: var(--color-r); color: #fff; }
 .color-swatch--g { background-color: var(--color-g); color: #fff; }
 
+.search-filters__type {
+  flex: 1 1 auto;
+  min-width: 160px;
+}
+
+.type-multiselect {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.type-multiselect__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.type-multiselect__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  font-size: 0.75rem;
+  background-color: var(--bg-panel-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  padding: 0.15rem 0.3rem 0.15rem 0.55rem;
+  white-space: nowrap;
+}
+
+.type-multiselect__chip button {
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  line-height: 1;
+  padding: 0 0.15rem;
+  cursor: pointer;
+}
+
+.type-multiselect__chip button:hover {
+  color: var(--text);
+}
+
+.type-multiselect__input {
+  width: 100%;
+}
+
 .search-advanced-toggle {
   white-space: nowrap;
 }
@@ -95,16 +143,19 @@
   font-size: 0.8rem;
 }
 
+/* Grid, not flex-wrap: four stats of different label lengths (Mana value vs Power) used to wrap
+   into a ragged, unaligned mess. `display: contents` on each .advanced-search__stat row dissolves
+   its own box so its three children (label, comparator, value) become direct grid items instead —
+   giving every row's comparator and value input the same column start regardless of label width. */
 .advanced-search__stats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
+  display: grid;
+  grid-template-columns: auto auto minmax(3.5rem, auto);
+  align-items: center;
+  gap: 0.4rem 0.6rem;
 }
 
 .advanced-search__stat {
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
+  display: contents;
   font-size: 0.8rem;
   color: var(--text-dim);
 }

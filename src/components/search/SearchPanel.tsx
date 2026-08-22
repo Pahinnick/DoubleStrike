@@ -2,13 +2,16 @@ import { useEffect, useMemo, useState } from 'react'
 import type { ScryfallCard } from '../../api/scryfallTypes'
 import { useCardSearch } from '../../hooks/useCardSearch'
 import { useCardSnapshots } from '../../hooks/useCardSnapshots'
+import { useNameAutocomplete } from '../../hooks/useNameAutocomplete'
+import Autocomplete from '../shared/Autocomplete'
 import CardSizeToggle from '../shared/CardSizeToggle'
 import { useDeck } from '../../state/DeckContext'
 import type { CardSizeKey } from '../../utils/cardSize'
 import { COLOR_NAMES, WUBRG, type Color } from '../../utils/colors'
-import { EMPTY_FILTERS, type SearchFilters } from '../../utils/scryfallQuery'
+import { EMPTY_FILTERS, SORT_ORDERS, type SearchFilters, type SortOrder } from '../../utils/scryfallQuery'
 import AdvancedSearchPanel from './AdvancedSearchPanel'
 import CardResultGrid from './CardResultGrid'
+import TypeMultiSelect from './TypeMultiSelect'
 import './search.css'
 
 type Props = {
@@ -28,6 +31,7 @@ function SearchPanel({ onAddCard, text, onTextChange, expanded, onExpand, onColl
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const filters = useMemo<SearchFilters>(() => ({ ...localFilters, format: deck.format }), [localFilters, deck.format])
   const { results, status, error, hasMore, loadingMore, loadMore } = useCardSearch(text, filters)
+  const nameSuggestions = useNameAutocomplete(text)
 
   // When a commander is designated, the Color identity filter defaults to its color identity
   // (with the "at most these" default match, that means "cards this deck could actually play").
@@ -79,24 +83,24 @@ function SearchPanel({ onAddCard, text, onTextChange, expanded, onExpand, onColl
           Collapse
         </button>
       </div>
-      <input
-        type="text"
-        data-tutorial-id="search-input"
+      <Autocomplete
+        tutorialId="search-input"
         placeholder="Search cards..."
         value={text}
-        onChange={(event) => onTextChange(event.target.value)}
-        aria-label="Card name or text search"
+        onChange={onTextChange}
+        onCommit={onTextChange}
+        suggestions={nameSuggestions}
+        ariaLabel="Card name or text search"
       />
 
       <div className="search-filters">
         {deck.format && <span className="search-format-badge">Filtering to {deck.format}</span>}
         {!advancedOpen && (
-          <input
-            type="text"
-            placeholder="Type (e.g. creature)"
-            value={localFilters.type}
-            onChange={(event) => setLocalFilters((prev) => ({ ...prev, type: event.target.value }))}
-            aria-label="Card type"
+          <TypeMultiSelect
+            types={localFilters.types}
+            onChange={(types) => setLocalFilters((prev) => ({ ...prev, types }))}
+            ariaLabel="Card type"
+            className="search-filters__type"
           />
         )}
         {!advancedOpen && (
@@ -117,6 +121,20 @@ function SearchPanel({ onAddCard, text, onTextChange, expanded, onExpand, onColl
             ))}
           </div>
         )}
+        <select
+          aria-label="Sort by"
+          value={localFilters.sort ?? ''}
+          onChange={(event) =>
+            setLocalFilters((prev) => ({ ...prev, sort: (event.target.value || undefined) as SortOrder | undefined }))
+          }
+        >
+          <option value="">Sort: Relevance</option>
+          {SORT_ORDERS.map((order) => (
+            <option key={order.value} value={order.value}>
+              Sort: {order.label}
+            </option>
+          ))}
+        </select>
         <button
           type="button"
           className={`search-advanced-toggle ${advancedOpen ? 'is-active' : ''}`}
