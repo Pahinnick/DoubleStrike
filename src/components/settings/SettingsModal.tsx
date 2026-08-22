@@ -83,6 +83,11 @@ function SettingsModal({ onClose }: Props) {
           </button>
         </section>
 
+        <section className="settings-modal__section">
+          <h3>About</h3>
+          <p className="settings-modal__hint">DoubleStrike v{__APP_VERSION__}</p>
+        </section>
+
         <button type="button" onClick={onClose}>
           Close
         </button>

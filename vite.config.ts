@@ -1,10 +1,21 @@
 /// <reference types="vitest/config" />
+import { readFileSync } from 'node:fs'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+
+// Read once at build/dev-server-start time rather than importing the JSON module directly, to
+// avoid depending on a specific TS/Node import-attributes syntax version for a single string.
+const appVersion = JSON.parse(readFileSync('./package.json', 'utf-8')).version as string
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  // Baked in at build time so the running app can display its own version (see SettingsModal)
+  // without any IPC round-trip — works identically in the browser-dev/preview build and the
+  // packaged Electron app, since both load the same Vite output.
+  define: {
+    __APP_VERSION__: JSON.stringify(appVersion),
+  },
   // Electron loads the built index.html via file://, so asset URLs must be
   // relative — root-absolute paths (the default) resolve against the
   // filesystem root and 404 under file://.
