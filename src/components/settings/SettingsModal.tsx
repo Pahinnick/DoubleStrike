@@ -10,8 +10,18 @@ type Props = {
 }
 
 function SettingsModal({ onClose }: Props) {
-  const { theme, setTheme, hoverPreviewMode, setHoverPreviewMode, soundVolume, setSoundVolume, goldfishStatsDefault, setGoldfishStatsDefault } =
-    useProfileSettings()
+  const {
+    theme,
+    setTheme,
+    hoverPreviewMode,
+    setHoverPreviewMode,
+    soundVolume,
+    setSoundVolume,
+    goldfishStatsDefault,
+    setGoldfishStatsDefault,
+    handDrawSide,
+    setHandDrawSide,
+  } = useProfileSettings()
   const tutorial = useTutorialContext()
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
 
@@ -60,6 +70,15 @@ function SettingsModal({ onClose }: Props) {
           <label className="settings-modal__checkbox-row">
             <input type="checkbox" checked={goldfishStatsDefault} onChange={(event) => setGoldfishStatsDefault(event.target.checked)} />
             Show goldfish practice stats by default
+          </label>
+          <p className="settings-modal__hint">Which side of your hand a freshly-drawn card lands on.</p>
+          <label className="settings-modal__radio-row">
+            <input type="radio" name="hand-draw-side" checked={handDrawSide === 'left'} onChange={() => setHandDrawSide('left')} />
+            Left
+          </label>
+          <label className="settings-modal__radio-row">
+            <input type="radio" name="hand-draw-side" checked={handDrawSide === 'right'} onChange={() => setHandDrawSide('right')} />
+            Right
           </label>
         </section>
 

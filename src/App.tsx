@@ -4,6 +4,7 @@ import CardHoverPreview from './components/shared/CardHoverPreview'
 import { CategoryRecommendationsProvider } from './components/shared/CategoryRecommendationsContext'
 import CategoryRecommendationsView from './components/shared/CategoryRecommendationsView'
 import { HoverPreviewProvider } from './components/shared/HoverPreviewContext'
+import PanelResizer from './components/shared/PanelResizer'
 import { SimilarCardsProvider } from './components/shared/SimilarCardsContext'
 import SimilarCardsView from './components/shared/SimilarCardsView'
 import SearchPanel from './components/search/SearchPanel'
@@ -26,6 +27,7 @@ import { hasSeenTutorial, TutorialProvider, useTutorialContext } from './compone
 import TutorialOverlay from './components/shared/TutorialOverlay'
 import { isDraftModeEnabled } from './config/featureFlags'
 import { useCardSize } from './hooks/useCardSize'
+import { usePanelWidth } from './hooks/usePanelWidth'
 import { getPlaytestWindowMode } from './hooks/usePlaytestWindowMode'
 import { useProfileSettings } from './hooks/useProfileSettings'
 import { useProximityGlow } from './hooks/useProximityGlow'
@@ -34,6 +36,7 @@ import { DeckWorkspaceProvider } from './state/DeckListContext'
 import { JumpToCardProvider } from './state/JumpToCardContext'
 import { ProfileProvider, useProfiles } from './state/ProfileContext'
 import { isPlaytestWindow, onSwitchToInlineRequested, openDedicatedPlaytestWindow } from './utils/playtestWindowBridge'
+import { requestAutoOpenMultiplayer } from './utils/multiplayerEntryBridge'
 
 const WELCOME_NAME_PROMPTED_KEY = 'mtgdb:welcomeNamePrompted'
 const DEFAULT_PROFILE_NAME_PATTERN = /^(Player 1|Recovered Profile \d+)$/
@@ -61,6 +64,14 @@ function AppShell() {
   const [searchText, setSearchText] = useState('')
   const [searchExpanded, setSearchExpanded] = useState(false)
   const [statsExpanded, setStatsExpanded] = useState(true)
+  // User-draggable widths for the search/stats side panels (see PanelResizer) — the deck-list
+  // column in between always just absorbs whatever's left (grid-template-columns' `1fr` track
+  // below), so only these two ever need their own persisted preference.
+  const [searchWidth, adjustSearchWidth] = usePanelWidth('mtgdb:searchPanelWidth', 320, 240, 640)
+  const [statsWidth, adjustStatsWidth] = usePanelWidth('mtgdb:statsPanelWidth', 300, 220, 640)
+  // Suspends .app-main's collapse/expand transition for the duration of an active drag — see
+  // PanelResizer's onDragStart/onDragEnd doc for why a drag and that transition don't mix.
+  const [isResizingPanel, setIsResizingPanel] = useState(false)
   const [cardSize, setCardSize] = useCardSize()
   // Also the one place that keeps the active profile's theme applied to <html data-theme="...">
   // at all times — see useProfileSettings' own doc for why this call staying mounted matters.
@@ -200,6 +211,20 @@ function AppShell() {
         <button type="button" data-tutorial-id="playtest-button" onClick={handleOpenPlaytest} disabled={deck.cards.length === 0}>
           Playtest
         </button>
+        {/* Jumps straight into Playtest with its Multiplayer modal already open — see
+            multiplayerEntryBridge's doc — so hosting/joining a pod doesn't need "Playtest" as a
+            separate first click just to reach the button that used to live only in there. */}
+        <button
+          type="button"
+          onClick={() => {
+            requestAutoOpenMultiplayer()
+            handleOpenPlaytest()
+          }}
+          disabled={deck.cards.length === 0}
+          title="Host or join a multiplayer pod"
+        >
+          Multiplayer
+        </button>
         {isDraftModeEnabled() && (
           <button type="button" onClick={() => setDraftOpen(true)}>
             Draft
@@ -228,9 +253,23 @@ function AppShell() {
         </button>
       </header>
       <main
-        className={['app-main', !searchExpanded && 'search-collapsed', !statsExpanded && 'stats-collapsed']
+        className={[
+          'app-main',
+          !searchExpanded && 'search-collapsed',
+          !statsExpanded && 'stats-collapsed',
+          isResizingPanel && 'is-resizing-panel',
+        ]
           .filter(Boolean)
           .join(' ')}
+        style={{
+          gridTemplateColumns: [
+            searchExpanded ? `${searchWidth}px` : '44px',
+            searchExpanded ? '6px' : '0px',
+            'minmax(320px, 1fr)',
+            statsExpanded ? '6px' : '0px',
+            statsExpanded ? `${statsWidth}px` : '44px',
+          ].join(' '),
+        }}
       >
         <SearchPanel
           onAddCard={addCard}
@@ -242,7 +281,23 @@ function AppShell() {
           cardSize={cardSize}
           onCardSizeChange={setCardSize}
         />
+        <PanelResizer
+          label="Resize search panel"
+          disabled={!searchExpanded}
+          onAdjust={adjustSearchWidth}
+          onDragStart={() => setIsResizingPanel(true)}
+          onDragEnd={() => setIsResizingPanel(false)}
+        />
         <DeckPanel cardSize={cardSize} onCardSizeChange={setCardSize} />
+        <PanelResizer
+          label="Resize stats panel"
+          disabled={!statsExpanded}
+          // The stats panel sits to the right of this handle, so dragging right (positive dx)
+          // shrinks it and dragging left grows it — the opposite sign from the search handle.
+          onAdjust={(dx) => adjustStatsWidth(-dx)}
+          onDragStart={() => setIsResizingPanel(true)}
+          onDragEnd={() => setIsResizingPanel(false)}
+        />
         <DeckStatsPanel
           expanded={statsExpanded}
           onExpand={() => setStatsExpanded(true)}

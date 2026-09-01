@@ -66,6 +66,11 @@ type Props = {
    *  games. */
   commanders?: CommanderInfo[]
   isSelf: boolean
+  /** Whose turn it currently is — a small flashing yellow gradient bleeds off this card's right
+   *  edge while true, the player-panel's own version of the same "whose turn" cue the table-side
+   *  quadrant frame/seat label and topbar badge already give (easy to miss once you've panned/
+   *  zoomed away, or if the panel is the only thing in view). */
+  isActiveTurn?: boolean
   showCommanderDamage: boolean
   /** Every source that's dealt this seat commander damage — a dot pill per entry (see the file
    *  doc comment). Your own card includes every opponent even at 0 (a click target to start
@@ -266,6 +271,7 @@ function SeatOverlay({
   scooped,
   commanders,
   isSelf,
+  isActiveTurn = false,
   showCommanderDamage,
   commanderSources = [],
   soloCommanderDamage,
@@ -329,6 +335,14 @@ function SeatOverlay({
         ))
 
   return (
+    <div className="playtest__seat-overlay-wrap">
+    {/* A sibling of the card, not a child — the card's own overflow: hidden (needed to clip the
+        commander portrait's square corners to its rounded ones) would otherwise clip this right
+        off before it ever bled past the edge. Rendered BEFORE the card (not after), so the card's
+        own opaque background paints over the part of this that would otherwise overlap it — the
+        visible sliver reads as the glow emerging from underneath the card, not sitting in front
+        of/beside it. */}
+    {isActiveTurn && <span className="playtest__seat-overlay-turn-glow" aria-hidden="true" />}
     <div
       ref={cardRef}
       className={`playtest__seat-overlay ${isSelf ? 'is-self' : ''} ${eliminated ? 'is-eliminated' : ''}`}
@@ -429,6 +443,7 @@ function SeatOverlay({
         )}
       </div>
       {hovered && changeLog.length > 0 && cardRef.current && <ChangeLogPopover anchor={cardRef.current} entries={changeLog} />}
+    </div>
     </div>
   )
 }

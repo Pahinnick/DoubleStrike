@@ -929,6 +929,49 @@
   padding: 1.25rem 0 0.25rem;
 }
 
+/* A hand too wide for the screen used to just run off both edges with no way to reach the rest —
+   PlaytestView detects that overflow (comparing scrollWidth/clientWidth) and adds this class, at
+   which point the row becomes horizontally scrollable. Deliberately NOT the row's permanent
+   state: .playtest__hand's own pointer-events: none is load-bearing (see its comment) so clicks
+   in the empty space around a normal, non-overflowing hand still pass through to the battlefield
+   underneath — turning that on unconditionally would swallow those clicks even when there's nothing
+   to scroll to. An overflowing hand trades that click-through (for this row's own width band only)
+   for actually being able to reach every card, which only matters once it's already this full. */
+.playtest__hand-cards.is-overflowing {
+  /* flex-start, not center: a centered flex row that overflows makes the overflow on the *start*
+     side permanently unreachable by scrolling in most engines (a longstanding flexbox-centering
+     quirk — `justify-content: safe center` is spec'd to fix exactly this, but proved unreliable
+     in practice here), so this switches to a plain left-to-right scrollable row — a normal
+     `scrollLeft` of 0 through `scrollWidth - clientWidth` — the moment it's actually overflowing. */
+  justify-content: flex-start;
+  /* Extra top padding (vs. the 1.25rem above) so the hover-lift below (translateY(-36px), plus its
+     scale growing upward from the bottom-anchored transform-origin) never pokes past this box's
+     own top edge — needed now that overflow-x forces overflow-y to compute as `auto` too (CSS
+     Overflow's "one axis scrollable → the other can't stay `visible`" rule), which would otherwise
+     clip that lift instead of just letting it be. */
+  padding-top: 3.25rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  pointer-events: auto;
+  scrollbar-width: thin;
+}
+
+/* A visible-but-unobtrusive dark scrollbar makes the now-scrollable row discoverable instead of
+   looking like the off-screen cards are simply gone. Chromium-specific (scrollbar-width above is
+   Firefox's equivalent). */
+.playtest__hand-cards.is-overflowing::-webkit-scrollbar {
+  height: 8px;
+}
+
+.playtest__hand-cards.is-overflowing::-webkit-scrollbar-thumb {
+  background: var(--border-subtle);
+  border-radius: 999px;
+}
+
+.playtest__hand-cards.is-overflowing::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 /* Fanned, overlapping hand: each card pivots about its bottom edge (the fan
    angle/lift come from inline CSS vars set per index in PlaytestView). */
 .playtest__hand-card {
@@ -1201,6 +1244,122 @@
   box-shadow: none;
 }
 
+/* Positions + counter-scales BOTH the name label and the hand-size fan below it as one unit (see
+   PlaytestView's per-seat Fragment) — above a top-row seat, below a bottom-row one (see
+   onScreenTopHalf), so a glance at the whole table shows whose section is whose and how big their
+   hand is, without needing to check the fixed player-panel sidebar. Pans/zooms with the table like
+   the quadrant frame it belongs to, but sits fully outside the play area itself so it never
+   overlaps cards the way the old table-anchored stat cluster used to (see SeatOverlay's own file
+   doc for that history) — this is identity/hand-size only, not the full stats readout that was. */
+.playtest__seat-label-stack {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+  pointer-events: none;
+}
+
+.playtest__seat-label {
+  padding: 0.2rem 0.7rem;
+  border-radius: 999px;
+  background: rgba(10, 10, 14, 0.65);
+  border: 1px solid var(--seat-color, var(--border-subtle));
+  color: var(--text-primary, #fff);
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Same gold "whose turn" cue as .playtest__quadrant.is-active-turn, applied to the label too so
+   it's readable without hunting for the quadrant border across a zoomed-out table. */
+.playtest__seat-label.is-active-turn {
+  border-color: #d9a92e;
+  color: #d9a92e;
+  animation: playtest-turn-glow 1.8s ease-in-out infinite;
+}
+
+.playtest__seat-label.is-eliminated {
+  border-color: var(--border-subtle);
+  color: var(--text-dim);
+  opacity: 0.7;
+}
+
+/* A fanned stack of card-backs plus a numeric count, just under a seat's name label — see
+   HandCardFan. Purely decorative/informational (role="img" on the wrapper carries the actual
+   accessible count), so pointer-events stay off the same way the quadrant frame's do. */
+.playtest__hand-fan-mini {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  pointer-events: none;
+}
+
+.playtest__hand-fan-mini-cards {
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  /* Room for the end cards' rotation to swing upward without clipping against this row's own
+     box — taller than a single card (see .playtest__hand-fan-mini-card's height). */
+  padding-top: 10px;
+}
+
+/* Each card gets its own place in the row (negative margin overlap), rotated about its own
+   bottom-center — same technique as the real hand fan (.playtest__hand-card), just smaller —
+   rather than every card sharing one pivot point, which used to read as a tight, hard-to-count
+   closed stack instead of a genuinely spread-out fan. */
+.playtest__hand-fan-mini-card {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 36px;
+  margin-left: -15px;
+  border-radius: 3px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+  transform: rotate(var(--fan-angle, 0deg));
+  transform-origin: bottom center;
+}
+
+.playtest__hand-fan-mini-card:first-child {
+  margin-left: 0;
+}
+
+/* A genuinely large hand (see HandCardFan's MANY_CARDS_THRESHOLD) swaps to this tight,
+   shared-pivot pile instead of the spread-out flex row above — the fan's original design, before
+   it became the wider spread — specifically so "a lot of cards" reads as a visibly different
+   shape at a glance, not just the same fan capped at a smaller number. Needs its own
+   position:relative + fixed box since every card below becomes position:absolute, sharing one
+   anchor point instead of each getting its own place in the flex flow. */
+.playtest__hand-fan-mini-cards.is-pile {
+  position: relative;
+  width: 16px;
+  height: 22px;
+  padding-top: 0;
+}
+
+.playtest__hand-fan-mini-card.is-piled {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 16px;
+  height: 22px;
+  margin-left: -8px;
+  border-radius: 2px;
+}
+
+.playtest__hand-fan-mini-count {
+  padding: 0.05rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(10, 10, 14, 0.65);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-primary, #fff);
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 /* Darkens/desaturates that whole quadrant's cards at a glance without blocking interaction with
    them (pointer-events: none — an eliminated player's board stays visible and playable, only
    their own turn is skipped from rotation, see PlaytestView's isEliminated). Rendered after every
@@ -1300,6 +1459,13 @@
    hidden clips the portrait's square corners to the card's own rounded ones on its side; the
    card's own padding moved onto .playtest__seat-main so the portrait can bleed flush to the
    edge instead of sitting inset. */
+/* Plain wrapper, no styling of its own — just gives .playtest__seat-overlay-turn-glow (a sibling,
+   not a child, of the card — see SeatOverlay.tsx) somewhere to anchor to and bleed out of, since
+   the card itself clips overflow (needed for the commander portrait's rounded corner). */
+.playtest__seat-overlay-wrap {
+  position: relative;
+}
+
 .playtest__seat-overlay {
   position: relative;
   display: flex;
@@ -1307,7 +1473,11 @@
   width: 316px;
   box-sizing: border-box;
   border-radius: 10px;
-  border: 1px solid var(--border-subtle);
+  /* Every seat's card gets a thin frame in that seat's own color (see podLayout's SEAT_COLORS,
+     set as --seat-color on each card — SeatOverlay.tsx) — the same at-a-glance "whose card is
+     whose" idea as the table-side seat labels/quadrant frames, just for the player panel. Falls
+     back to the plain neutral border only if --seat-color somehow isn't set. */
+  border: 1px solid var(--seat-color, var(--border-subtle));
   background-color: var(--bg-panel-raised);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
   overflow: hidden;
@@ -1472,9 +1642,38 @@
   background-color: var(--bg-panel);
 }
 
+/* Extra emphasis on top of the seat-color frame every card now has (see the base rule above) —
+   a thicker glowing ring so your own card still stands out from the rest at a glance. */
 .playtest__seat-overlay.is-self {
-  border-color: var(--seat-color, var(--accent));
   box-shadow: 0 0 0 1px var(--seat-color, var(--accent)), 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
+/* Whose turn it is, player-panel edition (see the table-side .playtest__quadrant.is-active-turn/
+   .playtest__seat-label.is-active-turn for the same cue elsewhere) — a small flashing yellow
+   gradient, easy to catch in peripheral vision without reading any text. Rendered behind the card
+   (see SeatOverlay.tsx's render order) and wider than what actually bleeds past its right edge, so
+   most of it sits hidden under the card's own opaque background — only the rightmost sliver
+   escapes, reading as the glow emerging from underneath the card rather than floating beside it. */
+.playtest__seat-overlay-turn-glow {
+  position: absolute;
+  top: 0;
+  right: -18px;
+  width: 44px;
+  height: 100%;
+  border-radius: 0 10px 10px 0;
+  background: linear-gradient(to right, rgba(255, 214, 51, 0.85), rgba(255, 214, 51, 0));
+  pointer-events: none;
+  animation: playtest-seat-turn-flash 1.1s ease-in-out infinite;
+}
+
+@keyframes playtest-seat-turn-flash {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 /* Life <= 0: the whole row dims (life/poison/commander-damage chips stay legible — just

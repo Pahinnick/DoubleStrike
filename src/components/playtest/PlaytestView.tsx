@@ -37,6 +37,7 @@ import type { Deck, FoilKind } from '../../state/types'
 import { isFlippableSnapshot } from '../../storage/cardCache'
 import { getSoloGameSave, saveSoloGameSave } from '../../storage/soloGameStorage'
 import { isPlaytestWindow, openDedicatedPlaytestWindow, requestSwitchToInlineAndClose } from '../../utils/playtestWindowBridge'
+import { consumeAutoOpenMultiplayerRequest } from '../../utils/multiplayerEntryBridge'
 import { playCue, setSessionMuted } from '../../utils/sound'
 import ActionsTray, { type TrayAction } from './ActionsTray'
 import BattlefieldEmberAura from './BattlefieldEmberAura'
@@ -51,6 +52,7 @@ import ConfirmModal from '../shared/ConfirmModal'
 import { useTutorialContext } from '../shared/TutorialContext'
 import { COUNTER_COLORS, counterPileLabel, counterPileName, formatPtCounters, KEYWORD_COUNTERS } from './counterFormat'
 import CounterPileStack from './CounterPileStack'
+import HandCardFan from './HandCardFan'
 import DeckManagerModal from '../deck/DeckManagerModal'
 import DeckScanTray from './DeckScanTray'
 import TurnOrderTray from './TurnOrderTray'
@@ -113,12 +115,13 @@ const CARD_H_PX = 126
 // The battlefield is a fixed-size virtual surface that the viewport pans/zooms
 // over, rather than a viewport-sized area — see playtest backlog item #5 in
 // HANDOFF.md. Card x/y are canvas-space pixels, not percentages. Sized so cards
-// (~90px) aren't lost in dead space; a 2×2 pod tiles this into a 2688×1792 table.
-// ~20% smaller than the original 1680×1120 per user feedback ("the playing space
-// is a little too big").
-const CANVAS_W = 1344
-const CANVAS_H = 896
-// Low enough that the whole 2688×1792 pod table fits the viewport ("see everyone
+// (~90px) aren't lost in dead space; a 2×2 pod tiles this into a 2160×1440 table.
+// Originally 1680×1120, cut ~20% to 1344×896 per user feedback ("the playing
+// space is a little too big"), then another ~20% to this — an experiment in
+// how a noticeably tighter board feels, not yet settled as final.
+const CANVAS_W = 1080
+const CANVAS_H = 720
+// Low enough that the whole 2160×1440 pod table fits the viewport ("see everyone
 // at once"); harmless in solo, it just permits zooming further out.
 const ZOOM_MIN = 0.12
 const ZOOM_MAX = 2
@@ -359,12 +362,19 @@ function PlaytestView({ onClose }: Props) {
     (reactorId, _name, emoji) => addReaction(reactorId, emoji),
   )
   const [mpModalOpen, setMpModalOpen] = useState(false)
+  // Honors the deck-editor header's "Multiplayer" button (see multiplayerEntryBridge) — jumps
+  // straight to this modal on mount instead of requiring "Playtest" and "Multiplayer" as two
+  // separate clicks. Runs once per mount, which is exactly once per "entered Playtest" — never
+  // re-fires on e.g. a later solo-autosave resume within the same still-mounted session.
+  useEffect(() => {
+    if (consumeAutoOpenMultiplayerRequest()) setMpModalOpen(true)
+  }, [])
   // The persisted per-profile volume (Settings page) applies globally via useProfileSettings'
   // own effect — this is just a session-local quick-mute on top of it (the topbar 🔊 button)
   // that deliberately does NOT persist: muting for one distracting game shouldn't silently
   // change the permanent volume preference. Cleanup un-mutes on exit so leaving Playtest can't
   // leave sound.ts stuck muted for the search/deck-list screens.
-  const { goldfishStatsDefault } = useProfileSettings()
+  const { goldfishStatsDefault, handDrawSide } = useProfileSettings()
   const [muted, setMuted] = useState(false)
   useEffect(() => {
     setSessionMuted(muted)
@@ -448,18 +458,19 @@ function PlaytestView({ onClose }: Props) {
     if (mpActive) broadcastRadio(next)
   }
 
-  // Autosave solo progress only — a pod session deliberately isn't resumable (same
-  // reconnect/host-migration problem already cut from this project's scope, see
-  // multiplayer-vtt-spike memory), so this effect goes silent the moment inPod flips true and
-  // simply leaves the last-saved-while-solo snapshot alone until the pod is left again. Mirrors
-  // the broadcast effect's debounce-on-every-settled-change shape above.
+  // Autosave this deck's own board — your own cards/life/etc., never anyone else's — regardless
+  // of solo vs. pod: only the *room membership itself* (reconnect/host-migration) is still out of
+  // scope (see multiplayer-vtt-spike memory), not your own board's continuity. So getting
+  // disconnected from a pod (or just closing the app mid-game) and later rejoining the same room
+  // resumes your side of the table exactly where you left it, the same way a plain solo relaunch
+  // already did — you just have to type the room code again; nothing about the connection itself
+  // is remembered. Mirrors the broadcast effect's debounce-on-every-settled-change shape above.
   useEffect(() => {
-    if (inPod) return
     const handle = window.setTimeout(() => {
       saveSoloGameSave(deck.id, { state, deckUpdatedAt: deck.updatedAt })
     }, SOLO_AUTOSAVE_DEBOUNCE_MS)
     return () => window.clearTimeout(handle)
-  }, [state, inPod, deck.id, deck.updatedAt])
+  }, [state, deck.id, deck.updatedAt])
 
   /** The window-mode toggle's click handler — seamlessly hands the live game off to the other
    *  window instead of just flipping the preference for next time. Flushes the current board
@@ -538,7 +549,10 @@ function PlaytestView({ onClose }: Props) {
     setTurnAnnouncement({ seat: syncedActiveSeat, key: crypto.randomUUID() })
     if (turnAnnounceTimeoutRef.current) window.clearTimeout(turnAnnounceTimeoutRef.current)
     turnAnnounceTimeoutRef.current = window.setTimeout(() => setTurnAnnouncement(null), TURN_ANNOUNCE_TTL_MS)
-  }, [inPod, syncedActiveSeat])
+    // A distinct cue for "it's YOUR turn now" vs. just "the turn moved on" — the former is meant
+    // to actually grab your attention if you've looked away, the latter is only ambient feedback.
+    playCue(syncedActiveSeat === mySeatResolved ? 'your-turn' : 'turn-passed')
+  }, [inPod, syncedActiveSeat, mySeatResolved])
   useEffect(() => {
     return () => {
       if (turnAnnounceTimeoutRef.current) window.clearTimeout(turnAnnounceTimeoutRef.current)
@@ -678,7 +692,13 @@ function PlaytestView({ onClose }: Props) {
   const viewportRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
   const particlesRef = useRef<BattlefieldParticlesHandle>(null)
-  const panState = useRef<{ startX: number; startY: number; camera: Camera } | null>(null)
+  // Last raw mouse position seen during an active drag-pan, NOT a snapshot of camera itself (see
+  // handleCanvasMouseDown's onMove) — panning applies each move's incremental delta on top of
+  // whatever the current camera happens to be via a functional setCamera update, rather than
+  // recomputing from a fixed "camera as of mousedown" baseline. A fixed baseline used to mean any
+  // OTHER camera change landing mid-drag (a center-on-seat, a hotkey, anything) got silently
+  // stomped by the next mousemove snapping back to start-camera-plus-delta, discarding it.
+  const panState = useRef<{ lastX: number; lastY: number } | null>(null)
   // Latest camera, readable synchronously (animation start point, gesture cancel).
   const cameraRef = useRef(camera)
   cameraRef.current = camera
@@ -782,10 +802,12 @@ function PlaytestView({ onClose }: Props) {
       setSelectedIds(new Set())
       centerCamera()
     }
-    // Resume a solo autosave for this deck, if one exists and the decklist hasn't changed since
-    // it was saved (see SoloGameSave.deckUpdatedAt) — replaces whatever fresh/switched-to state
-    // was just set above. Never gated on inPod here: this only ever runs at mount or right after
-    // a deck switch, both always solo (a pod is only ever entered afterward, by explicit choice).
+    // Resume this deck's autosaved board, if one exists and the decklist hasn't changed since it
+    // was saved (see SoloGameSave.deckUpdatedAt) — replaces whatever fresh/switched-to state was
+    // just set above. Whatever the save happened to be mid-pod or solo makes no difference here:
+    // it's still just "this deck's board, last as you left it" — never gated on inPod because
+    // this only ever runs at mount or right after a deck switch, before a pod (if any) is
+    // rejoined by explicit choice (see the autosave effect above for what actually gets saved).
     const attempt = ++resumeAttemptRef.current
     getSoloGameSave(deck.id).then((saved) => {
       if (resumeAttemptRef.current !== attempt || !saved || saved.deckUpdatedAt !== deck.updatedAt) return
@@ -1050,6 +1072,23 @@ function PlaytestView({ onClose }: Props) {
   const peekedLibraryCards = library.filter((c) => peekedLibraryIds.includes(c.instanceId))
   const hand = zoneCards(state, 'hand')
   const battlefield = zoneCards(state, 'battlefield')
+  // Whether the hand fan is too wide for its row to show every card at once — see
+  // .playtest__hand-cards.is-overflowing's doc for why this is a class toggle rather than a
+  // permanently-scrollable row. Rechecked whenever the hand's own size changes (a card
+  // played/drawn/discarded) and on window resize, since either can flip it either way.
+  const handRowRef = useRef<HTMLDivElement>(null)
+  const [handOverflowing, setHandOverflowing] = useState(false)
+  useEffect(() => {
+    const el = handRowRef.current
+    if (!el) return
+    function checkOverflow() {
+      // +1px fuzz: subpixel layout rounding can make an exactly-fitting row compare as "1px over."
+      setHandOverflowing(el!.scrollWidth > el!.clientWidth + 1)
+    }
+    checkOverflow()
+    window.addEventListener('resize', checkOverflow)
+    return () => window.removeEventListener('resize', checkOverflow)
+  }, [hand.length])
   const battlefieldIdsKey = battlefield.map((c) => c.instanceId).join(',')
 
   // Goldfish practice stat: how many cards of a category (lands, or one of the deck's own
@@ -1257,7 +1296,7 @@ function PlaytestView({ onClose }: Props) {
   }
 
   function handleDraw() {
-    dispatch({ type: 'DRAW' })
+    dispatch({ type: 'DRAW', toSide: handDrawSide })
     playCue('draw')
   }
 
@@ -1851,12 +1890,18 @@ function PlaytestView({ onClose }: Props) {
       return
     }
 
-    panState.current = { startX: event.clientX, startY: event.clientY, camera }
+    panState.current = { lastX: event.clientX, lastY: event.clientY }
 
     function onMove(moveEvent: globalThis.MouseEvent) {
       const start = panState.current
       if (!start) return
-      setCamera({ ...start.camera, x: start.camera.x + (moveEvent.clientX - start.startX), y: start.camera.y + (moveEvent.clientY - start.startY) })
+      const dx = moveEvent.clientX - start.lastX
+      const dy = moveEvent.clientY - start.lastY
+      start.lastX = moveEvent.clientX
+      start.lastY = moveEvent.clientY
+      // Functional update (not the `camera` closed over above) so this always builds on the
+      // latest camera, never a stale snapshot from whenever the drag started — see panState's doc.
+      setCamera((prev) => ({ ...prev, x: prev.x + dx, y: prev.y + dy }))
     }
     function onUp() {
       panState.current = null
@@ -2248,7 +2293,7 @@ function PlaytestView({ onClose }: Props) {
             {spinSeat !== null ? 'Spinning…' : 'Who Goes First?'}
           </button>
         ) : (
-          <button type="button" onClick={() => dispatch({ type: 'NEXT_TURN' })}>
+          <button type="button" onClick={() => dispatch({ type: 'NEXT_TURN', toSide: handDrawSide })}>
             Next Turn
           </button>
         )}
@@ -2327,20 +2372,22 @@ function PlaytestView({ onClose }: Props) {
           </button>
         )}
         <div className="playtest__spacer" />
-        <button
-          type="button"
-          onClick={handleToggleWindowMode}
-          disabled={inPod}
-          title={
-            inPod
-              ? "Can't switch how Playtest opens while connected to a multiplayer pod — leaving now would disconnect you."
-              : playtestWindowMode === 'window'
+        {/* Hidden (not just disabled) while connected to a pod — switching would currently drop
+            the connection (see handleToggleWindowMode's doc), and a control that's always visible
+            but usually unclickable read as broken rather than situational. */}
+        {!inPod && (
+          <button
+            type="button"
+            onClick={handleToggleWindowMode}
+            title={
+              playtestWindowMode === 'window'
                 ? 'Playtest opens in its own window — good for multiple monitors. Click to pop this game inline into this window instead.'
                 : 'Playtest opens inline in this window — good for a single monitor. Click to pop this game out into its own window instead.'
-          }
-        >
-          {playtestWindowMode === 'window' ? '🪟 Own Window' : '🖥️ Inline'}
-        </button>
+            }
+          >
+            {playtestWindowMode === 'window' ? '🪟 Own Window' : '🖥️ Inline'}
+          </button>
+        )}
         <button
           type="button"
           onClick={() => {
@@ -2463,17 +2510,62 @@ function PlaytestView({ onClose }: Props) {
               }
               return null
             })}
-            {/* Seat quadrant frames (own seat highlighted). Non-interactive backdrop. */}
+            {/* Seat quadrant frames (own seat highlighted), plus each seat's name centered just
+                outside its own quadrant — an at-a-glance "whose section is whose, and whose turn
+                is it" read directly on the table, instead of needing to cross-reference the
+                fixed player-panel sidebar. Both non-interactive backdrop. */}
             {inPod &&
               ALL_SEATS.map((seat) => {
                 const seatOrig = seatOrigin(seat, CANVAS_W, CANVAS_H)
                 const o = mirror(seatOrig.x, seatOrig.y, CANVAS_W, CANVAS_H)
+                // Whichever half of the SCREEN this quadrant renders in — mirror() above already
+                // flips a top-row viewer's own 180° rotation, so checking the post-mirror `o.y`
+                // (not the seat's canonical SEAT_GRID row) is what keeps the label outside the
+                // table's actual visible edge for every viewer, not just an unrotated one.
+                const onScreenTopHalf = o.y === 0
+                const badgeClass = `${seat === activeSeat ? 'is-active-turn' : ''} ${isEliminated(seat) ? 'is-eliminated' : ''}`
+                // Counter-scales the label against the surface's own `scale(camera.zoom)` (see
+                // that transform a bit below) so it reads as a roughly constant on-screen size
+                // instead of shrinking into illegibility right when zooming out to see the whole
+                // table is exactly when you'd want it most. Floored at 1 (never shrinks below its
+                // authored size zoomed in) and capped at 3 (never balloons past that zoomed way
+                // out, past ZOOM_MIN) — transform-origin below is chosen to exactly match the
+                // translate() anchor point (the corner touching the table edge) so this scaling
+                // can't drift that point regardless of the factor.
+                const labelScale = Math.min(3, Math.max(1, 1 / camera.zoom))
+                const handCount = seat === mySeatResolved ? hand.length : (opponentBoards.find((b) => b.seat === seat)?.handCount ?? 0)
                 return (
-                  <div
-                    key={`frame-${seat}`}
-                    className={`playtest__quadrant ${seat === mySeatResolved ? 'is-self' : ''} ${seat === activeSeat ? 'is-active-turn' : ''} ${isEliminated(seat) ? 'is-eliminated' : ''}`}
-                    style={{ left: o.x, top: o.y, width: CANVAS_W, height: CANVAS_H, '--seat-color': SEAT_COLORS[seat] } as CSSProperties}
-                  />
+                  <Fragment key={`frame-${seat}`}>
+                    <div
+                      className={`playtest__quadrant ${seat === mySeatResolved ? 'is-self' : ''} ${badgeClass}`}
+                      style={{ left: o.x, top: o.y, width: CANVAS_W, height: CANVAS_H, '--seat-color': SEAT_COLORS[seat] } as CSSProperties}
+                    />
+                    {/* One anchor+scale wrapper per seat holding both the name label and the
+                        hand-size fan (see HandCardFan) below it, so the two never need to agree
+                        on a pixel gap between two independently-positioned elements — plain flex
+                        stacking inside one already handles that. Growth direction (translate/
+                        transform-origin) is identical to the label's own before this wrapper
+                        existed; DOM order [label, fan] then reads as "fan below the name" for a
+                        bottom-row seat (grows downward, away from the table) and "fan just above
+                        the table, name further out" for a top-row one (grows upward) — either
+                        way the fan ends up the closer-to-the-table of the two, never over it. */}
+                    <div
+                      className="playtest__seat-label-stack"
+                      style={
+                        {
+                          left: o.x + CANVAS_W / 2,
+                          top: onScreenTopHalf ? o.y : o.y + CANVAS_H,
+                          transform: `translate(-50%, ${onScreenTopHalf ? '-100%' : '0'}) scale(${labelScale})`,
+                          transformOrigin: onScreenTopHalf ? '50% 100%' : '50% 0%',
+                        } as CSSProperties
+                      }
+                    >
+                      <div className={`playtest__seat-label ${badgeClass}`} style={{ '--seat-color': SEAT_COLORS[seat] } as CSSProperties}>
+                        {seatNameBySeat.get(seat) ?? 'Open'}
+                      </div>
+                      <HandCardFan count={handCount} />
+                    </div>
+                  </Fragment>
                 )
               })}
 
@@ -2500,6 +2592,12 @@ function PlaytestView({ onClose }: Props) {
                   <div
                     key={`${board.playerId}-${pc.instanceId}`}
                     className={`playtest__battlefield-card ${foreign ? 'is-foreign' : ''} ${highlightedIds.has(pc.instanceId) ? 'is-highlighted' : ''}`}
+                    // Empty (not omitted): without SOME title here, hovering a card with a
+                    // stationary cursor falls through to .playtest__battlefield-surface's own
+                    // "Alt+click to ping/right-click to create a token" tooltip — a native
+                    // browser title-attribute lookup walks up to the nearest ancestor that HAS
+                    // one, and misleadingly implies those empty-canvas gestures apply here too.
+                    title=""
                     style={{
                       left: pos.x,
                       top: pos.y,
@@ -2582,6 +2680,10 @@ function PlaytestView({ onClose }: Props) {
               <div
                 key={gameCard.instanceId}
                 className={`playtest__battlefield-card ${foreign ? 'is-foreign' : ''} ${highlightedIds.has(gameCard.instanceId) ? 'is-highlighted' : ''} ${counterDropTargetId === gameCard.instanceId ? 'is-counter-drop-target' : ''}`}
+                // See the opponent-card loop's matching title="" a bit above — same fix, same
+                // reason: without it, this card's own tooltip is the battlefield surface's
+                // "Alt+click to ping/right-click to create a token" hint, which doesn't apply here.
+                title=""
                 style={{
                   left: pos.x,
                   top: pos.y,
@@ -2705,6 +2807,7 @@ function PlaytestView({ onClose }: Props) {
               life={state.life}
               startingLife={state.startingLife}
               scooped={state.scooped}
+              isActiveTurn={inPod && activeSeat === mySeatResolved}
               commanderSources={
                 inPod
                   ? opponentBoards.map((b) => ({
@@ -2754,6 +2857,7 @@ function PlaytestView({ onClose }: Props) {
                   life={board.life}
                   startingLife={board.startingLife}
                   scooped={board.scooped}
+                  isActiveTurn={activeSeat === board.seat}
                   commanderSources={Object.entries(board.commanderDamage).map(([seatKey, damage]) => {
                     const srcSeat = Number(seatKey) as Seat
                     return { seat: srcSeat, name: seatNameBySeat.get(srcSeat) ?? `Seat ${srcSeat + 1}`, damage: damage ?? 0 }
@@ -3010,7 +3114,7 @@ function PlaytestView({ onClose }: Props) {
         }}
       >
         <span className="playtest__hand-label">Hand ({hand.length})</span>
-        <div className="playtest__hand-cards">
+        <div ref={handRowRef} className={`playtest__hand-cards ${handOverflowing ? 'is-overflowing' : ''}`}>
           {hand.map((gameCard, i) => {
             // Fan the cards around the row's center: rotate about each card's
             // bottom edge so the tops spread out and the bottoms stay together,

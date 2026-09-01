@@ -2,7 +2,7 @@
 // download/bundle). Deliberately quiet and short; muted by default is NOT the goal here,
 // but any failure to play must never be fatal to the actual game action it accompanies.
 
-export type SoundCue = 'draw' | 'life-up' | 'life-down' | 'play-card' | 'hover' | 'shuffle' | 'board-tap'
+export type SoundCue = 'draw' | 'life-up' | 'life-down' | 'play-card' | 'hover' | 'shuffle' | 'board-tap' | 'your-turn' | 'turn-passed'
 
 const BASE_VOLUME = 0.05
 
@@ -133,6 +133,17 @@ const CUES: Record<SoundCue, () => void> = {
   },
   // Left-clicking empty battlefield — a finger tapping the table.
   'board-tap': () => thump(85, 0.09),
+  // Turn passed to YOU specifically — deliberately the more attention-grabbing of the two (an
+  // upward two-note chime, brighter tone) since this is the one cue in the whole app that means
+  // "stop and look, it's your move now," not just an ambient confirmation of something you did.
+  'your-turn': () => {
+    tone(660, 0, 0.09, 'triangle')
+    tone(990, 0.09, 0.12, 'triangle')
+  },
+  // Turn passed to someone else — a single short, plain, lower-pitched tone (vs. your-turn's
+  // brighter ascending pair) so the two are never confused for one another: this one just means
+  // "the turn moved on," not "act now."
+  'turn-passed': () => tone(420, 0, 0.07, 'sine'),
 }
 
 export function playCue(cue: SoundCue): void {

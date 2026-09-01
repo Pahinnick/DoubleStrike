@@ -55,21 +55,47 @@
 
 .app-main {
   display: grid;
-  grid-template-columns: minmax(260px, 1.1fr) minmax(320px, 1.5fr) minmax(210px, 0.8fr);
+  /* Actual column widths (search/resizer/deck/resizer/stats) are set inline from App.tsx —
+     driven by usePanelWidth's persisted, user-dragged values (see PanelResizer) rather than the
+     fixed fr-based split this used to be. */
   overflow: hidden;
   transition: grid-template-columns 0.15s ease;
 }
 
-.app-main.search-collapsed {
-  grid-template-columns: 44px minmax(320px, 1.8fr) minmax(210px, 0.8fr);
+.app-main.is-resizing-panel {
+  /* An active drag delivers a new width on every pointer move — transitioning each one would
+     read as laggy rubber-banding instead of tracking the cursor directly (see PanelResizer's
+     onDragStart/onDragEnd doc). */
+  transition: none;
 }
 
-.app-main.stats-collapsed {
-  grid-template-columns: minmax(260px, 1.1fr) minmax(320px, 1.8fr) 44px;
+.app-panel-resizer {
+  position: relative;
+  cursor: col-resize;
+  touch-action: none;
 }
 
-.app-main.search-collapsed.stats-collapsed {
-  grid-template-columns: 44px minmax(320px, 2.1fr) 44px;
+.app-panel-resizer[aria-disabled='true'] {
+  cursor: default;
+  pointer-events: none;
+}
+
+.app-panel-resizer__grip {
+  position: absolute;
+  inset: 0;
+  margin: 0 auto;
+  width: 2px;
+  background-color: var(--border-subtle);
+}
+
+.app-panel-resizer:hover .app-panel-resizer__grip,
+.app-panel-resizer:focus-visible .app-panel-resizer__grip {
+  width: 3px;
+  background-color: var(--accent);
+}
+
+.app-panel-resizer:focus-visible {
+  outline: none;
 }
 
 .app-pane {
@@ -91,15 +117,17 @@
 }
 
 @media (max-width: 900px) {
-  .app-main,
-  .app-main.search-collapsed,
-  .app-main.stats-collapsed,
-  .app-main.search-collapsed.stats-collapsed {
-    grid-template-columns: 1fr;
+  /* !important: App.tsx sets grid-template-columns inline (the user's dragged panel widths —
+     see PanelResizer), which would otherwise win over this stacked single-column layout. */
+  .app-main {
+    grid-template-columns: 1fr !important;
   }
   .app-pane {
     border-right: none;
     border-bottom: 1px solid var(--border-subtle);
+  }
+  .app-panel-resizer {
+    display: none;
   }
 }
 

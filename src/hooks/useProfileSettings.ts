@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import type { HandDrawSide } from '../state/gameReducer'
 import { useProfiles } from '../state/ProfileContext'
 import { setSoundVolume as applySoundVolume } from '../utils/sound'
 import { isTheme, LEGACY_THEME_KEY, type Theme } from './useTheme'
@@ -10,6 +11,7 @@ export type ResolvedSettings = {
   hoverPreviewMode: HoverPreviewMode
   soundVolume: number
   goldfishStatsDefault: boolean
+  handDrawSide: HandDrawSide
 }
 
 /** Resolves the active profile's settings (with defaults for anything unset), applies the theme
@@ -46,6 +48,7 @@ export function useProfileSettings() {
   const hoverPreviewMode: HoverPreviewMode = stored?.hoverPreviewMode ?? 'always'
   const soundVolume = stored?.soundVolume ?? 1
   const goldfishStatsDefault = stored?.goldfishStatsDefault ?? false
+  const handDrawSide: HandDrawSide = stored?.handDrawSide === 'right' ? 'right' : 'left'
 
   // Global, not Playtest-specific — UI sound cues (playCue) fire from the search/deck-list views
   // too, so this needs to apply regardless of which screen is showing. AppShell keeps this
@@ -59,9 +62,11 @@ export function useProfileSettings() {
     hoverPreviewMode,
     soundVolume,
     goldfishStatsDefault,
+    handDrawSide,
     setTheme: (next: Theme) => updateSettings({ theme: next }),
     setHoverPreviewMode: (next: HoverPreviewMode) => updateSettings({ hoverPreviewMode: next }),
     setSoundVolume: (next: number) => updateSettings({ soundVolume: next }),
     setGoldfishStatsDefault: (next: boolean) => updateSettings({ goldfishStatsDefault: next }),
+    setHandDrawSide: (next: HandDrawSide) => updateSettings({ handDrawSide: next }),
   }
 }

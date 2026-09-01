@@ -5,6 +5,12 @@ import type { Deck } from './types'
 
 export type GameZone = 'library' | 'hand' | 'battlefield' | 'graveyard' | 'exile' | 'command'
 
+/** Which side of the hand fan a freshly-drawn card lands on — a persisted per-profile preference
+ *  (see useProfileSettings' handDrawSide), threaded through at dispatch time rather than snapshot
+ *  into GameState, so changing it takes effect on the very next draw instead of only the next new
+ *  game. Left (the original, default behavior) prepends; right appends — see drawCards. */
+export type HandDrawSide = 'left' | 'right'
+
 export type GameCard = {
   instanceId: string
   scryfallId: string
@@ -93,7 +99,7 @@ export type GameAction =
       cards: Pick<GameCard, 'instanceId' | 'scryfallId' | 'zone' | 'isCommander' | 'commanderTax'>[]
       startingLife: number
     }
-  | { type: 'DRAW'; count?: number }
+  | { type: 'DRAW'; count?: number; toSide?: HandDrawSide }
   /** Caller shuffles hand+library together and passes the new library order (a permutation of those instanceIds). */
   | { type: 'MULLIGAN'; shuffledOrder: string[] }
   /** Reshuffles just the library — used after searching it (a tutor effect), since real Magic requires
@@ -146,7 +152,7 @@ export type GameAction =
   /** Commander tax paid so far for one commander — clamped at 0, tracked regardless of the
    *  card's current zone (unlike the counter piles above, which are battlefield-only). */
   | { type: 'ADJUST_COMMANDER_TAX'; instanceId: string; delta: number }
-  | { type: 'NEXT_TURN' }
+  | { type: 'NEXT_TURN'; toSide?: HandDrawSide }
   /** Removes a card entirely — used by the giver once a card is handed to another player. */
   | { type: 'REMOVE_CARD'; instanceId: string }
   /** Adds a card handed over by another player onto our battlefield (we're now its controller). */
@@ -185,12 +191,13 @@ export function zoneCards(state: GameState, zone: GameZone): GameCard[] {
   return state.cards.filter((c) => c.zone === zone)
 }
 
-function drawCards(cards: GameCard[], count: number): GameCard[] {
+function drawCards(cards: GameCard[], count: number, toSide: HandDrawSide = 'left'): GameCard[] {
   // Library order is array order, so "the top N" are simply the first N
-  // library-zone cards encountered. Pulled out and re-prepended (rather than left in place,
-  // which used to strand a newly drawn card wherever its original deck-list position happened
-  // to fall relative to the rest of the hand) so a draw always lands in the leftmost hand slot
-  // — array order is render order for the hand fan (see PlaytestView's `hand.map`).
+  // library-zone cards encountered. Pulled out and re-inserted at one end (rather than left in
+  // place, which used to strand a newly drawn card wherever its original deck-list position
+  // happened to fall relative to the rest of the hand) so a draw always lands in the same hand
+  // slot every time — array order is render order for the hand fan (see PlaytestView's
+  // `hand.map`). Which end is `toSide` — see HandDrawSide's doc.
   let remaining = count
   const drawn: GameCard[] = []
   const rest: GameCard[] = []
@@ -202,7 +209,7 @@ function drawCards(cards: GameCard[], count: number): GameCard[] {
       rest.push(c)
     }
   }
-  return [...drawn, ...rest]
+  return toSide === 'right' ? [...rest, ...drawn] : [...drawn, ...rest]
 }
 
 function nonTokenCount(cards: GameCard[]): number {
@@ -251,7 +258,7 @@ function gameReducerInner(state: GameState, action: GameAction): GameState {
     }
 
     case 'DRAW':
-      return { ...state, cards: drawCards(state.cards, action.count ?? 1) }
+      return { ...state, cards: drawCards(state.cards, action.count ?? 1, action.toSide) }
 
     case 'MULLIGAN': {
       // London mulligan: always draw back up to a full opening hand — the shrinking is the
@@ -540,6 +547,7 @@ function gameReducerInner(state: GameState, action: GameAction): GameState {
         cards: drawCards(
           state.cards.map((c) => (c.zone === 'battlefield' && c.tapped ? { ...c, tapped: false } : c)),
           1,
+          action.toSide,
         ),
         // Real Magic: mana doesn't carry over between turns.
         floatingMana: zeroManaPool(),

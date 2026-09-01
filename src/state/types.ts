@@ -79,6 +79,9 @@ export type ProfileSettings = {
   /** Whether a fresh Playtest session starts with the goldfish practice panel already showing,
    *  instead of requiring the "Show Goldfish Stats" button every time. */
   goldfishStatsDefault?: boolean
+  /** Which side of the hand fan a freshly-drawn card lands on (Draw button, the automatic
+   *  once-per-turn draw) — 'left' (default) matches the app's original, only-ever behavior. */
+  handDrawSide?: 'left' | 'right'
 }
 
 export type Profile = {
