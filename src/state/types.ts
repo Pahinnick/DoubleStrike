@@ -55,6 +55,10 @@ export type DeckSummary = {
   format?: Format
   cardCount: number
   updatedAt: string
+  /** scryfallIds of every card flagged `isCommander`, in deck order — 0 for non-commander formats,
+   *  usually 1, or 2 for a partners/background pairing. Used by the deck manager list to show
+   *  commander art without loading the full deck. */
+  commanderIds: string[]
 }
 
 /** Per-profile app preferences (Settings page). Every field optional so older persisted

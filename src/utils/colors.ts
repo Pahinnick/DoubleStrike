@@ -21,6 +21,20 @@ export function zeroManaPool(): Record<ManaColorKey, number> {
   return { W: 0, U: 0, B: 0, R: 0, G: 0, C: 0 }
 }
 
+/** CSS `background` value for a hard-edged color-pip stripe — one solid band per color, in WUBRG
+ *  order, no blending between adjacent bands (unlike a normal gradient). An empty color list (a
+ *  colorless commander, or no commander at all) falls back to the colorless swatch as a single band. */
+export function colorStripeBackground(colors: readonly Color[]): string {
+  const bands: readonly ManaColorKey[] = colors.length > 0 ? colors : ['C']
+  if (bands.length === 1) return `var(--color-${bands[0].toLowerCase()})`
+  const step = 100 / bands.length
+  const stops = bands.flatMap((color, i) => {
+    const varName = `var(--color-${color.toLowerCase()})`
+    return [`${varName} ${i * step}%`, `${varName} ${(i + 1) * step}%`]
+  })
+  return `linear-gradient(90deg, ${stops.join(', ')})`
+}
+
 /** Reading order (bottom of a stacked bar to top), not draw order — see sortManaStack. */
 const MANA_STACK_ORDER: readonly ManaColorKey[] = [...WUBRG, 'C']
 

@@ -70,6 +70,19 @@ function toPublicPileCard(card: { instanceId: string; scryfallId: string; showBa
   return pub
 }
 
+/** Same as toPublicPileCard, but masks scryfallId behind FACE_DOWN_SCRYFALL_ID when the card is
+ *  currently face down — a commander card is otherwise shared regardless of zone (see
+ *  PublicBoard.commanders' doc), but a face-down permanent still deserves the same hidden-
+ *  identity treatment every other face-down battlefield card gets (see toPublicCard). */
+function toPublicCommander(card: { instanceId: string; scryfallId: string; showBackFace?: boolean; faceDown?: boolean }): PublicPileCard {
+  const pub: PublicPileCard = {
+    instanceId: card.instanceId,
+    scryfallId: card.faceDown ? FACE_DOWN_SCRYFALL_ID : card.scryfallId,
+  }
+  if (card.showBackFace !== undefined) pub.showBackFace = card.showBackFace
+  return pub
+}
+
 /** Strips zero-value colors — same sparse convention as counters/ptCounters — and returns
  *  undefined instead of an empty object once nothing's floating, so the field can be omitted
  *  from the wire payload entirely rather than sent as `{}`. */
@@ -112,6 +125,8 @@ export function toPublicBoard(state: GameState, identity: LocalIdentity): Public
     graveyard: zoneCards(state, 'graveyard').map(toPublicPileCard),
     exile: zoneCards(state, 'exile').map(toPublicPileCard),
     command: zoneCards(state, 'command').map(toPublicPileCard),
+    // Fixed commander identity, independent of current zone — see PublicBoard.commanders' doc.
+    commanders: state.cards.filter((c) => c.isCommander).map(toPublicCommander),
   }
   // Deliberate, opt-in exception to the hand's usual privacy — same masked-by-default pattern as
   // face-down cards, just inverted: only sent while the player has explicitly toggled it on.

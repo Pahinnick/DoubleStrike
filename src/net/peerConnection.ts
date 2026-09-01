@@ -16,6 +16,7 @@
  * of this lives in the renderer, so Electron needs no main-process changes.
  */
 import Peer, { type DataConnection } from 'peerjs'
+import type { DraftConfigPayload } from './draftProtocol'
 import {
   HOST_SEAT,
   MAX_PLAYERS,
@@ -79,6 +80,26 @@ export type PeerConnectionEvents = {
   /** The shared table radio's station changed (including relayed ones, and the host's replay
    *  of its cached value to a newly-joined guest). Null means it's off. */
   radio: (station: string | null) => void
+
+  // --- draft mode (see draftProtocol.ts) ----------------------------------
+  /** Who's seated where, for a pre-game draft lobby roster — see DraftRosterMessage. */
+  draftRoster: (roster: Partial<Record<Seat, string>>) => void
+  /** The chosen cube/pack settings, for the lobby display. */
+  draftConfig: (config: DraftConfigPayload) => void
+  /** Lobby -> drafting transition. */
+  draftStart: () => void
+  /** A pack we now hold — fresh deal or passed along by a neighbor's pick. */
+  draftPack: (pack: { packId: string; round: number; cards: string[] }) => void
+  /** Host only: a pick request from any seat (including our own, self-routed — see sendDraftPick). */
+  draftPickReceived: (pick: { fromPlayerId: string; packId: string; scryfallId: string }) => void
+  /** Our own pick got rejected (e.g. a stale double-click) — the pack we thought we held has moved on. */
+  draftPickRejected: (rejection: { packId: string; reason: string }) => void
+  /** Every pack in this round has been fully picked through. */
+  draftRoundComplete: (round: number) => void
+  /** The whole draft is done; move to deck-building. */
+  draftComplete: () => void
+  /** Sparse seat->pick-count map, for a "waiting on…" readout. */
+  draftProgress: (picksBySeat: Partial<Record<Seat, number>>) => void
 }
 
 type EventKey = keyof PeerConnectionEvents
@@ -90,9 +111,19 @@ type GuestRecord = {
   conn: DataConnection
   seat: Seat | null
   playerId?: string // learned from HELLO
+  name?: string // learned from HELLO — only needed for the draft lobby roster today
 }
 
 const MAX_ID_RETRIES = 5
+// PeerJS's 'disconnected' event means we lost the signaling-server (broker) socket — the thing
+// that introduces two peers to each other — NOT an already-established peer-to-peer data
+// connection, which is a separate RTCPeerConnection that survives this just fine. It used to be
+// treated as instantly fatal (booting the whole session on the first hiccup), even though the
+// broker's free public server drops idle sockets/has blips fairly routinely. Retry a few times
+// via peer.reconnect() first; only give up (see handleSignalingDisconnect) once that's failed
+// repeatedly, meaning something more serious is actually wrong.
+const MAX_RECONNECT_ATTEMPTS = 3
+const RECONNECT_RETRY_DELAY_MS = 1500
 
 export class PeerConnection {
   private readonly local: LocalPlayer
@@ -137,6 +168,15 @@ export class PeerConnection {
     reaction: new Set(),
     turnPass: new Set(),
     radio: new Set(),
+    draftRoster: new Set(),
+    draftConfig: new Set(),
+    draftStart: new Set(),
+    draftPack: new Set(),
+    draftPickReceived: new Set(),
+    draftPickRejected: new Set(),
+    draftRoundComplete: new Set(),
+    draftComplete: new Set(),
+    draftProgress: new Set(),
   }
 
   constructor(local: LocalPlayer) {
@@ -183,6 +223,10 @@ export class PeerConnection {
           this.emit('seat', HOST_SEAT)
           this.emit('code', code)
           this.emit('status', 'connected')
+          // So a draft-lobby-style roster (built entirely from 'draftRoster' events) shows the
+          // host as seated immediately, not only once the first guest's HELLO triggers a
+          // broadcast — see getRoster/broadcastRoster.
+          this.broadcastRoster()
           resolve(code)
         })
         peer.on('connection', (conn) => this.acceptGuest(conn))
@@ -197,9 +241,33 @@ export class PeerConnection {
           this.emit('status', 'error', describePeerError(err))
           reject(err)
         })
-        peer.on('disconnected', () => this.emit('status', 'error', 'Lost connection to the signaling server.'))
+        this.handleSignalingDisconnect(peer, () => this.emit('status', 'error', 'Lost connection to the signaling server.'))
       }
       attempt(MAX_ID_RETRIES)
+    })
+  }
+
+  /** Recovers from a dropped signaling-server socket (see MAX_RECONNECT_ATTEMPTS's doc) by
+   *  retrying `peer.reconnect()` a few times, spaced out, before calling `onExhausted` — which
+   *  callers wire to the same fatal 'error' status this used to jump to immediately. A successful
+   *  reconnect re-fires 'open' (same as the initial registration), which is how we notice it
+   *  worked and reset the counter for next time. */
+  private handleSignalingDisconnect(peer: Peer, onExhausted: () => void): void {
+    let attempts = 0
+    peer.on('disconnected', () => {
+      if (peer.destroyed) return
+      attempts += 1
+      if (attempts > MAX_RECONNECT_ATTEMPTS) {
+        onExhausted()
+        return
+      }
+      this.emit('status', 'connecting', `Reconnecting to the game server (attempt ${attempts} of ${MAX_RECONNECT_ATTEMPTS})…`)
+      window.setTimeout(() => {
+        if (!peer.destroyed) peer.reconnect()
+      }, RECONNECT_RETRY_DELAY_MS)
+    })
+    peer.on('open', () => {
+      attempts = 0
     })
   }
 
@@ -227,6 +295,18 @@ export class PeerConnection {
 
     switch (msg.type) {
       case 'HELLO': {
+        // A reconnect (network hiccup, tab refresh, etc.) arrives as a brand-new PeerJS
+        // connection — a new conn.peer, hence a new key in `guests` — landing right on top of
+        // an old entry for the same playerId that may never have gotten a 'close'/'error' event
+        // (a stale signaling drop can leave a connection just quietly dead without ever firing
+        // one). Left in place, every directed send (GIVE_CARD/RELOCATE_CARD/TAP_CARD/etc. — see
+        // the deliver* methods) that happens to iterate to this dead entry first would silently
+        // no-op forever after, since sendTo skips a closed connection with no fallback to keep
+        // searching. Purge any other entry for this playerId now, before it can shadow the
+        // live one.
+        for (const [peerId, guest] of this.guests) {
+          if (peerId !== conn.peer && guest.playerId === msg.playerId) this.guests.delete(peerId)
+        }
         // Prefer this player's own last seat (from a previous session on this same
         // host) if it's not currently held by someone else; otherwise the usual
         // lowest-free-seat-in-join-preference-order assignment.
@@ -239,6 +319,7 @@ export class PeerConnection {
         }
         record.playerId = msg.playerId
         record.seat = seat
+        record.name = msg.name
         this.lastSeatByPlayerId.set(msg.playerId, seat)
         // Tell the guest its seat, then replay every board we already know so it
         // sees a populated table immediately instead of empty quadrants.
@@ -252,6 +333,7 @@ export class PeerConnection {
         if (this.lastRadioStation !== null) {
           this.sendTo(conn, { type: 'RADIO', v: PROTOCOL_VERSION, station: this.lastRadioStation })
         }
+        this.broadcastRoster()
         break
       }
       case 'STATE': {
@@ -342,9 +424,51 @@ export class PeerConnection {
         }
         break
       }
+      case 'DRAFT_PICK':
+        // Not relayed/fanned out like the cases above — the host is the sole recipient and
+        // arbiter (see draftProtocol.ts's doc on DRAFT_PICK). Resolving it (round completion,
+        // pass-direction bookkeeping) is real logic that belongs in draftEngine.ts, not here —
+        // this file stays just wiring, so it just hands the raw request up.
+        if (record.playerId) {
+          this.emit('draftPickReceived', { fromPlayerId: record.playerId, packId: msg.packId, scryfallId: msg.scryfallId })
+        }
+        break
       default:
         break
     }
+  }
+
+  /** Who's seated where + their display name, for the pre-game draft lobby (see
+   *  DraftRosterMessage's doc — the regular VTT derives this from PublicBoard broadcasts
+   *  instead, which don't exist yet at this stage). */
+  private getRoster(): Partial<Record<Seat, string>> {
+    const roster: Partial<Record<Seat, string>> = { [HOST_SEAT]: this.local.name }
+    for (const guest of this.guests.values()) {
+      if (guest.seat !== null && guest.name) roster[guest.seat] = guest.name
+    }
+    return roster
+  }
+
+  private broadcastRoster(): void {
+    const roster = this.getRoster()
+    const msg: NetMessage = { type: 'DRAFT_ROSTER', v: PROTOCOL_VERSION, roster }
+    this.emit('draftRoster', roster)
+    for (const guest of this.guests.values()) this.sendTo(guest.conn, msg)
+  }
+
+  /** Finds the actual live connection for a guest playerId — defensive belt-and-suspenders
+   *  alongside the HELLO-time stale-entry purge above: skips any matching entry whose
+   *  connection isn't actually open rather than stopping at the first name match, so a directed
+   *  send (GIVE_CARD/RELOCATE_CARD/TAP_CARD/FLIP_CARD/DELETE_CARD) can still reach a
+   *  reconnected guest even if a dead duplicate entry somehow slipped through. */
+  private findGuestConn(playerId: string): DataConnection | undefined {
+    let fallback: DataConnection | undefined
+    for (const guest of this.guests.values()) {
+      if (guest.playerId !== playerId) continue
+      if (guest.conn.open) return guest.conn
+      fallback ??= guest.conn
+    }
+    return fallback
   }
 
   /** Deliver a GIVE_CARD to its target: to us if we're the recipient, else to that guest's connection. */
@@ -353,12 +477,8 @@ export class PeerConnection {
       this.emit('cardGiven', msg.card)
       return
     }
-    for (const guest of this.guests.values()) {
-      if (guest.playerId === msg.toPlayerId) {
-        this.sendTo(guest.conn, msg)
-        return
-      }
-    }
+    const conn = this.findGuestConn(msg.toPlayerId)
+    if (conn) this.sendTo(conn, msg)
   }
 
   /** Deliver a RELOCATE_CARD to its target board's owner, same routing as deliverGive. */
@@ -367,12 +487,8 @@ export class PeerConnection {
       this.emit('cardRelocated', { instanceId: msg.instanceId, x: msg.x, y: msg.y, atSeat: msg.atSeat })
       return
     }
-    for (const guest of this.guests.values()) {
-      if (guest.playerId === msg.toPlayerId) {
-        this.sendTo(guest.conn, msg)
-        return
-      }
-    }
+    const conn = this.findGuestConn(msg.toPlayerId)
+    if (conn) this.sendTo(conn, msg)
   }
 
   /** Deliver a TAP_CARD to the card owner's client, same routing as deliverRelocate. */
@@ -381,12 +497,8 @@ export class PeerConnection {
       this.emit('cardTapRequested', { instanceId: msg.instanceId, tapped: msg.tapped })
       return
     }
-    for (const guest of this.guests.values()) {
-      if (guest.playerId === msg.toPlayerId) {
-        this.sendTo(guest.conn, msg)
-        return
-      }
-    }
+    const conn = this.findGuestConn(msg.toPlayerId)
+    if (conn) this.sendTo(conn, msg)
   }
 
   /** Deliver a FLIP_CARD to the card owner's client, same routing as deliverTap. */
@@ -395,12 +507,8 @@ export class PeerConnection {
       this.emit('cardFlipRequested', { instanceId: msg.instanceId })
       return
     }
-    for (const guest of this.guests.values()) {
-      if (guest.playerId === msg.toPlayerId) {
-        this.sendTo(guest.conn, msg)
-        return
-      }
-    }
+    const conn = this.findGuestConn(msg.toPlayerId)
+    if (conn) this.sendTo(conn, msg)
   }
 
   /** Deliver a DELETE_CARD to the card owner's client, same routing as deliverFlip. */
@@ -409,12 +517,8 @@ export class PeerConnection {
       this.emit('cardDeleteRequested', { instanceId: msg.instanceId })
       return
     }
-    for (const guest of this.guests.values()) {
-      if (guest.playerId === msg.toPlayerId) {
-        this.sendTo(guest.conn, msg)
-        return
-      }
-    }
+    const conn = this.findGuestConn(msg.toPlayerId)
+    if (conn) this.sendTo(conn, msg)
   }
 
   private dropGuest(peerId: string) {
@@ -427,6 +531,7 @@ export class PeerConnection {
       // Notify the rest of the pod so they drop this player's mirror too.
       const left: NetMessage = { type: 'PLAYER_LEFT', v: PROTOCOL_VERSION, playerId: record.playerId }
       for (const other of this.guests.values()) this.sendTo(other.conn, left)
+      this.broadcastRoster()
     }
   }
 
@@ -444,7 +549,14 @@ export class PeerConnection {
         const conn = peer.connect(roomCodeToPeerId(roomCode), { reliable: true })
         this.hostConn = conn
         conn.on('open', () => {
-          this.emit('status', 'connected')
+          // Deliberately NOT 'connected' yet — that's the raw WebRTC channel opening, before
+          // the host has actually accepted us (see the 'WELCOME' case in onGuestData, below,
+          // which is where 'connected' really gets emitted). The host can still reject us here
+          // (e.g. the pod is already full — see acceptGuest's capacity check) by just closing
+          // the channel without ever sending WELCOME. Emitting 'connected' this early used to
+          // flash the guest's UI into a populated seat roster right before that rejection
+          // landed, making a same-instant "the pod is full" rejection look like the host
+          // abruptly ending a session we'd genuinely joined.
           this.sendTo(conn, {
             type: 'HELLO',
             v: PROTOCOL_VERSION,
@@ -455,14 +567,21 @@ export class PeerConnection {
           resolve()
         })
         conn.on('data', (data) => this.onGuestData(data))
-        conn.on('close', () => this.emit('status', 'closed', 'The host ended the session.'))
+        conn.on('close', () => {
+          // If we never got WELCOME (ownSeat still null), the host rejected/dropped us before
+          // ever accepting us into the pod — most commonly because it's already full — rather
+          // than a session we were genuinely part of being ended.
+          const detail =
+            this.ownSeat === null ? "Couldn't join — the game may be full or no longer available." : 'The host ended the session.'
+          this.emit('status', 'closed', detail)
+        })
         conn.on('error', (err) => this.emit('status', 'error', describePeerError(err)))
       })
       peer.on('error', (err) => {
         this.emit('status', 'error', describePeerError(err))
         reject(err)
       })
-      peer.on('disconnected', () => this.emit('status', 'error', 'Lost connection to the signaling server.'))
+      this.handleSignalingDisconnect(peer, () => this.emit('status', 'error', 'Lost connection to the signaling server.'))
     })
   }
 
@@ -473,6 +592,9 @@ export class PeerConnection {
       case 'WELCOME':
         this.ownSeat = msg.seat
         this.emit('seat', msg.seat)
+        // The host has now actually accepted us into the pod — this is the real "connected"
+        // moment, not just the raw channel opening (see joinGame's conn.on('open') doc).
+        this.emit('status', 'connected')
         break
       case 'STATE':
         this.emit('board', msg.board)
@@ -525,6 +647,34 @@ export class PeerConnection {
         break
       case 'RADIO':
         this.emit('radio', msg.station)
+        break
+      case 'DRAFT_ROSTER':
+        this.emit('draftRoster', msg.roster)
+        break
+      case 'DRAFT_CONFIG':
+        this.emit('draftConfig', msg.config)
+        break
+      case 'DRAFT_START':
+        this.emit('draftStart')
+        break
+      case 'DRAFT_PACK':
+        if (msg.toPlayerId === this.local.playerId) {
+          this.emit('draftPack', { packId: msg.packId, round: msg.round, cards: msg.cards })
+        }
+        break
+      case 'DRAFT_PICK_REJECTED':
+        if (msg.toPlayerId === this.local.playerId) {
+          this.emit('draftPickRejected', { packId: msg.packId, reason: msg.reason })
+        }
+        break
+      case 'DRAFT_ROUND_COMPLETE':
+        this.emit('draftRoundComplete', msg.round)
+        break
+      case 'DRAFT_COMPLETE':
+        this.emit('draftComplete')
+        break
+      case 'DRAFT_PROGRESS':
+        this.emit('draftProgress', msg.picksBySeat)
         break
       default:
         break
@@ -692,6 +842,110 @@ export class PeerConnection {
     } else if (this.role === 'guest' && this.hostConn) {
       this.sendTo(this.hostConn, msg)
     }
+  }
+
+  // --- draft mode (see draftProtocol.ts) ----------------------------------
+
+  /** Host only: publish the cube/pack settings for the lobby. Self-emitted like
+   *  broadcastTurnPass/broadcastRadio — no separate "my own" render path. */
+  broadcastDraftConfig(config: DraftConfigPayload): void {
+    const msg: NetMessage = { type: 'DRAFT_CONFIG', v: PROTOCOL_VERSION, config }
+    this.emit('draftConfig', config)
+    if (this.role === 'host') {
+      for (const guest of this.guests.values()) this.sendTo(guest.conn, msg)
+    }
+  }
+
+  /** Host only: lobby -> drafting transition. Delivering each seat's first pack is a separate
+   *  step (sendDraftPack) — this message is just the phase change. */
+  broadcastDraftStart(): void {
+    const msg: NetMessage = { type: 'DRAFT_START', v: PROTOCOL_VERSION }
+    this.emit('draftStart')
+    if (this.role === 'host') {
+      for (const guest of this.guests.values()) this.sendTo(guest.conn, msg)
+    }
+  }
+
+  /** Host only: deliver the pack `toPlayerId` now holds — a fresh deal, or the result of
+   *  someone else's pick passing it along. Directed, same routing shape as giveCard. */
+  sendDraftPack(toPlayerId: string, packId: string, round: number, cards: string[]): void {
+    if (toPlayerId === this.local.playerId) {
+      this.emit('draftPack', { packId, round, cards })
+      return
+    }
+    const msg: NetMessage = { type: 'DRAFT_PACK', v: PROTOCOL_VERSION, toPlayerId, packId, round, cards }
+    const conn = this.findGuestConn(toPlayerId)
+    if (conn) this.sendTo(conn, msg)
+  }
+
+  /** Pick a card from our currently-held pack. Unlike every other directed send here, this
+   *  always goes to the host as arbiter — a host picking its own card resolves it locally
+   *  with no wire round-trip, same self-apply pattern as broadcastTurnPass/broadcastRadio.
+   *
+   *  The host's resolution (draftPickReceived's listener in useDraftSession) can itself
+   *  cascade through several more emits — progress, a round wrapping up, the whole draft
+   *  completing — each driving its own React state update. For a *guest's* pick that
+   *  cascade is naturally async (it arrives over the wire), but the host's own pick would
+   *  otherwise run the whole chain synchronously nested inside the click handler that called
+   *  this. Deferring one microtask breaks that reentrancy — same effect either way from the
+   *  user's perspective (still resolves before the next paint), just outside the original
+   *  call stack. */
+  sendDraftPick(packId: string, scryfallId: string): void {
+    if (this.role === 'host') {
+      queueMicrotask(() => this.emit('draftPickReceived', { fromPlayerId: this.local.playerId, packId, scryfallId }))
+    } else if (this.role === 'guest' && this.hostConn) {
+      const msg: NetMessage = { type: 'DRAFT_PICK', v: PROTOCOL_VERSION, packId, scryfallId }
+      this.sendTo(this.hostConn, msg)
+    }
+  }
+
+  /** Host only: tell one player their pick didn't apply (defensive — e.g. a stale double-click). */
+  sendDraftPickRejected(toPlayerId: string, packId: string, reason: string): void {
+    if (toPlayerId === this.local.playerId) {
+      this.emit('draftPickRejected', { packId, reason })
+      return
+    }
+    const msg: NetMessage = { type: 'DRAFT_PICK_REJECTED', v: PROTOCOL_VERSION, toPlayerId, packId, reason }
+    const conn = this.findGuestConn(toPlayerId)
+    if (conn) this.sendTo(conn, msg)
+  }
+
+  /** Host only: every pack in this round has been fully picked through. */
+  broadcastDraftRoundComplete(round: number): void {
+    const msg: NetMessage = { type: 'DRAFT_ROUND_COMPLETE', v: PROTOCOL_VERSION, round }
+    this.emit('draftRoundComplete', round)
+    if (this.role === 'host') {
+      for (const guest of this.guests.values()) this.sendTo(guest.conn, msg)
+    }
+  }
+
+  /** Host only: every round is done; move to deck-building. */
+  broadcastDraftComplete(): void {
+    const msg: NetMessage = { type: 'DRAFT_COMPLETE', v: PROTOCOL_VERSION }
+    this.emit('draftComplete')
+    if (this.role === 'host') {
+      for (const guest of this.guests.values()) this.sendTo(guest.conn, msg)
+    }
+  }
+
+  /** Host only: sparse seat->pick-count map, for a "waiting on…" readout. */
+  broadcastDraftProgress(picksBySeat: Partial<Record<Seat, number>>): void {
+    const msg: NetMessage = { type: 'DRAFT_PROGRESS', v: PROTOCOL_VERSION, picksBySeat }
+    this.emit('draftProgress', picksBySeat)
+    if (this.role === 'host') {
+      for (const guest of this.guests.values()) this.sendTo(guest.conn, msg)
+    }
+  }
+
+  /** Host only: current seat->playerId directory, so a higher layer (useDraftSession) can
+   *  translate a draftEngine seat into the `toPlayerId` sendDraftPack/sendDraftPickRejected need. */
+  getSeatPlayerIds(): Partial<Record<Seat, string>> {
+    const map: Partial<Record<Seat, string>> = {}
+    if (this.ownSeat !== null) map[this.ownSeat] = this.local.playerId
+    for (const guest of this.guests.values()) {
+      if (guest.seat !== null && guest.playerId) map[guest.seat] = guest.playerId
+    }
+    return map
   }
 
   private sendTo(conn: DataConnection, msg: NetMessage): void {

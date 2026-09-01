@@ -1,0 +1,65 @@
+/* Compound selector (not just .commander-browser) so this reliably beats the shared
+   .modal-content's own `width` rule (deckManager.css) regardless of which CSS file's <style>
+   tag Vite happens to insert later — the two are equal-specificity single-class selectors
+   otherwise, so the winner would depend on import order instead of intent. */
+.modal-content.commander-browser {
+  width: min(1024px, 74vw);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.commander-browser__list {
+  max-height: 75vh;
+  overflow-y: auto;
+  padding-right: 0.2rem;
+}
+
+/* Fixed 4-wide grid, overriding the shared similar-cards-panel__list's responsive auto-fill —
+   this modal always has room for it at its own fixed width, unlike the narrower panels that
+   class is shared with. Gap scales with the tile size below. */
+.commander-browser__list .similar-cards-panel__list {
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.96rem;
+}
+
+.commander-browser-tile {
+  position: relative;
+}
+
+.commander-browser-tile.is-commander {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.commander-browser-tile__badge {
+  position: absolute;
+  top: 0.4rem;
+  left: 0.4rem;
+  background-color: var(--accent);
+  color: #fff;
+  font-size: 0.56rem;
+  font-weight: 600;
+  border-radius: 4px;
+  padding: 0.1rem 0.36rem;
+}
+
+.commander-browser-tile__decks {
+  font-size: 0.62rem;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.commander-browser-tile .similar-card-tile__name {
+  font-size: 0.76rem;
+  white-space: normal;
+}
+
+.commander-browser-tile .similar-card-tile__count {
+  font-size: 0.62rem;
+}
+
+.commander-browser-tile .similar-card-tile__caption {
+  padding: 0.48rem 0.56rem;
+  gap: 0.2rem;
+}

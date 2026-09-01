@@ -37,24 +37,36 @@ export function useCardSnapshots(ids: string[]): [Map<string, CardSnapshot>, () 
       setSnapshots(map)
 
       if (idsToFetch.length === 0) return
-      idsToFetch.forEach((id) => refreshedIds.add(id))
 
       // Fetch stale refreshes and never-cached ids together. Silently update the cache and
-      // re-render only if the fetch succeeds.
-      void getCardsByIdentifiers(idsToFetch.map((id) => ({ id }))).then(async (cards) => {
-        if (cards.length === 0 || cancelled) return
-        await saveSnapshots(cards)
-        if (cancelled) return
-        setSnapshots((prev) => {
-          const next = new Map(prev)
-          // Unconditional set: unlike the old stale-only refresh, a never-cached id has no
-          // existing entry to gate on — every id here was explicitly requested in idsToFetch.
-          for (const card of cards) {
-            next.set(card.id, toSnapshot(card))
-          }
-          return next
-        })
-      })
+      // re-render only if the fetch succeeds. `refreshedIds` is only populated on success
+      // (below) — marking it upfront meant a single transient failure (network blip, a
+      // momentary Scryfall rate-limit) permanently blacklisted that id from ever being
+      // fetched again this session, since nothing here ever retried it. That's how an
+      // opponent's card could end up with no art for the rest of a multiplayer game.
+      void getCardsByIdentifiers(idsToFetch.map((id) => ({ id }))).then(
+        async (cards) => {
+          if (cancelled) return
+          idsToFetch.forEach((id) => refreshedIds.add(id))
+          if (cards.length === 0) return
+          await saveSnapshots(cards)
+          if (cancelled) return
+          setSnapshots((prev) => {
+            const next = new Map(prev)
+            // Unconditional set: unlike the old stale-only refresh, a never-cached id has no
+            // existing entry to gate on — every id here was explicitly requested in idsToFetch.
+            for (const card of cards) {
+              next.set(card.id, toSnapshot(card))
+            }
+            return next
+          })
+        },
+        () => {
+          // Fetch failed outright (network error, rate limit, etc.) — leave `refreshedIds`
+          // untouched so the next render's staleness/never-cached check retries these ids
+          // instead of giving up on them for the rest of the session.
+        },
+      )
     })
 
     return () => {

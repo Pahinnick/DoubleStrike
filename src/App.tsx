@@ -7,6 +7,8 @@ import { HoverPreviewProvider } from './components/shared/HoverPreviewContext'
 import { SimilarCardsProvider } from './components/shared/SimilarCardsContext'
 import SimilarCardsView from './components/shared/SimilarCardsView'
 import SearchPanel from './components/search/SearchPanel'
+import CommanderBrowserModal from './components/deck/CommanderBrowserModal'
+import DraftView from './components/draft/DraftView'
 import DeckPanel from './components/deck/DeckPanel'
 import DeckManagerModal from './components/deck/DeckManagerModal'
 import ExportDeckModal from './components/deck/ExportDeckModal'
@@ -22,6 +24,7 @@ import UpdateBanner from './components/shared/UpdateBanner'
 import { applyTutorialPreconDeck, resolveTutorialPreconDeck } from './components/shared/loadTutorialPreconDeck'
 import { hasSeenTutorial, TutorialProvider, useTutorialContext } from './components/shared/TutorialContext'
 import TutorialOverlay from './components/shared/TutorialOverlay'
+import { isDraftModeEnabled } from './config/featureFlags'
 import { useCardSize } from './hooks/useCardSize'
 import { getPlaytestWindowMode } from './hooks/usePlaytestWindowMode'
 import { useProfileSettings } from './hooks/useProfileSettings'
@@ -46,6 +49,7 @@ function AppShell() {
   const { deck, dispatch: deckDispatch, addCard, undo, redo } = useDeck()
   const tutorial = useTutorialContext()
   const [managerOpen, setManagerOpen] = useState(false)
+  const [commanderBrowserOpen, setCommanderBrowserOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
   const [helpOpen, setHelpOpen] = useState(false)
@@ -53,6 +57,7 @@ function AppShell() {
   // Only used in 'inline' playtest-window mode (see usePlaytestWindowMode) — 'window' mode
   // never touches this, it opens a separate OS/browser window instead of swapping this one.
   const [playtestOpen, setPlaytestOpen] = useState(false)
+  const [draftOpen, setDraftOpen] = useState(false)
   const [searchText, setSearchText] = useState('')
   const [searchExpanded, setSearchExpanded] = useState(false)
   const [statsExpanded, setStatsExpanded] = useState(true)
@@ -155,6 +160,10 @@ function AppShell() {
     )
   }
 
+  if (draftOpen) {
+    return <DraftView onClose={() => setDraftOpen(false)} />
+  }
+
   function handleOpenPlaytest() {
     // Read fresh at click time (see getPlaytestWindowMode) rather than a hook — this button
     // doesn't render the toggle itself, so there's nothing here that needs to re-render when
@@ -183,9 +192,19 @@ function AppShell() {
         <ProfileSwitcher />
         <span className="app-header__deck-name">{deck.name}</span>
         <FormatSelector />
+        {deck.format === 'commander' && (
+          <button type="button" onClick={() => setCommanderBrowserOpen(true)}>
+            Choose Commander
+          </button>
+        )}
         <button type="button" data-tutorial-id="playtest-button" onClick={handleOpenPlaytest} disabled={deck.cards.length === 0}>
           Playtest
         </button>
+        {isDraftModeEnabled() && (
+          <button type="button" onClick={() => setDraftOpen(true)}>
+            Draft
+          </button>
+        )}
         <button type="button" onClick={() => setImportOpen(true)}>
           Import
         </button>
@@ -231,6 +250,7 @@ function AppShell() {
         />
       </main>
       {managerOpen && <DeckManagerModal onClose={() => setManagerOpen(false)} />}
+      {commanderBrowserOpen && <CommanderBrowserModal onClose={() => setCommanderBrowserOpen(false)} />}
       {importOpen && <ImportDeckModal onClose={() => setImportOpen(false)} />}
       {exportOpen && <ExportDeckModal onClose={() => setExportOpen(false)} />}
       {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}

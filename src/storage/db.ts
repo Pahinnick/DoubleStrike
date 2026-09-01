@@ -9,6 +9,10 @@ export const tagIndexStore = createStore('mtgdb-tag-index', 'tags')
 export const profilesStore = createStore('mtgdb-profiles', 'profiles')
 export const soloGameStore = createStore('mtgdb-solo-game', 'saves')
 export const saltScoresStore = createStore('mtgdb-salt-scores', 'salt')
+export const commanderPopularityStore = createStore('mtgdb-commander-popularity', 'popularity')
+// Draft mode (behind the isDraftModeEnabled feature flag) — saved cubes, and later a resumable
+// in-progress draft session. Additive store, no SCHEMA_VERSION bump needed.
+export const cubesStore = createStore('mtgdb-cubes', 'cubes')
 
 export const SCHEMA_VERSION = 1
 export const SCHEMA_VERSION_KEY = 'mtgdb:schemaVersion'

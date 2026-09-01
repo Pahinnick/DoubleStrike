@@ -121,7 +121,7 @@ function MultiplayerModal({
 
         {status === 'connecting' && (
           <div className="mp-modal__section">
-            <p>Connecting…</p>
+            <p>{statusDetail ?? 'Connecting…'}</p>
             <button type="button" onClick={onLeave}>
               Cancel
             </button>

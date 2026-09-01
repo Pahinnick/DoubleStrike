@@ -1019,6 +1019,7 @@ function PlaytestView({ onClose }: Props) {
       for (const c of board.graveyard ?? []) ids.add(c.scryfallId)
       for (const c of board.exile ?? []) ids.add(c.scryfallId)
       for (const c of board.command ?? []) ids.add(c.scryfallId)
+      for (const c of board.commanders ?? []) if (c.scryfallId !== FACE_DOWN_SCRYFALL_ID) ids.add(c.scryfallId)
       for (const c of board.hand ?? []) ids.add(c.scryfallId)
     }
     return [...ids]
@@ -1949,6 +1950,11 @@ function PlaytestView({ onClose }: Props) {
       command,
       hand,
       battlefieldSkin: mockSkins[seat],
+      // These mocks bypass toPublicBoard entirely, so `commanders` (real commander identity,
+      // fixed regardless of zone — see PublicBoard's doc) doesn't get derived automatically the
+      // way a live board's does; stand in with the same cards as `command` since every mock
+      // commander here happens to already be sitting in the command zone.
+      commanders: command,
     })
     const [seatA, seatB, seatC] = ALL_SEATS.filter((s) => s !== seatForMe)
     return [
@@ -2716,7 +2722,7 @@ function PlaytestView({ onClose }: Props) {
                       onChange: (delta) => dispatch({ type: 'ADJUST_COMMANDER_DAMAGE', fromSeat: SOLO_CMDR_SOURCE, delta }),
                     }
               }
-              commanders={command.map((c) => ({
+              commanders={commanders.map((c) => ({
                 scryfallId: c.scryfallId,
                 name: snapshotFor(c.scryfallId)?.name ?? c.scryfallId,
                 snapshot: snapshotFor(c.scryfallId),
@@ -2752,7 +2758,7 @@ function PlaytestView({ onClose }: Props) {
                     const srcSeat = Number(seatKey) as Seat
                     return { seat: srcSeat, name: seatNameBySeat.get(srcSeat) ?? `Seat ${srcSeat + 1}`, damage: damage ?? 0 }
                   })}
-                  commanders={(board.command ?? []).map((c) => ({
+                  commanders={(board.commanders ?? []).map((c) => ({
                     scryfallId: c.scryfallId,
                     name: snapshotFor(c.scryfallId)?.name ?? c.scryfallId,
                     snapshot: snapshotFor(c.scryfallId),

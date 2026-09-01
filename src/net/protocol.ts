@@ -13,6 +13,7 @@
  * self-healing after a dropped packet or a late join.
  */
 import { MANA_COLOR_KEYS, type ManaColorKey } from '../utils/colors'
+import { parseDraftMessage, type DraftMessage } from './draftProtocol'
 
 /** Bump when the wire shape changes incompatibly. Receivers reject other versions.
  *  v2: PublicBoard.commanderDamage changed from a single number (worst single source) to a
@@ -145,6 +146,14 @@ export type PublicBoard = {
    *  like graveyard/exile — its full contents are shared, letting opponents' clients show whose
    *  commander is whose next to their nameplate. */
   command?: PublicPileCard[]
+  /** Every card designated as this player's commander, regardless of its CURRENT zone —
+   *  unlike `command` above (which only reflects whichever commanders currently happen to be
+   *  sitting in the command zone), this stays the same fixed list all game, so a seat's
+   *  commander portrait next to their nameplate never disappears just because they cast it to
+   *  the battlefield or it died to the graveyard. A commander's identity is public knowledge
+   *  in real Commander regardless of zone, so sharing this in full (masked like any other
+   *  card if currently face-down) is the same privacy stance as graveyard/exile/command. */
+  commanders?: PublicPileCard[]
   /** Deliberate, opt-in exception to the hand's usual privacy: present only while the sender has
    *  "reveal hand" toggled on (GameState.revealHand) — the full hand contents, same shape as
    *  graveyard/exile/command. Absent (not an empty array) means hand contents are still private;
@@ -399,6 +408,7 @@ export type NetMessage =
   | HighlightMessage
   | ReactionMessage
   | RadioMessage
+  | DraftMessage
 export type NetMessageType = NetMessage['type']
 
 // --- serialization -----------------------------------------------------------
@@ -505,7 +515,10 @@ export function parseMessage(raw: unknown): ParseResult {
       if (m.station === null || isNonEmptyString(m.station)) return { ok: true, msg: obj as RadioMessage }
       return { ok: false, reason: 'malformed' }
     default:
-      return { ok: false, reason: 'malformed' }
+      // Not a VTT message type — try draft mode's own vocabulary (see draftProtocol.ts)
+      // before giving up. Kept as a sibling file/switch rather than folded in here so this
+      // already-large, live-tested VTT surface stays untouched while draft mode is unfinished.
+      return parseDraftMessage(m)
   }
 }
 
@@ -589,15 +602,16 @@ export function isValidRoomCode(code: string): boolean {
 
 // --- internal validators -----------------------------------------------------
 
-function isString(v: unknown): v is string {
+// Exported for draftProtocol.ts's own validators to reuse rather than duplicate.
+export function isString(v: unknown): v is string {
   return typeof v === 'string'
 }
 
-function isNonEmptyString(v: unknown): v is string {
+export function isNonEmptyString(v: unknown): v is string {
   return typeof v === 'string' && v.length > 0
 }
 
-function isSeat(v: unknown): v is Seat {
+export function isSeat(v: unknown): v is Seat {
   return v === 0 || v === 1 || v === 2 || v === 3
 }
 
@@ -735,6 +749,7 @@ function isPublicBoard(v: unknown): v is PublicBoard {
     isOptionalPile(b.graveyard) &&
     isOptionalPile(b.exile) &&
     isOptionalPile(b.command) &&
+    isOptionalPile(b.commanders) &&
     isOptionalPile(b.hand) &&
     (b.battlefieldSkin === undefined || typeof b.battlefieldSkin === 'string') &&
     (b.scooped === undefined || typeof b.scooped === 'boolean') &&

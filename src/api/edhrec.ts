@@ -6,6 +6,7 @@
 // name before invoking this. Double-faced cards use the front face's slug (EDHREC drops the back).
 
 const EDHREC_JSON_BASE = 'https://json.edhrec.com/pages/cards'
+const EDHREC_COMMANDER_JSON_BASE = 'https://json.edhrec.com/pages/commanders'
 // EDHREC re-runs the salt survey annually, so there's no etiquette doc to follow like Scryfall's —
 // this spacing just keeps a full deck's worth of lookups (~100 cards) from firing as one burst.
 const MIN_REQUEST_INTERVAL_MS = 150
@@ -64,6 +65,34 @@ export async function fetchEdhrecSalt(cardName: string): Promise<number | null> 
     if (!res.ok) return null
     const body = (await res.json()) as EdhrecPage
     const raw = body.container?.json_dict?.card?.salt
+    return typeof raw === 'number' ? raw : null
+  })
+}
+
+type EdhrecCommanderPage = {
+  container?: {
+    json_dict?: {
+      card?: {
+        num_decks?: number
+      }
+    }
+  }
+}
+
+/** How many decks on EDHREC have this card as their commander — separate from (and always ≤) the
+ *  plain card page's `num_decks`, which counts every deck the card appears in at all. Raw network
+ *  fetch only, rate-limited, shares the same request queue as fetchEdhrecSalt — no persistence.
+ *  See storage/commanderPopularityCache.ts + hooks/useCommanderPopularity.ts for the cached layer
+ *  components should actually use. */
+export async function fetchEdhrecCommanderDecks(cardName: string): Promise<number | null> {
+  const slug = edhrecSlug(cardName)
+  return scheduleRequest(async () => {
+    // Cards that have never been anyone's commander 403 here (EDHREC only serves genuine
+    // commander pages under this path) — not retryable, just means "not a commander."
+    const res = await fetch(`${EDHREC_COMMANDER_JSON_BASE}/${slug}.json`)
+    if (!res.ok) return null
+    const body = (await res.json()) as EdhrecCommanderPage
+    const raw = body.container?.json_dict?.card?.num_decks
     return typeof raw === 'number' ? raw : null
   })
 }

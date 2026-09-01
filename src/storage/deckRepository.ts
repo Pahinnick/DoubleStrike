@@ -12,6 +12,7 @@ export async function listDecks(profileId: string): Promise<DeckSummary[]> {
       // excluded from legality checks and mana-curve stats.
       cardCount: deck.cards.reduce((sum, c) => (c.isToken ? sum : sum + c.quantity), 0),
       updatedAt: deck.updatedAt,
+      commanderIds: deck.cards.filter((c) => c.isCommander).map((c) => c.scryfallId),
     }))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
 }

@@ -24,7 +24,7 @@
 }
 
 .deck-manager {
-  width: min(480px, 92vw);
+  width: min(560px, 94vw);
 }
 
 .deck-manager-list {
@@ -40,7 +40,7 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.5rem 0.6rem;
+  padding: 0.5rem;
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
   background-color: var(--bg-panel-raised);
@@ -59,10 +59,53 @@
 .deck-manager-row__main {
   flex: 1;
   display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  text-align: left;
+  min-width: 0;
+}
+
+.deck-manager-row__art {
+  flex-shrink: 0;
+  display: flex;
+  gap: 2px;
+}
+
+.deck-manager-row__commander-thumb {
+  width: 96px;
+  height: 70px;
+  border-radius: 6px;
+  overflow: hidden;
+  background-color: var(--bg-panel);
+  flex-shrink: 0;
+}
+
+.deck-manager-row__commander-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.deck-manager-row__art--empty {
+  width: 96px;
+  height: 70px;
+  border-radius: 6px;
+  background-color: var(--bg-panel);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.6rem;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.deck-manager-row__text {
+  flex: 1;
+  display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 0.15rem;
-  text-align: left;
   min-width: 0;
 }
 
@@ -71,10 +114,22 @@
   align-items: center;
   gap: 0.4rem;
   font-weight: 600;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.deck-manager-row__name-text {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 100%;
+}
+
+.deck-manager-row__color-stripe {
+  width: 100%;
+  height: 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
 }
 
 .deck-manager-row__badge {
@@ -89,8 +144,20 @@
 }
 
 .deck-manager-row__meta {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
   color: var(--text-dim);
   font-size: 0.78rem;
+}
+
+.deck-manager-row__format {
+  text-transform: capitalize;
+  color: var(--text);
+  background-color: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 0.02rem 0.35rem;
 }
 
 .deck-manager-row__name-input {
