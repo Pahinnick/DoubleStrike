@@ -69,6 +69,9 @@ export type PeerConnectionEvents = {
   /** A directed "send it back to one of our own zones" request for one of OUR cards (see
    *  ReturnCardMessage) — move it to that zone locally. */
   cardReturnRequested: (req: { instanceId: string; toZone: 'hand' | 'library' | 'exile' | 'command'; libraryPosition?: 'top' | 'bottom' }) => void
+  /** The original owner of a card WE currently hold wants it back (see ReclaimCardMessage) —
+   *  hand it over with an ordinary giveCard to `fromPlayerId`. */
+  cardReclaimRequested: (req: { instanceId: string; fromPlayerId: string }) => void
   /** A die/coin roll from any player (including relayed ones from other guests). */
   roll: (playerId: string, name: string, roll: RollResult, id?: string) => void
   /** A roll was taken back by whoever made it — drop it from the log (see RollDismissMessage). */
@@ -212,6 +215,7 @@ export class PeerConnection {
     cardFlipRequested: new Set(),
     cardDeleteRequested: new Set(),
     cardReturnRequested: new Set(),
+    cardReclaimRequested: new Set(),
     roll: new Set(),
     rollDismissed: new Set(),
     ping: new Set(),
@@ -500,6 +504,10 @@ export class PeerConnection {
         // A guest sent a card on someone else's board back to hand; route it to that card's owner.
         this.deliverReturn(msg)
         break
+      case 'RECLAIM_CARD':
+        // A guest is asking whoever holds their card to hand it back; route it to the holder.
+        this.deliverReclaim(msg)
+        break
       case 'ROLL': {
         this.emit('roll', msg.playerId, msg.name, msg.roll, msg.id)
         // Fan out to every other guest, same star-relay pattern as STATE.
@@ -668,6 +676,16 @@ export class PeerConnection {
   private deliverReturn(msg: Extract<NetMessage, { type: 'RETURN_CARD' }>) {
     if (msg.toPlayerId === this.local.playerId) {
       this.emit('cardReturnRequested', { instanceId: msg.instanceId, toZone: msg.toZone, libraryPosition: msg.libraryPosition })
+      return
+    }
+    const conn = this.findGuestConn(msg.toPlayerId)
+    if (conn) this.sendTo(conn, msg)
+  }
+
+  /** Deliver a RECLAIM_CARD to the current holder, same routing as deliverReturn. */
+  private deliverReclaim(msg: Extract<NetMessage, { type: 'RECLAIM_CARD' }>) {
+    if (msg.toPlayerId === this.local.playerId) {
+      this.emit('cardReclaimRequested', { instanceId: msg.instanceId, fromPlayerId: msg.fromPlayerId })
       return
     }
     const conn = this.findGuestConn(msg.toPlayerId)
@@ -911,6 +929,12 @@ export class PeerConnection {
           this.emit('cardReturnRequested', { instanceId: msg.instanceId, toZone: msg.toZone, libraryPosition: msg.libraryPosition })
         }
         break
+      case 'RECLAIM_CARD':
+        // The host delivered a "give that card back to its owner" request meant for us.
+        if (msg.toPlayerId === this.local.playerId) {
+          this.emit('cardReclaimRequested', { instanceId: msg.instanceId, fromPlayerId: msg.fromPlayerId })
+        }
+        break
       case 'ROLL':
         this.emit('roll', msg.playerId, msg.name, msg.roll, msg.id)
         break
@@ -1064,6 +1088,19 @@ export class PeerConnection {
     const msg: NetMessage = { type: 'RETURN_CARD', v: PROTOCOL_VERSION, toPlayerId, instanceId, toZone, libraryPosition }
     if (this.role === 'host') {
       this.deliverReturn(msg)
+    } else if (this.role === 'guest' && this.hostConn) {
+      this.sendTo(this.hostConn, msg)
+    }
+  }
+
+  /**
+   * Ask the player currently holding one of OUR cards to hand it back (see ReclaimCardMessage).
+   * Same directed routing as returnCard; they answer with a normal giveCard.
+   */
+  reclaimCard(toPlayerId: string, instanceId: string): void {
+    const msg: NetMessage = { type: 'RECLAIM_CARD', v: PROTOCOL_VERSION, toPlayerId, fromPlayerId: this.local.playerId, instanceId }
+    if (this.role === 'host') {
+      this.deliverReclaim(msg)
     } else if (this.role === 'guest' && this.hostConn) {
       this.sendTo(this.hostConn, msg)
     }

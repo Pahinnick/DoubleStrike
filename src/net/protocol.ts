@@ -342,6 +342,28 @@ export type ReturnCardMessage = {
 }
 
 /**
+ * Ask whoever currently holds a card to hand it back to its original owner — the missing inverse
+ * of GIVE_CARD, which was strictly one-way. Dragging a card you own off someone else's board and
+ * onto your own only ever RELOCATED it: it moved to your quadrant while they kept ownership, so
+ * you still couldn't tap or move it, and — because ownerSeat then matched the quadrant it was
+ * drawn in — it didn't even show the owner ring that would have explained why.
+ *
+ * Directed to the current holder, same guest->host->target routing as GIVE_CARD/TAP_CARD. The
+ * holder's client answers with an ordinary GIVE_CARD back to `fromPlayerId`, so the transfer
+ * itself reuses the existing, already-working path rather than inventing a second one; this
+ * message is only the request.
+ */
+export type ReclaimCardMessage = {
+  type: 'RECLAIM_CARD'
+  v: number
+  /** The player currently holding the card. */
+  toPlayerId: string
+  /** The original owner asking for it back — where the holder should send it. */
+  fromPlayerId: string
+  instanceId: string
+}
+
+/**
  * A die roll or coin flip result. A die roll can be several dice at once (11d6 and friends):
  * `value` is always the TOTAL, and `values` carries the individual faces when more than one was
  * rolled. `values` is omitted for a single die, so an ordinary roll is exactly the shape it has
@@ -472,6 +494,7 @@ export type NetMessage =
   | FlipCardMessage
   | DeleteCardMessage
   | ReturnCardMessage
+  | ReclaimCardMessage
   | RollMessage
   | RollDismissMessage
   | PingMessage
@@ -569,6 +592,11 @@ export function parseMessage(raw: unknown): ParseResult {
         (m.libraryPosition === undefined || m.libraryPosition === 'top' || m.libraryPosition === 'bottom')
       ) {
         return { ok: true, msg: obj as ReturnCardMessage }
+      }
+      return { ok: false, reason: 'malformed' }
+    case 'RECLAIM_CARD':
+      if (isNonEmptyString(m.toPlayerId) && isNonEmptyString(m.fromPlayerId) && isNonEmptyString(m.instanceId)) {
+        return { ok: true, msg: obj as ReclaimCardMessage }
       }
       return { ok: false, reason: 'malformed' }
     case 'ROLL':

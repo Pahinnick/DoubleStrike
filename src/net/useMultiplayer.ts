@@ -56,6 +56,9 @@ export type MultiplayerSession = {
    *  taken/given/relocated card sitting on our board; graveyard has its own deleteRemoteCard,
    *  battlefield its own relocateCard). No-op when not connected. */
   returnRemoteCard: (toPlayerId: string, instanceId: string, toZone: 'hand' | 'library' | 'exile' | 'command', libraryPosition?: 'top' | 'bottom') => void
+  /** Ask whoever currently holds one of OUR cards to hand it back — the inverse of giveCard.
+   *  No-op when not connected. */
+  reclaimRemoteCard: (toPlayerId: string, instanceId: string) => void
   /** Publish a die/coin roll to the pod. No-op when not connected. */
   broadcastRoll: (roll: RollResult, id?: string) => void
   /** Take back one of our own rolls, clearing it from the whole pod's log. No-op when not connected. */
@@ -88,6 +91,7 @@ export function useMultiplayer(
   onReactionReceived?: (playerId: string, name: string, emoji: string) => void,
   onCardReturnRequested?: (req: { instanceId: string; toZone: 'hand' | 'library' | 'exile' | 'command'; libraryPosition?: 'top' | 'bottom' }) => void,
   onRollDismissed?: (id: string) => void,
+  onCardReclaimRequested?: (req: { instanceId: string; fromPlayerId: string }) => void,
 ): MultiplayerSession {
   const connRef = useRef<PeerConnection | null>(null)
 
@@ -117,6 +121,8 @@ export function useMultiplayer(
   onReactionReceivedRef.current = onReactionReceived
   const onRollDismissedRef = useRef(onRollDismissed)
   onRollDismissedRef.current = onRollDismissed
+  const onCardReclaimRequestedRef = useRef(onCardReclaimRequested)
+  onCardReclaimRequestedRef.current = onCardReclaimRequested
 
   const [role, setRole] = useState<MultiplayerRole | null>(null)
   const [status, setStatus] = useState<ConnectionStatus>('idle')
@@ -177,6 +183,7 @@ export function useMultiplayer(
     conn.on('cardReturnRequested', (req) => onCardReturnRequestedRef.current?.(req))
     conn.on('roll', (playerId, name, roll, id) => onRollReceivedRef.current?.(playerId, name, roll, id))
     conn.on('rollDismissed', (id) => onRollDismissedRef.current?.(id))
+    conn.on('cardReclaimRequested', (req) => onCardReclaimRequestedRef.current?.(req))
     conn.on('ping', (playerId, name, x, y) => onPingReceivedRef.current?.(playerId, name, x, y))
     conn.on('highlight', (instanceId) => onHighlightReceivedRef.current?.(instanceId))
     conn.on('reaction', (playerId, name, emoji) => onReactionReceivedRef.current?.(playerId, name, emoji))
@@ -244,6 +251,10 @@ export function useMultiplayer(
     connRef.current?.returnCard(toPlayerId, instanceId, toZone, libraryPosition)
   }, [])
 
+  const reclaimRemoteCard = useCallback((toPlayerId: string, instanceId: string) => {
+    connRef.current?.reclaimCard(toPlayerId, instanceId)
+  }, [])
+
   const broadcastRoll = useCallback((roll: RollResult, id?: string) => {
     connRef.current?.broadcastRoll(roll, id)
   }, [])
@@ -303,6 +314,7 @@ export function useMultiplayer(
     flipRemoteCard,
     deleteRemoteCard,
     returnRemoteCard,
+    reclaimRemoteCard,
     broadcastRoll,
     broadcastRollDismiss,
     broadcastPing,

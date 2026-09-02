@@ -344,6 +344,7 @@ function PlaytestView({ onClose }: Props) {
     flipRemoteCard,
     deleteRemoteCard,
     returnRemoteCard,
+    reclaimRemoteCard,
   } = useMultiplayer(
     {
       playerId,
@@ -376,6 +377,32 @@ function PlaytestView({ onClose }: Props) {
     (req) => dispatch({ type: 'MOVE_CARD', instanceId: req.instanceId, toZone: req.toZone, libraryPosition: req.libraryPosition }),
     // Whoever made a roll took it back — drop it from our copy of the log too.
     (id) => removeRollEntry(id),
+    // A card's original owner wants it back off our board. Hand it over the same way any give
+    // works, so the transfer itself goes through one already-proven path (see ReclaimCardMessage).
+    (req) => {
+      const card = stateRef.current.cards.find((c) => c.instanceId === req.instanceId && c.zone === 'battlefield')
+      // Only a card we're holding for someone else can be reclaimed, and `ownerSeat` is exactly
+      // what records that (a card of our own never has one). No owner recorded means this isn't
+      // theirs to ask for, so there's nothing to hand back.
+      if (!card || card.ownerSeat === undefined) return
+      giveCard(req.fromPlayerId, {
+        instanceId: card.instanceId,
+        scryfallId: card.scryfallId,
+        // Sending it home with its original owner's seat: on their client that equals their own
+        // seat, so it renders as an ordinary card of theirs again rather than one still ringed
+        // as somebody else's.
+        ownerSeat: card.ownerSeat,
+        x: card.x ?? 0,
+        y: card.y ?? 0,
+        tapped: card.tapped,
+        counters: card.counters,
+        ptCounters: card.ptCounters,
+        showBackFace: card.showBackFace,
+        isToken: card.isToken,
+        faceDown: card.faceDown,
+      })
+      dispatch({ type: 'REMOVE_CARD', instanceId: card.instanceId })
+    },
   )
   const [mpModalOpen, setMpModalOpen] = useState(false)
   // Honors the deck-editor header's "Multiplayer" button (see multiplayerEntryBridge) — jumps
@@ -1853,6 +1880,17 @@ function PlaytestView({ onClose }: Props) {
       const atSeat = targetSeat === ownerSeat ? undefined : targetSeat
       const burstPoint = mirror(surfaceX + CARD_W_PX / 2, surfaceY + CARD_H_PX / 2)
       particlesRef.current?.burst(burstPoint.x, burstPoint.y)
+      // Dragging a card WE own off its current holder's board and back onto our OWN quadrant is
+      // asking for it back, not repositioning it. A plain relocate here moved the card to our
+      // side while the holder kept ownership — so it sat on our board un-tappable, un-draggable,
+      // and (since its ownerSeat then matched the quadrant it was drawn in) without even the
+      // owner ring that would have hinted why. See ReclaimCardMessage.
+      const heldCard = opponentBoards.find((b) => b.playerId === data.fromPlayerId)?.battlefield.find((c) => c.instanceId === data.instanceId)
+      const isOursHeldElsewhere = heldCard?.ownerSeat !== undefined && heldCard.ownerSeat === mySeatResolved
+      if (mpActive && isOursHeldElsewhere && targetSeat === mySeatResolved) {
+        reclaimRemoteCard(data.fromPlayerId, data.instanceId)
+        return
+      }
       if (mpActive) {
         relocateCard(data.fromPlayerId, data.instanceId, x, y, atSeat)
       } else if (mockBoards) {
