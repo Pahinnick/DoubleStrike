@@ -36,6 +36,37 @@
   min-width: 4.5em;
 }
 
+/* Reserved even when hidden, so an entry doesn't reflow the moment you hover it — the log sits
+   over the table and a shifting row is easy to mis-click. */
+.playtest__roll-entry.is-dismissable {
+  padding-right: 3px;
+}
+
+.playtest__roll-dismiss {
+  margin-left: 2px;
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  line-height: 1;
+  cursor: pointer;
+  /* Only your own rolls carry this, and it's a "put the dice away" gesture rather than a
+     primary control — visible enough to find, quiet enough not to compete with the result. */
+  opacity: 0.45;
+}
+
+.playtest__roll-entry:hover .playtest__roll-dismiss,
+.playtest__roll-dismiss:focus-visible {
+  opacity: 1;
+  color: var(--text);
+  background-color: var(--bg-panel);
+}
+
 /* Dice roller popover — shares .card-context-menu's frame/positioning, adds its own contents. */
 .dice-prompt {
   padding: 8px;

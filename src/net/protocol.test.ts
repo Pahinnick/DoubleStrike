@@ -144,6 +144,23 @@ describe('serialization round-trips', () => {
     expect(deserialize(JSON.stringify(bad))).toBeNull()
   })
 
+  it('ROLL carries an optional shared id, and ROLL_DISMISS names one', () => {
+    const withId: NetMessage = {
+      type: 'ROLL',
+      v: PROTOCOL_VERSION,
+      playerId: 'p1',
+      name: 'Alice',
+      roll: { kind: 'coin', value: 'heads' },
+      id: 'roll-1',
+    }
+    expect(deserialize(serialize(withId))).toEqual(withId)
+    const dismiss: NetMessage = { type: 'ROLL_DISMISS', v: PROTOCOL_VERSION, id: 'roll-1' }
+    expect(deserialize(serialize(dismiss))).toEqual(dismiss)
+    // An id is the whole point of a dismissal, so it's required there (unlike on ROLL).
+    expect(deserialize(JSON.stringify({ type: 'ROLL_DISMISS', v: PROTOCOL_VERSION }))).toBeNull()
+    expect(deserialize(JSON.stringify({ type: 'ROLL_DISMISS', v: PROTOCOL_VERSION, id: '' }))).toBeNull()
+  })
+
   it('TURN_PASS round-trips with and without the shared turn number', () => {
     const withTurn: NetMessage = { type: 'TURN_PASS', v: PROTOCOL_VERSION, activeSeat: 2, turn: 7 }
     expect(deserialize(serialize(withTurn))).toEqual(withTurn)

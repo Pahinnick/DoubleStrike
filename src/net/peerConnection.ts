@@ -70,7 +70,9 @@ export type PeerConnectionEvents = {
    *  ReturnCardMessage) — move it to that zone locally. */
   cardReturnRequested: (req: { instanceId: string; toZone: 'hand' | 'library' | 'exile' | 'command'; libraryPosition?: 'top' | 'bottom' }) => void
   /** A die/coin roll from any player (including relayed ones from other guests). */
-  roll: (playerId: string, name: string, roll: RollResult) => void
+  roll: (playerId: string, name: string, roll: RollResult, id?: string) => void
+  /** A roll was taken back by whoever made it — drop it from the log (see RollDismissMessage). */
+  rollDismissed: (id: string) => void
   /** A "look here" ping at a table-space point, from any player (including relayed ones). */
   ping: (playerId: string, name: string, x: number, y: number) => void
   /** Flash-highlight a specific card, from any player (including relayed ones). */
@@ -211,6 +213,7 @@ export class PeerConnection {
     cardDeleteRequested: new Set(),
     cardReturnRequested: new Set(),
     roll: new Set(),
+    rollDismissed: new Set(),
     ping: new Set(),
     highlight: new Set(),
     reaction: new Set(),
@@ -498,8 +501,17 @@ export class PeerConnection {
         this.deliverReturn(msg)
         break
       case 'ROLL': {
-        this.emit('roll', msg.playerId, msg.name, msg.roll)
+        this.emit('roll', msg.playerId, msg.name, msg.roll, msg.id)
         // Fan out to every other guest, same star-relay pattern as STATE.
+        const targets = relayTargets([...this.guests.keys()], conn.peer)
+        for (const peerId of targets) {
+          const target = this.guests.get(peerId)
+          if (target) this.sendTo(target.conn, msg)
+        }
+        break
+      }
+      case 'ROLL_DISMISS': {
+        this.emit('rollDismissed', msg.id)
         const targets = relayTargets([...this.guests.keys()], conn.peer)
         for (const peerId of targets) {
           const target = this.guests.get(peerId)
@@ -900,7 +912,10 @@ export class PeerConnection {
         }
         break
       case 'ROLL':
-        this.emit('roll', msg.playerId, msg.name, msg.roll)
+        this.emit('roll', msg.playerId, msg.name, msg.roll, msg.id)
+        break
+      case 'ROLL_DISMISS':
+        this.emit('rollDismissed', msg.id)
         break
       case 'PING':
         this.emit('ping', msg.playerId, msg.name, msg.x, msg.y)
@@ -1058,8 +1073,21 @@ export class PeerConnection {
    * Publish a die/coin roll to the pod. Not cached anywhere (unlike broadcastState) —
    * a late joiner simply never sees rolls that happened before they joined.
    */
-  broadcastRoll(roll: RollResult): void {
-    const msg: NetMessage = { type: 'ROLL', v: PROTOCOL_VERSION, playerId: this.local.playerId, name: this.local.name, roll }
+  broadcastRoll(roll: RollResult, id?: string): void {
+    const msg: NetMessage = { type: 'ROLL', v: PROTOCOL_VERSION, playerId: this.local.playerId, name: this.local.name, roll, id }
+    if (this.role === 'host') {
+      for (const guest of this.guests.values()) this.sendTo(guest.conn, msg)
+    } else if (this.role === 'guest' && this.hostConn) {
+      this.sendTo(this.hostConn, msg)
+    }
+  }
+
+  /** Take back a roll we published, clearing it from everyone's log (see RollDismissMessage).
+   *  Self-emitted like broadcastTurnPass: the log has no separate "my own" render path, so the
+   *  sender has to hear its own dismissal too, not just whoever it's relayed to. */
+  broadcastRollDismiss(id: string): void {
+    const msg: NetMessage = { type: 'ROLL_DISMISS', v: PROTOCOL_VERSION, id }
+    this.emit('rollDismissed', id)
     if (this.role === 'host') {
       for (const guest of this.guests.values()) this.sendTo(guest.conn, msg)
     } else if (this.role === 'guest' && this.hostConn) {

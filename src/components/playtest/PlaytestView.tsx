@@ -92,9 +92,9 @@ const DIE_SIZES = [4, 6, 8, 10, 12, 20, 100]
 // Newest-first cap on the shared roll log so it doesn't grow unbounded over a long session.
 const ROLL_LOG_LIMIT = 8
 // How long a single roll stays visible before it self-clears.
-const ROLL_ENTRY_TTL_MS = 7000
 // How long a "look here" ping stays visible before it self-clears — brief, since it's
-// meant as a momentary attention-grabber, not a log (contrast with ROLL_ENTRY_TTL_MS).
+// meant as a momentary attention-grabber, not a log (rolls, by contrast, persist until
+// dismissed — see addRollEntry).
 const PING_TTL_MS = 1700
 // How long a card's flash-highlight stays applied — must comfortably cover the CSS pulse
 // animation's total duration (see .playtest__battlefield-card.is-highlighted in playtest.css)
@@ -224,25 +224,26 @@ function PlaytestView({ onClose }: Props) {
 
   // Recent dice/coin rolls, newest first — resolved to a display seat at render
   // time (see rollLogEntries below) since a network roll only carries a playerId.
-  // Each entry expires on its own after ROLL_ENTRY_TTL_MS (tracked here so unmount
-  // can clear any still-pending timeouts rather than letting them fire into a
-  // stale closure).
+  //
+  // Entries deliberately do NOT expire on a timer any more: a result somebody needed could
+  // vanish mid-conversation, and "roll it again" isn't the same roll. They stay until whoever
+  // made the roll takes it back (see dismissRoll), like leaving dice on the table until the
+  // group's seen them. ROLL_LOG_LIMIT still bounds the list, so a table that never dismisses
+  // anything just keeps the most recent few rather than growing forever.
   const [rolls, setRolls] = useState<{ id: string; playerId: string; name: string; roll: RollResult }[]>([])
-  const rollTimeoutsRef = useRef<Map<string, number>>(new Map())
-  const addRollEntry = useCallback((rollerId: string, name: string, roll: RollResult) => {
-    const id = crypto.randomUUID()
-    setRolls((prev) => [{ id, playerId: rollerId, name, roll }, ...prev].slice(0, ROLL_LOG_LIMIT))
-    const timeout = window.setTimeout(() => {
-      setRolls((prev) => prev.filter((entry) => entry.id !== id))
-      rollTimeoutsRef.current.delete(id)
-    }, ROLL_ENTRY_TTL_MS)
-    rollTimeoutsRef.current.set(id, timeout)
+  // `id` is the ROLLER's id, shared by every client mirroring the roll, so a dismissal can name
+  // the same entry everywhere (see RollMessage.id). Falls back to a local one only for a roll
+  // from an older peer that didn't send one — that entry simply can't be cleared remotely.
+  const addRollEntry = useCallback((rollerId: string, name: string, roll: RollResult, id?: string) => {
+    const entryId = id ?? crypto.randomUUID()
+    setRolls((prev) =>
+      // Guard against a duplicate delivery re-adding the same roll (the host self-emits its own
+      // broadcasts, and a resync could in principle replay one).
+      prev.some((e) => e.id === entryId) ? prev : [{ id: entryId, playerId: rollerId, name, roll }, ...prev].slice(0, ROLL_LOG_LIMIT),
+    )
   }, [])
-  useEffect(() => {
-    const timeouts = rollTimeoutsRef.current
-    return () => {
-      for (const timeout of timeouts.values()) window.clearTimeout(timeout)
-    }
+  const removeRollEntry = useCallback((id: string) => {
+    setRolls((prev) => prev.filter((entry) => entry.id !== id))
   }, [])
 
   // "Look here" pings — same self-expiring-entry shape as rolls, but table-absolute
@@ -324,6 +325,7 @@ function PlaytestView({ onClose }: Props) {
     radioStation: mpRadioStation,
     broadcast,
     broadcastRoll,
+    broadcastRollDismiss,
     broadcastPing,
     broadcastHighlight,
     broadcastReaction,
@@ -351,7 +353,7 @@ function PlaytestView({ onClose }: Props) {
     // A card handed to us by another player joins our battlefield under our control.
     (card) => dispatch({ type: 'RECEIVE_GIVEN_CARD', card }),
     // Another player's die/coin result, relayed to us — just log it, nothing to broadcast back.
-    (rollerId, name, roll) => addRollEntry(rollerId, name, roll),
+    (rollerId, name, roll, id) => addRollEntry(rollerId, name, roll, id),
     // Another player's ping, relayed to us — just show it, nothing to broadcast back.
     (pingerId, name, x, y) => addPing(pingerId, name, x, y),
     // Another player repositioned one of our own cards — reposition it locally.
@@ -372,6 +374,8 @@ function PlaytestView({ onClose }: Props) {
     // Another player sent one of our own cards sitting on their board (given, or just taken via
     // relocate) back to one of our own zones — apply it locally; our next STATE broadcast shows everyone.
     (req) => dispatch({ type: 'MOVE_CARD', instanceId: req.instanceId, toZone: req.toZone, libraryPosition: req.libraryPosition }),
+    // Whoever made a roll took it back — drop it from our copy of the log too.
+    (id) => removeRollEntry(id),
   )
   const [mpModalOpen, setMpModalOpen] = useState(false)
   // Honors the deck-editor header's "Multiplayer" button (see multiplayerEntryBridge) — jumps
@@ -1722,16 +1726,26 @@ function PlaytestView({ onClose }: Props) {
     const rolled = Array.from({ length: count }, () => 1 + Math.floor(Math.random() * sides))
     const total = rolled.reduce((sum, n) => sum + n, 0)
     const roll: RollResult = { kind: 'die', sides, value: total, ...(count > 1 ? { values: rolled } : {}) }
-    addRollEntry(playerId, playerName, roll)
-    if (mpActive) broadcastRoll(roll)
+    publishRoll(roll)
     setCountPrompt(null)
   }
 
   /** Flips a coin, logs it locally, and shares it with the pod (if connected). */
   function flipCoin() {
-    const roll: RollResult = { kind: 'coin', value: Math.random() < 0.5 ? 'heads' : 'tails' }
-    addRollEntry(playerId, playerName, roll)
-    if (mpActive) broadcastRoll(roll)
+    publishRoll({ kind: 'coin', value: Math.random() < 0.5 ? 'heads' : 'tails' })
+  }
+
+  /** Logs a roll locally and shares it, minting the shared id both sides key dismissal off. */
+  function publishRoll(roll: RollResult) {
+    const id = crypto.randomUUID()
+    addRollEntry(playerId, playerName, roll, id)
+    if (mpActive) broadcastRoll(roll, id)
+  }
+
+  /** Takes back one of our own rolls — clears it here and, in a pod, for everyone else too. */
+  function dismissRoll(id: string) {
+    removeRollEntry(id)
+    if (mpActive) broadcastRollDismiss(id)
   }
 
   function openBottomViewer(count: number) {
@@ -2397,6 +2411,7 @@ function PlaytestView({ onClose }: Props) {
 
   const rollLogEntries: RollLogEntry[] = rolls.map((entry) => ({
     id: entry.id,
+    playerId: entry.playerId,
     name: entry.name,
     roll: entry.roll,
     seat: resolveRollerSeat(entry.playerId),
@@ -3060,7 +3075,7 @@ function PlaytestView({ onClose }: Props) {
               ))}
           </div>
           {!inPod && goldfishOn && <GoldfishPanel turn={state.turn} rows={goldfishRows} />}
-          <RollLog entries={rollLogEntries} />
+          <RollLog entries={rollLogEntries} onDismiss={dismissRoll} selfPlayerId={playerId} />
           <DeckScanTray
             deck={deck}
             snapshots={snapshots}

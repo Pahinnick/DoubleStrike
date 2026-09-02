@@ -362,6 +362,27 @@ export type RollMessage = {
   playerId: string
   name: string
   roll: RollResult
+  /** Stable id for this roll, minted by the roller and shared by every client that mirrors it,
+   *  so ROLL_DISMISS below can name the one to clear. Optional: receivers fall back to a local
+   *  id when an older sender omits it, which just means that particular roll can't be dismissed
+   *  remotely (it still ages out of the log by the usual length cap). */
+  id?: string
+}
+
+/**
+ * Broadcast (any client → everyone, host relays): clear a previously-broadcast roll from the
+ * log. Rolls no longer expire on a timer — a result you needed could vanish before the table
+ * finished reading it — so they stay until the person who rolled takes them back, the same way
+ * you'd leave dice on the table until everyone's seen them and then scoop them up.
+ *
+ * Only the roller's own client offers the control, but this is deliberately not enforced on
+ * receipt: same trust model as the rest of the table (see RelocateCardMessage), and the worst
+ * case is a roll disappearing slightly early.
+ */
+export type RollDismissMessage = {
+  type: 'ROLL_DISMISS'
+  v: number
+  id: string
 }
 
 /**
@@ -452,6 +473,7 @@ export type NetMessage =
   | DeleteCardMessage
   | ReturnCardMessage
   | RollMessage
+  | RollDismissMessage
   | PingMessage
   | TurnPassMessage
   | HighlightMessage
@@ -550,9 +572,12 @@ export function parseMessage(raw: unknown): ParseResult {
       }
       return { ok: false, reason: 'malformed' }
     case 'ROLL':
-      if (isNonEmptyString(m.playerId) && isString(m.name) && isRollResult(m.roll)) {
+      if (isNonEmptyString(m.playerId) && isString(m.name) && isRollResult(m.roll) && (m.id === undefined || isNonEmptyString(m.id))) {
         return { ok: true, msg: obj as RollMessage }
       }
+      return { ok: false, reason: 'malformed' }
+    case 'ROLL_DISMISS':
+      if (isNonEmptyString(m.id)) return { ok: true, msg: obj as RollDismissMessage }
       return { ok: false, reason: 'malformed' }
     case 'PING':
       if (isNonEmptyString(m.playerId) && isString(m.name) && typeof m.x === 'number' && typeof m.y === 'number') {
