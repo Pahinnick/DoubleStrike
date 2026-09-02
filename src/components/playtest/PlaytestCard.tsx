@@ -1,5 +1,6 @@
-import { useRef, type DragEvent, type MouseEvent } from 'react'
+import { useEffect, useRef, useState, type DragEvent, type MouseEvent } from 'react'
 import cardBackImage from '../../assets/card-back.svg'
+import type { ImageUris } from '../../api/scryfallTypes'
 import { useHoverPreview } from '../../hooks/useHoverPreview'
 import FoilShine from '../shared/FoilShine'
 import { getSnapshotImage, type CardSnapshot } from '../../storage/cardCache'
@@ -7,6 +8,66 @@ import type { GameCard, GameZone } from '../../state/gameReducer'
 import type { FoilKind } from '../../state/types'
 import { playCue } from '../../utils/sound'
 import { clearCurrentDragData, setGameDragData, type GroupOffset } from './dragGameCard'
+
+// A broken CDN load gets a few spaced-out retries before giving up — same reasoning as
+// hooks/useCardSnapshots.ts's fetch retries, just for the raw image request itself (which can
+// fail even when the snapshot's image_uris data fetched successfully).
+const IMAGE_RETRY_DELAYS_MS = [1000, 3000, 6000]
+
+type CardArtProps = {
+  image: ImageUris
+  name: string
+  foil?: FoilKind
+  foilPoint?: { x: number; y: number }
+}
+
+/** Renders a card's art, retrying a failed image load a few times (remounting the `<img>` via a
+ *  bumped `key` rather than altering the URL, so a retry still hits the CDN's own cache instead
+ *  of being treated as a fresh, uncached request) before falling back to the same plain-text
+ *  placeholder shown when there's no image data at all. Previously a broken image just sat there
+ *  broken for the rest of the session with no recovery and no visual distinction from "loading." */
+function CardArt({ image, name, foil, foilPoint }: CardArtProps) {
+  const [attempt, setAttempt] = useState(0)
+  const [pendingRetry, setPendingRetry] = useState(false)
+  const [failed, setFailed] = useState(false)
+
+  // A different URL (new card, or a flip to the other face) deserves a fresh set of attempts
+  // rather than inheriting a previous image's exhausted retry count.
+  useEffect(() => {
+    setAttempt(0)
+    setPendingRetry(false)
+    setFailed(false)
+  }, [image.small])
+
+  useEffect(() => {
+    if (!pendingRetry) return
+    const timer = setTimeout(() => {
+      setPendingRetry(false)
+      setAttempt((a) => a + 1)
+    }, IMAGE_RETRY_DELAYS_MS[attempt])
+    return () => clearTimeout(timer)
+  }, [pendingRetry, attempt])
+
+  if (failed) {
+    return <span className="playtest-card__placeholder playtest-card__placeholder--art-failed">{name}</span>
+  }
+
+  return (
+    <span className="playtest-card__art">
+      <img
+        key={attempt}
+        src={image.small}
+        alt={name}
+        draggable={false}
+        onError={() => {
+          if (attempt >= IMAGE_RETRY_DELAYS_MS.length) setFailed(true)
+          else setPendingRetry(true)
+        }}
+      />
+      {foil && <FoilShine foil={foil} point={foilPoint} />}
+    </span>
+  )
+}
 
 // Shrunk well below the card's real 90x126 render size — the browser's default drag image
 // is the full card, which sits right where the drop-position preview needs to be seen.
@@ -133,10 +194,7 @@ function PlaytestCard({ gameCard, snapshot, onClick, onContextMenu, readOnly, re
         {hidden ? (
           <img src={cardBackImage} alt={name} draggable={false} />
         ) : image ? (
-          <span className="playtest-card__art">
-            <img src={image.small} alt={name} draggable={false} />
-            {foil && <FoilShine foil={foil} point={foilPoint} />}
-          </span>
+          <CardArt image={image} name={name} foil={foil} foilPoint={foilPoint} />
         ) : (
           <span className="playtest-card__placeholder">{name}</span>
         )}
@@ -207,10 +265,7 @@ function PlaytestCard({ gameCard, snapshot, onClick, onContextMenu, readOnly, re
       {...(snapshot ? { ...hoverHandlers, onMouseEnter: handleMouseEnter } : {})}
     >
       {image ? (
-        <span className="playtest-card__art">
-          <img src={image.small} alt={name} draggable={false} />
-          {foil && <FoilShine foil={foil} point={foilPoint} />}
-        </span>
+        <CardArt image={image} name={name} foil={foil} foilPoint={foilPoint} />
       ) : (
         <span className="playtest-card__placeholder">{name}</span>
       )}

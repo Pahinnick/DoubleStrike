@@ -1,4 +1,4 @@
-import { getMany, set, setMany } from 'idb-keyval'
+import { clear, getMany, set, setMany } from 'idb-keyval'
 import { getCastingManaCost, getDisplayImage } from '../api/scryfall'
 import type { CardFace, CardPrices, ImageUris, LegalityStatus, RelatedCard, ScryfallCard } from '../api/scryfallTypes'
 import { cardSnapshotsStore } from './db'
@@ -19,9 +19,13 @@ export type CardSnapshot = {
   card_faces?: CardFace[]
   /** Optional so existing pre-this-field cached snapshots (and hand-built test fixtures) still satisfy the type. */
   layout?: string
-  /** The `component: 'token'` subset of Scryfall's `all_parts` — the tokens this card creates. Only
-   *  the token parts are kept (not meld/combo pieces). Optional/omitted when the card makes none; also
-   *  absent on snapshots cached before this field existed, until they're refreshed (like `layout`). */
+  /** The `component: 'token'` OR `'meld_result'` subset of Scryfall's `all_parts` — every card this
+   *  card can turn into without being its own separate deck slot: a real token (component: 'token'),
+   *  or what it melds into (e.g. Bruna/Gisela → Brisela, Voice of Nightmares — you never own a
+   *  literal copy of the meld result, same as a token). Plain combo pieces (e.g. a checklist card)
+   *  are still excluded — those genuinely are just other real cards, not a "this doesn't take a deck
+   *  slot" reference. Optional/omitted when the card makes none; also absent on snapshots cached
+   *  before this field existed, until they're refreshed (like `layout`). */
   related_tokens?: RelatedCard[]
   legalities: Record<string, LegalityStatus>
   prices?: CardPrices
@@ -46,7 +50,7 @@ export function toSnapshot(card: ScryfallCard): CardSnapshot {
     image_uris: card.image_uris,
     card_faces: card.card_faces,
     layout: card.layout,
-    related_tokens: card.all_parts?.filter((part) => part.component === 'token'),
+    related_tokens: card.all_parts?.filter((part) => part.component === 'token' || part.component === 'meld_result'),
     legalities: card.legalities,
     prices: card.prices,
     cachedAt: new Date().toISOString(),
@@ -89,4 +93,11 @@ export async function saveSnapshots(cards: ScryfallCard[]): Promise<void> {
   if (cards.length === 0) return
   const entries: [string, CardSnapshot][] = cards.map((card) => [card.id, toSnapshot(card)])
   await setMany(entries, cardSnapshotsStore)
+}
+
+/** Wipes every persisted card snapshot — the Settings "Clear cached card data" button. Pair with
+ *  api/scryfall.ts's resetInMemoryCardCache() so the in-memory layer doesn't just re-serve what
+ *  was just cleared here for the rest of the session. */
+export async function clearCardCache(): Promise<void> {
+  await clear(cardSnapshotsStore)
 }

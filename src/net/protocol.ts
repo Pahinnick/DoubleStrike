@@ -307,6 +307,28 @@ export type DeleteCardMessage = {
   instanceId: string
 }
 
+/**
+ * Send a card on another player's board back to one of *their own* private/public non-battlefield
+ * zones — the missing counterpart to DELETE_CARD (always graveyard) and RELOCATE_CARD (always
+ * battlefield): before this, a card that had been given away, or just relocated onto someone
+ * else's board via the free-for-all "move any card anywhere" feature, had no drag target that
+ * actually did anything for hand/library/exile/command — the drop silently no-oped because the
+ * card was never in the dragger's own state to move locally. Same directed guest->host->target
+ * routing as DELETE_CARD/TAP_CARD/FLIP_CARD; the owner's client applies MOVE_CARD (toZone,
+ * which already handles a token simply ceasing to exist off the battlefield, same as
+ * DELETE_CARD's graveyard case) and the change comes back to everyone via their next STATE
+ * broadcast. Doesn't reveal anything: like any other card entering a private zone, it becomes
+ * private again the instant the owner's own next broadcast omits it from their public battlefield
+ * list (graveyard/exile/command stay public either way, same as always).
+ */
+export type ReturnCardMessage = {
+  type: 'RETURN_CARD'
+  v: number
+  toPlayerId: string
+  instanceId: string
+  toZone: 'hand' | 'library' | 'exile' | 'command'
+}
+
 /** A single die roll or coin flip result. */
 export type RollResult = { kind: 'die'; sides: number; value: number } | { kind: 'coin'; value: 'heads' | 'tails' }
 
@@ -402,6 +424,7 @@ export type NetMessage =
   | TapCardMessage
   | FlipCardMessage
   | DeleteCardMessage
+  | ReturnCardMessage
   | RollMessage
   | PingMessage
   | TurnPassMessage
@@ -488,6 +511,15 @@ export function parseMessage(raw: unknown): ParseResult {
     case 'DELETE_CARD':
       if (isNonEmptyString(m.toPlayerId) && isNonEmptyString(m.instanceId)) {
         return { ok: true, msg: obj as DeleteCardMessage }
+      }
+      return { ok: false, reason: 'malformed' }
+    case 'RETURN_CARD':
+      if (
+        isNonEmptyString(m.toPlayerId) &&
+        isNonEmptyString(m.instanceId) &&
+        (m.toZone === 'hand' || m.toZone === 'library' || m.toZone === 'exile' || m.toZone === 'command')
+      ) {
+        return { ok: true, msg: obj as ReturnCardMessage }
       }
       return { ok: false, reason: 'malformed' }
     case 'ROLL':

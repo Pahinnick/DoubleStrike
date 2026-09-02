@@ -632,6 +632,13 @@
   box-sizing: border-box;
 }
 
+/* A card whose art repeatedly failed to load (as opposed to one that just has no image data at
+   all, e.g. a bare token) — dashed border keeps it visually distinct so it doesn't read as a
+   normal placeholder. */
+.playtest-card__placeholder--art-failed {
+  border-style: dashed;
+}
+
 .playtest__battlefield-card .playtest-card:hover {
   outline: 2px solid var(--accent);
   outline-offset: 1px;

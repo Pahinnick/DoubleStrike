@@ -12,6 +12,7 @@ export type ResolvedSettings = {
   soundVolume: number
   goldfishStatsDefault: boolean
   handDrawSide: HandDrawSide
+  cardCacheEnabled: boolean
 }
 
 /** Resolves the active profile's settings (with defaults for anything unset), applies the theme
@@ -49,6 +50,7 @@ export function useProfileSettings() {
   const soundVolume = stored?.soundVolume ?? 1
   const goldfishStatsDefault = stored?.goldfishStatsDefault ?? false
   const handDrawSide: HandDrawSide = stored?.handDrawSide === 'right' ? 'right' : 'left'
+  const cardCacheEnabled = stored?.cardCacheEnabled ?? true
 
   // Global, not Playtest-specific — UI sound cues (playCue) fire from the search/deck-list views
   // too, so this needs to apply regardless of which screen is showing. AppShell keeps this
@@ -63,10 +65,12 @@ export function useProfileSettings() {
     soundVolume,
     goldfishStatsDefault,
     handDrawSide,
+    cardCacheEnabled,
     setTheme: (next: Theme) => updateSettings({ theme: next }),
     setHoverPreviewMode: (next: HoverPreviewMode) => updateSettings({ hoverPreviewMode: next }),
     setSoundVolume: (next: number) => updateSettings({ soundVolume: next }),
     setGoldfishStatsDefault: (next: boolean) => updateSettings({ goldfishStatsDefault: next }),
     setHandDrawSide: (next: HandDrawSide) => updateSettings({ handDrawSide: next }),
+    setCardCacheEnabled: (next: boolean) => updateSettings({ cardCacheEnabled: next }),
   }
 }

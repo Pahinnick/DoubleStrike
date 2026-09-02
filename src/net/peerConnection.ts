@@ -66,6 +66,9 @@ export type PeerConnectionEvents = {
   cardFlipRequested: (req: { instanceId: string }) => void
   /** A directed delete request for one of OUR cards (see DeleteCardMessage) — move it to our own graveyard locally. */
   cardDeleteRequested: (req: { instanceId: string }) => void
+  /** A directed "send it back to one of our own zones" request for one of OUR cards (see
+   *  ReturnCardMessage) — move it to that zone locally. */
+  cardReturnRequested: (req: { instanceId: string; toZone: 'hand' | 'library' | 'exile' | 'command' }) => void
   /** A die/coin roll from any player (including relayed ones from other guests). */
   roll: (playerId: string, name: string, roll: RollResult) => void
   /** A "look here" ping at a table-space point, from any player (including relayed ones). */
@@ -162,6 +165,7 @@ export class PeerConnection {
     cardTapRequested: new Set(),
     cardFlipRequested: new Set(),
     cardDeleteRequested: new Set(),
+    cardReturnRequested: new Set(),
     roll: new Set(),
     ping: new Set(),
     highlight: new Set(),
@@ -334,6 +338,15 @@ export class PeerConnection {
           this.sendTo(conn, { type: 'RADIO', v: PROTOCOL_VERSION, station: this.lastRadioStation })
         }
         this.broadcastRoster()
+        // Also catch up every OTHER already-connected guest, not just the (re)joining one: a
+        // guest can miss a relayed STATE/PLAYER_LEFT if their connection happened to be
+        // transiently not-open at that exact instant (see sendTo — a silent, un-retried drop),
+        // with nothing to naturally re-trigger it until that other player's game state next
+        // changes. That's how a reconnecting player can end up stuck looking "eliminated" (life
+        // defaults to 0 when their board mirror is stale/missing) to one peer while everyone
+        // else already sees them correctly — a roster change like this one is a natural resync
+        // point, so use it to push every board we know about to the whole pod.
+        this.resyncAll()
         break
       }
       case 'STATE': {
@@ -366,6 +379,10 @@ export class PeerConnection {
       case 'DELETE_CARD':
         // A guest deleted a card on someone else's board; route it to that card's owner.
         this.deliverDelete(msg)
+        break
+      case 'RETURN_CARD':
+        // A guest sent a card on someone else's board back to hand; route it to that card's owner.
+        this.deliverReturn(msg)
         break
       case 'ROLL': {
         this.emit('roll', msg.playerId, msg.name, msg.roll)
@@ -459,7 +476,7 @@ export class PeerConnection {
   /** Finds the actual live connection for a guest playerId — defensive belt-and-suspenders
    *  alongside the HELLO-time stale-entry purge above: skips any matching entry whose
    *  connection isn't actually open rather than stopping at the first name match, so a directed
-   *  send (GIVE_CARD/RELOCATE_CARD/TAP_CARD/FLIP_CARD/DELETE_CARD) can still reach a
+   *  send (GIVE_CARD/RELOCATE_CARD/TAP_CARD/FLIP_CARD/DELETE_CARD/RETURN_CARD) can still reach a
    *  reconnected guest even if a dead duplicate entry somehow slipped through. */
   private findGuestConn(playerId: string): DataConnection | undefined {
     let fallback: DataConnection | undefined
@@ -521,6 +538,16 @@ export class PeerConnection {
     if (conn) this.sendTo(conn, msg)
   }
 
+  /** Deliver a RETURN_CARD to the card owner's client, same routing as deliverDelete. */
+  private deliverReturn(msg: Extract<NetMessage, { type: 'RETURN_CARD' }>) {
+    if (msg.toPlayerId === this.local.playerId) {
+      this.emit('cardReturnRequested', { instanceId: msg.instanceId, toZone: msg.toZone })
+      return
+    }
+    const conn = this.findGuestConn(msg.toPlayerId)
+    if (conn) this.sendTo(conn, msg)
+  }
+
   private dropGuest(peerId: string) {
     const record = this.guests.get(peerId)
     if (!record) return
@@ -532,6 +559,23 @@ export class PeerConnection {
       const left: NetMessage = { type: 'PLAYER_LEFT', v: PROTOCOL_VERSION, playerId: record.playerId }
       for (const other of this.guests.values()) this.sendTo(other.conn, left)
       this.broadcastRoster()
+      // Same resync-on-roster-change reasoning as the HELLO handler above.
+      this.resyncAll()
+    }
+  }
+
+  /** Push every board we have cached to every currently connected guest — a full resync, not
+   *  just a delta. Called on any roster change (join/reconnect/leave) so a peer that silently
+   *  missed an earlier relayed message (see sendTo's no-retry drop) gets a fresh, complete copy
+   *  at the next natural opportunity instead of staying stuck until unrelated game state
+   *  changes on someone else's end happen to re-trigger a broadcast. Idempotent and cheap — every
+   *  STATE message is a full snapshot by design (see protocol.ts's doc), so replaying one a
+   *  guest already has is a harmless no-op on their end. */
+  private resyncAll(): void {
+    for (const guest of this.guests.values()) {
+      for (const board of this.lastBoards.values()) {
+        this.sendTo(guest.conn, { type: 'STATE', v: PROTOCOL_VERSION, board })
+      }
     }
   }
 
@@ -628,6 +672,12 @@ export class PeerConnection {
         // The host delivered a delete request meant for one of our own cards.
         if (msg.toPlayerId === this.local.playerId) {
           this.emit('cardDeleteRequested', { instanceId: msg.instanceId })
+        }
+        break
+      case 'RETURN_CARD':
+        // The host delivered a "send it back to one of our own zones" request meant for one of our own cards.
+        if (msg.toPlayerId === this.local.playerId) {
+          this.emit('cardReturnRequested', { instanceId: msg.instanceId, toZone: msg.toZone })
         }
         break
       case 'ROLL':
@@ -764,6 +814,22 @@ export class PeerConnection {
     const msg: NetMessage = { type: 'DELETE_CARD', v: PROTOCOL_VERSION, toPlayerId, instanceId }
     if (this.role === 'host') {
       this.deliverDelete(msg)
+    } else if (this.role === 'guest' && this.hostConn) {
+      this.sendTo(this.hostConn, msg)
+    }
+  }
+
+  /**
+   * Ask the owner of a card sitting on OUR board (a taken/relocated/given card) to send it back
+   * to one of their own zones (hand/library/exile/command — graveyard has its own dedicated
+   * deleteCard, battlefield its own relocateCard). Same directed routing as deleteCard; the
+   * owner's client applies MOVE_CARD and the result comes back to everyone through their next
+   * STATE broadcast.
+   */
+  returnCard(toPlayerId: string, instanceId: string, toZone: 'hand' | 'library' | 'exile' | 'command'): void {
+    const msg: NetMessage = { type: 'RETURN_CARD', v: PROTOCOL_VERSION, toPlayerId, instanceId, toZone }
+    if (this.role === 'host') {
+      this.deliverReturn(msg)
     } else if (this.role === 'guest' && this.hostConn) {
       this.sendTo(this.hostConn, msg)
     }

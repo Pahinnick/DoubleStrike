@@ -19,7 +19,9 @@ export type CardFace = {
 }
 
 /** An entry in Scryfall's `all_parts` — a card related to this one (its tokens, meld halves, combo
- *  pieces, etc.). `id` is a real, resolvable Scryfall card id. We only care about `component: 'token'`. */
+ *  pieces, etc.). `id` is a real, resolvable Scryfall card id. We only care about `'token'` and
+ *  `'meld_result'` (see CardSnapshot.related_tokens) — both are cards you're never expected to own
+ *  a literal deck-slot copy of. */
 export type RelatedCard = {
   object: 'related_card'
   id: string

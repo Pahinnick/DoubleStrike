@@ -78,6 +78,16 @@ export function getCachedCard(id: string): ScryfallCard | undefined {
   return cardCache.get(id)
 }
 
+/** Clears every in-memory Scryfall cache (single-card lookups, search results, print lists).
+ *  Paired with storage/cardCache.ts's clearCardCache() (the persisted IndexedDB side) for the
+ *  Settings "Clear cached card data" button — without this, a just-cleared IndexedDB entry would
+ *  immediately get re-served from here for the rest of the session instead of actually refetching. */
+export function resetInMemoryCardCache(): void {
+  cardCache.clear()
+  searchCache.clear()
+  printsCache.clear()
+}
+
 /**
  * Resolves a full ScryfallCard by printing id, serving the in-memory cache when a prior search/
  * lookup already populated it, otherwise a single rate-limited `GET /cards/:id`. Needed because
@@ -210,17 +220,26 @@ export async function getCardsByIdentifiers(identifiers: CardIdentifier[], optio
     }
   }
 
+  // Each chunk is caught independently: a large pod/deck can span several 75-card batches, and
+  // one batch failing (a rate-limit blip, a dropped connection) used to reject the whole call,
+  // throwing away every other batch's results even though they'd already succeeded. Callers
+  // (e.g. hooks/useCardSnapshots.ts) now get back whatever did resolve instead of nothing.
   for (const batch of chunk(toFetch, COLLECTION_BATCH_SIZE)) {
-    const result = await scryfallFetch<ScryfallList<ScryfallCard> & { not_found: CardIdentifier[] }>(
-      `${API_BASE}/cards/collection`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ identifiers: batch }),
-      },
-    )
-    cacheCards(result.data)
-    resolved.push(...result.data)
+    try {
+      const result = await scryfallFetch<ScryfallList<ScryfallCard> & { not_found: CardIdentifier[] }>(
+        `${API_BASE}/cards/collection`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ identifiers: batch }),
+        },
+      )
+      cacheCards(result.data)
+      resolved.push(...result.data)
+    } catch {
+      // Leave this batch's cards out of `resolved` — the caller sees a partial result and can
+      // decide to retry just the still-missing ids, rather than the whole request failing.
+    }
   }
 
   return resolved

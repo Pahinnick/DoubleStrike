@@ -1,21 +1,85 @@
 import { useEffect, useState } from 'react'
 import { getCardsByIdentifiers } from '../api/scryfall'
+import { notifyWarning } from '../notifications'
 import { getSnapshots, isSnapshotStale, saveSnapshots, toSnapshot, type CardSnapshot } from '../storage/cardCache'
+import { useProfileSettings } from './useProfileSettings'
 
 // Module-level so a stale or missing card is only (re-)fetched once per session, even
 // though multiple components (DeckPanel, DeckStatsPanel, PlaytestView) call this hook.
 const refreshedIds = new Set<string>()
 
+// A handful of bounded, increasingly spaced-out retry attempts for ids whose fetch didn't come
+// back — covers the "app launched before the network/Wi-Fi was actually ready" and "one
+// transient Scryfall blip" cases. Without this, nothing ever retried a failed id unless the
+// *set* of requested ids changed content (e.g. a new token entered play) — a card that failed
+// its very first fetch could go art-less for the rest of a whole session even though the id was
+// technically still eligible for a retry that never got triggered. Not unbounded: once these are
+// exhausted, a `navigator.onLine` transition or the id list actually changing is what tries again.
+const RETRY_DELAYS_MS = [3000, 10000, 30000]
+
 export function useCardSnapshots(ids: string[]): [Map<string, CardSnapshot>, () => Promise<void>] {
+  const { cardCacheEnabled } = useProfileSettings()
   const [snapshots, setSnapshots] = useState<Map<string, CardSnapshot>>(new Map())
   const idsKey = ids.join(',')
 
   useEffect(() => {
     let cancelled = false
+    let missing: string[] = []
+    const timers: ReturnType<typeof setTimeout>[] = []
+
     if (ids.length === 0) {
       setSnapshots(new Map())
       return
     }
+
+    function applyFetched(cards: Awaited<ReturnType<typeof getCardsByIdentifiers>>) {
+      if (cards.length === 0 || cancelled) return
+      const apply = async () => {
+        if (cardCacheEnabled) await saveSnapshots(cards)
+        if (cancelled) return
+        setSnapshots((prev) => {
+          const next = new Map(prev)
+          for (const card of cards) next.set(card.id, toSnapshot(card))
+          return next
+        })
+      }
+      void apply()
+    }
+
+    function scheduleRetry(stillMissing: string[], attempt: number) {
+      missing = stillMissing
+      if (cancelled || stillMissing.length === 0) return
+      if (attempt >= RETRY_DELAYS_MS.length) {
+        notifyWarning("Couldn't load some card data from Scryfall — check your connection.")
+        return
+      }
+      timers.push(setTimeout(() => attemptFetch(stillMissing, attempt), RETRY_DELAYS_MS[attempt]))
+    }
+
+    // Fetch failures are already caught per-chunk inside getCardsByIdentifiers (a partial batch
+    // failure still returns whatever succeeded), so this only ever resolves — never rejects.
+    // Only the ids actually present in the result count as "fetched"; anything still missing
+    // stays eligible for the next retry instead of being blacklisted for the rest of the session.
+    function attemptFetch(idsToFetch: string[], attempt: number) {
+      missing = idsToFetch
+      void getCardsByIdentifiers(idsToFetch.map((id) => ({ id }))).then((cards) => {
+        if (cancelled) return
+        const fetchedIds = new Set(cards.map((c) => c.id))
+        for (const id of idsToFetch) if (fetchedIds.has(id)) refreshedIds.add(id)
+        applyFetched(cards)
+        scheduleRetry(
+          idsToFetch.filter((id) => !fetchedIds.has(id)),
+          attempt + 1,
+        )
+      })
+    }
+
+    function onOnline() {
+      // Connectivity just came back — jump straight to a fresh attempt instead of waiting out
+      // whatever backoff delay was already scheduled (or re-trying if we'd already given up).
+      if (missing.length > 0) attemptFetch(missing, 0)
+    }
+    window.addEventListener('online', onOnline)
 
     getSnapshots(ids).then((results) => {
       if (cancelled) return
@@ -29,53 +93,25 @@ export function useCardSnapshots(ids: string[]): [Map<string, CardSnapshot>, () 
         } else if (!refreshedIds.has(id)) {
           // Never cached locally at all — e.g. an opponent's battlefield/graveyard/exile card
           // in a multiplayer pod that isn't in your own deck, so your client has never seen it
-          // before. Previously this was silently dropped forever (never fetched, never
-          // retried), rendering as a placeholder showing the raw scryfallId instead of art.
+          // before.
           idsToFetch.push(id)
         }
       })
       setSnapshots(map)
 
       if (idsToFetch.length === 0) return
-
-      // Fetch stale refreshes and never-cached ids together. Silently update the cache and
-      // re-render only if the fetch succeeds. `refreshedIds` is only populated on success
-      // (below) — marking it upfront meant a single transient failure (network blip, a
-      // momentary Scryfall rate-limit) permanently blacklisted that id from ever being
-      // fetched again this session, since nothing here ever retried it. That's how an
-      // opponent's card could end up with no art for the rest of a multiplayer game.
-      void getCardsByIdentifiers(idsToFetch.map((id) => ({ id }))).then(
-        async (cards) => {
-          if (cancelled) return
-          idsToFetch.forEach((id) => refreshedIds.add(id))
-          if (cards.length === 0) return
-          await saveSnapshots(cards)
-          if (cancelled) return
-          setSnapshots((prev) => {
-            const next = new Map(prev)
-            // Unconditional set: unlike the old stale-only refresh, a never-cached id has no
-            // existing entry to gate on — every id here was explicitly requested in idsToFetch.
-            for (const card of cards) {
-              next.set(card.id, toSnapshot(card))
-            }
-            return next
-          })
-        },
-        () => {
-          // Fetch failed outright (network error, rate limit, etc.) — leave `refreshedIds`
-          // untouched so the next render's staleness/never-cached check retries these ids
-          // instead of giving up on them for the rest of the session.
-        },
-      )
+      attemptFetch(idsToFetch, 0)
     })
 
     return () => {
       cancelled = true
+      timers.forEach(clearTimeout)
+      window.removeEventListener('online', onOnline)
     }
     // idsKey is a stable serialization of `ids` used intentionally in place
     // of the array reference, which changes every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [idsKey])
+  }, [idsKey, cardCacheEnabled])
 
   /** Unconditionally re-fetches every id from Scryfall, bypassing both the 7-day staleness gate
    *  and the in-memory `cardCache` in api/scryfall.ts (a card touched earlier this session would
@@ -89,7 +125,7 @@ export function useCardSnapshots(ids: string[]): [Map<string, CardSnapshot>, () 
       { force: true },
     )
     if (cards.length === 0) return
-    await saveSnapshots(cards)
+    if (cardCacheEnabled) await saveSnapshots(cards)
     setSnapshots((prev) => {
       const next = new Map(prev)
       for (const card of cards) next.set(card.id, toSnapshot(card))

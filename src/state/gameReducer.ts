@@ -110,8 +110,20 @@ export type GameAction =
    *  passes every current hand instanceId in the desired new order. */
   | { type: 'REORDER_HAND'; orderedInstanceIds: string[] }
   /** `faceDown`, if given, sets the card's face-down status as it lands on the battlefield (e.g.
-   *  playing a card from hand face down) instead of just carrying over whatever it was before. */
-  | { type: 'MOVE_CARD'; instanceId: string; toZone: GameZone; x?: number; y?: number; libraryPosition?: 'top' | 'bottom'; faceDown?: boolean }
+   *  playing a card from hand face down) instead of just carrying over whatever it was before.
+   *  `atSeat`, if given, lands the card directly in another player's quadrant (e.g. playing a
+   *  hand card by dropping it onto someone else's board) while it's still ours — same "move any
+   *  card anywhere, ownership unaffected" convention as RECEIVE_RELOCATED_CARD's `atSeat`. */
+  | {
+      type: 'MOVE_CARD'
+      instanceId: string
+      toZone: GameZone
+      x?: number
+      y?: number
+      libraryPosition?: 'top' | 'bottom'
+      faceDown?: boolean
+      atSeat?: Seat
+    }
   | { type: 'SET_POSITION'; instanceId: string; x: number; y: number }
   /** Clones a battlefield card's scryfallId/art as a token, also on the battlefield. */
   | { type: 'CREATE_TOKEN'; sourceInstanceId: string; x: number; y: number }
@@ -310,6 +322,7 @@ function gameReducerInner(state: GameState, action: GameAction): GameState {
         // A card leaving the battlefield is revealed, same as real Magic (a face-down
         // permanent that dies/bounces turns face up).
         faceDown: action.toZone === 'battlefield' ? (action.faceDown ?? card.faceDown) : undefined,
+        atSeat: action.toZone === 'battlefield' ? action.atSeat : undefined,
       }
       const rest = state.cards.filter((c) => c.instanceId !== action.instanceId)
       // "Top of library" = before every other card; everything else appends,

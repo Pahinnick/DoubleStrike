@@ -21,6 +21,7 @@ import PlaytestView from './components/playtest/PlaytestView'
 import ProfileSwitcher from './components/profile/ProfileSwitcher'
 import WelcomeNameModal from './components/profile/WelcomeNameModal'
 import SettingsModal from './components/settings/SettingsModal'
+import NotificationBanner from './components/shared/NotificationBanner'
 import UpdateBanner from './components/shared/UpdateBanner'
 import { applyTutorialPreconDeck, resolveTutorialPreconDeck } from './components/shared/loadTutorialPreconDeck'
 import { hasSeenTutorial, TutorialProvider, useTutorialContext } from './components/shared/TutorialContext'
@@ -392,6 +393,7 @@ function App() {
           window share one Electron process, so mounting this there too would just show the
           same restart prompt twice. */}
       {!isPlaytestWindow && <UpdateBanner />}
+      <NotificationBanner />
     </ProfileProvider>
   )
 }

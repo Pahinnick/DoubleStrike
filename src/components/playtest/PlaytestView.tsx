@@ -137,6 +137,12 @@ const CAMERA_ANIM_MS = 260
 // state — so this fires roughly once per settled game change.
 const BROADCAST_DEBOUNCE_MS = 150
 
+// Belt-and-suspenders re-broadcast interval — see its useEffect's doc for why this exists
+// alongside the change-driven broadcast above. Frequent enough that a missed update (e.g. a
+// stale "eliminated" mirror after a reconnect) self-heals within a game-relevant timeframe,
+// infrequent enough to stay well clear of being meaningful bandwidth.
+const BOARD_HEARTBEAT_MS = 15_000
+
 // Same coalescing idea as the network broadcast above, but a longer window — an IndexedDB write
 // doesn't need to keep up with live opponents, just needs to settle before the tab actually closes.
 const SOLO_AUTOSAVE_DEBOUNCE_MS = 800
@@ -333,6 +339,7 @@ function PlaytestView({ onClose }: Props) {
     tapRemoteCard,
     flipRemoteCard,
     deleteRemoteCard,
+    returnRemoteCard,
   } = useMultiplayer(
     {
       playerId,
@@ -360,6 +367,9 @@ function PlaytestView({ onClose }: Props) {
     (instanceId) => addHighlight(instanceId),
     // Another player's emoji reaction, relayed to us — just show it, nothing to broadcast back.
     (reactorId, _name, emoji) => addReaction(reactorId, emoji),
+    // Another player sent one of our own cards sitting on their board (given, or just taken via
+    // relocate) back to one of our own zones — apply it locally; our next STATE broadcast shows everyone.
+    (req) => dispatch({ type: 'MOVE_CARD', instanceId: req.instanceId, toZone: req.toZone }),
   )
   const [mpModalOpen, setMpModalOpen] = useState(false)
   // Honors the deck-editor header's "Multiplayer" button (see multiplayerEntryBridge) — jumps
@@ -416,6 +426,21 @@ function PlaytestView({ onClose }: Props) {
     }, BROADCAST_DEBOUNCE_MS)
     return () => window.clearTimeout(handle)
   }, [state, mySeat, mpActive, broadcast, playerId, playerName, battlefieldSkin])
+
+  // Also re-broadcast on a plain interval, regardless of whether our own state actually
+  // changed. The wire protocol is meant to be "self-healing after a dropped packet" (every
+  // STATE is a full snapshot — see protocol.ts's doc), but nothing was actually re-sending one
+  // if a relayed message got silently dropped (see peerConnection's sendTo) — a peer could then
+  // stay stuck on a stale mirror (e.g. showing someone as eliminated from an old life<=0
+  // snapshot, wrongly, after they reconnected fine) until *their* own game state happened to
+  // change again. This closes that gap without needing to know it happened.
+  useEffect(() => {
+    if (!mpActive || mySeat === null) return
+    const handle = window.setInterval(() => {
+      broadcast(toPublicBoard(state, { playerId, name: playerName, seat: mySeat, battlefieldSkin }))
+    }, BOARD_HEARTBEAT_MS)
+    return () => window.clearInterval(handle)
+  }, [mpActive, mySeat, broadcast, playerId, playerName, battlefieldSkin, state])
 
   // DEV-only "preview pod" seam: inject mock opponents so the shared-table layout
   // and camera can be exercised without a live connection (real P2P joining is
@@ -1469,6 +1494,34 @@ function PlaytestView({ onClose }: Props) {
     // shown for our own battlefield cards, whose faceDown state hides them from opponents, not
     // from us (see GameCard.faceDown doc).
     actions.push({ label: 'Look Up Rulings', onSelect: () => lookUpRulings(gameCard.scryfallId) })
+    // Ownership transfer is now exclusively an explicit choice here — dropping a card onto
+    // someone else's board just relocates it (see handleBattlefieldDrop), so giving it away for
+    // real needs its own unambiguous action instead.
+    if (inPod && mpActive && opponentBoards.length > 0) {
+      actions.push({
+        label: 'Give Card',
+        submenu: opponentBoards.map((board) => ({
+          label: board.name || `Seat ${board.seat}`,
+          onSelect: () => {
+            giveCard(board.playerId, {
+              instanceId: gameCard.instanceId,
+              scryfallId: gameCard.scryfallId,
+              // Preserve the true owner if this card was itself given to us.
+              ownerSeat: gameCard.ownerSeat ?? mySeatResolved,
+              x: gameCard.x ?? 0,
+              y: gameCard.y ?? 0,
+              tapped: gameCard.tapped,
+              counters: gameCard.counters,
+              ptCounters: gameCard.ptCounters,
+              showBackFace: gameCard.showBackFace,
+              isToken: gameCard.isToken,
+              faceDown: gameCard.faceDown,
+            })
+            dispatch({ type: 'REMOVE_CARD', instanceId: gameCard.instanceId })
+          },
+        })),
+      })
+    }
     return actions
   }
 
@@ -1713,10 +1766,12 @@ function PlaytestView({ onClose }: Props) {
       return
     }
 
-    // Dropped a battlefield *or hand* card into a live opponent's quadrant → hand it (and any
-    // multi-selected group riding along, battlefield-only) over. Giving straight from hand
-    // (not just cards already played on your own board) matches how handing someone a card
-    // actually works.
+    // Dropped a battlefield *or hand* card into a live opponent's quadrant → it's still ours,
+    // just visually placed there ("move any card anywhere," symmetric with how an opponent's
+    // card dragged onto OUR board above stays theirs). Ownership only ever changes through the
+    // explicit "Give Card" context-menu action now — a drop, even onto someone else's board,
+    // never hands a card away by itself; that used to surprise people who just wanted to
+    // reposition their own card for table-talk/organizational reasons.
     if (inPod && mpActive && (data.fromZone === 'battlefield' || data.fromZone === 'hand')) {
       const targetSeat = seatAtSurfacePoint(surfaceX, surfaceY)
       const targetBoard = targetSeat !== mySeatResolved ? opponentBoards.find((b) => b.seat === targetSeat) : undefined
@@ -1725,31 +1780,24 @@ function PlaytestView({ onClose }: Props) {
       if (targetBoard && card) {
         const targetOrigin = seatOrigin(targetSeat, CANVAS_W, CANVAS_H)
         const local = clampToCanvas(surfaceX - targetOrigin.x, surfaceY - targetOrigin.y)
-        const giveOne = (c: (typeof battlefield)[number], x: number, y: number) => {
-          giveCard(targetBoard.playerId, {
-            instanceId: c.instanceId,
-            scryfallId: c.scryfallId,
-            // Preserve the true owner if this card was itself given to us.
-            ownerSeat: c.ownerSeat ?? mySeatResolved,
-            x,
-            y,
-            tapped: c.tapped,
-            counters: c.counters,
-            ptCounters: c.ptCounters,
-            showBackFace: c.showBackFace,
-            isToken: c.isToken,
-            faceDown: c.faceDown,
-          })
-          dispatch({ type: 'REMOVE_CARD', instanceId: c.instanceId })
-        }
+        // Normalize back to undefined if somehow dropped on our own seat (shouldn't happen here
+        // since targetBoard is only set for a seat that isn't ours, but keeps the convention
+        // consistent with RECEIVE_RELOCATED_CARD/the opponent-card relocate path above).
+        const atSeat = targetSeat === mySeatResolved ? undefined : targetSeat
         const burstPoint = mirror(surfaceX + CARD_W_PX / 2, surfaceY + CARD_H_PX / 2)
         particlesRef.current?.burst(burstPoint.x, burstPoint.y)
-        giveOne(card, local.x, local.y)
-        for (const g of data.groupOffsets ?? []) {
-          const member = battlefield.find((c) => c.instanceId === g.instanceId)
-          if (!member) continue
-          const memberLocal = clampToCanvas(surfaceX - targetOrigin.x + g.dx, surfaceY - targetOrigin.y + g.dy)
-          giveOne(member, memberLocal.x, memberLocal.y)
+        if (data.fromZone === 'battlefield') {
+          dispatch({ type: 'RECEIVE_RELOCATED_CARD', instanceId: card.instanceId, x: local.x, y: local.y, atSeat })
+          for (const g of data.groupOffsets ?? []) {
+            const member = battlefield.find((c) => c.instanceId === g.instanceId)
+            if (!member) continue
+            const memberLocal = clampToCanvas(surfaceX - targetOrigin.x + g.dx, surfaceY - targetOrigin.y + g.dy)
+            dispatch({ type: 'RECEIVE_RELOCATED_CARD', instanceId: member.instanceId, x: memberLocal.x, y: memberLocal.y, atSeat })
+          }
+        } else {
+          // Playing straight from hand onto someone else's quadrant — same "still ours" rule.
+          dispatch({ type: 'MOVE_CARD', instanceId: card.instanceId, toZone: 'battlefield', x: local.x, y: local.y, atSeat })
+          playCue('play-card')
         }
         return
       }
@@ -1929,6 +1977,19 @@ function PlaytestView({ onClose }: Props) {
   function dropToZone(toZone: GameZone, libraryPosition?: 'top' | 'bottom') {
     return (data: DraggedGameCard) => {
       if (data.fromZone === toZone && toZone !== 'library') return
+      // A card that's actually someone else's (given away, or just sitting on our board via the
+      // free-for-all "move any card anywhere" relocate) isn't in our own state at all — a local
+      // MOVE_CARD here would silently no-op. Route to whichever directed request its target zone
+      // already has: DELETE_CARD for the graveyard (existing), or the more general RETURN_CARD for
+      // everything else this drops onto (library/exile/command — battlefield has its own
+      // relocateCard, never routed through here).
+      if (data.fromPlayerId && mpActive) {
+        if (toZone === 'graveyard') deleteRemoteCard(data.fromPlayerId, data.instanceId)
+        else if (toZone === 'hand' || toZone === 'library' || toZone === 'exile' || toZone === 'command') {
+          returnRemoteCard(data.fromPlayerId, data.instanceId, toZone)
+        }
+        return
+      }
       dispatch({ type: 'MOVE_CARD', instanceId: data.instanceId, toZone, libraryPosition })
     }
   }
@@ -3087,6 +3148,16 @@ function PlaytestView({ onClose }: Props) {
           event.preventDefault()
           const data = getGameDragData(event)
           if (!data) return
+          // A card that's actually someone else's (given away, or just sitting on our board via
+          // the free-for-all "move any card anywhere" relocate) isn't in our own state at all —
+          // a local MOVE_CARD here would silently no-op. Ask its real owner's client to send it
+          // to *their* hand instead (see ReturnCardMessage) — the one drop target this used to
+          // have no directed request for at all (unlike battlefield repositioning/RELOCATE_CARD
+          // or the graveyard/DELETE_CARD, which already worked this way).
+          if (data.fromPlayerId) {
+            if (mpActive) returnRemoteCard(data.fromPlayerId, data.instanceId, 'hand')
+            return
+          }
           if (data.fromZone !== 'hand') {
             dispatch({ type: 'MOVE_CARD', instanceId: data.instanceId, toZone: 'hand' })
             return

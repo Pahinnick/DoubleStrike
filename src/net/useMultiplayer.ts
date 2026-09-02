@@ -47,6 +47,10 @@ export type MultiplayerSession = {
   flipRemoteCard: (toPlayerId: string, instanceId: string) => void
   /** Ask a card's owner to send it to their own graveyard (a taken card sitting on our board). No-op when not connected. */
   deleteRemoteCard: (toPlayerId: string, instanceId: string) => void
+  /** Ask a card's owner to send it back to one of their own zones — hand/library/exile/command (a
+   *  taken/given/relocated card sitting on our board; graveyard has its own deleteRemoteCard,
+   *  battlefield its own relocateCard). No-op when not connected. */
+  returnRemoteCard: (toPlayerId: string, instanceId: string, toZone: 'hand' | 'library' | 'exile' | 'command') => void
   /** Publish a die/coin roll to the pod. No-op when not connected. */
   broadcastRoll: (roll: RollResult) => void
   /** Publish a "look here" ping (table-space x/y) to the pod. No-op when not connected. */
@@ -75,6 +79,7 @@ export function useMultiplayer(
   onCardDeleteRequested?: (req: { instanceId: string }) => void,
   onHighlightReceived?: (instanceId: string) => void,
   onReactionReceived?: (playerId: string, name: string, emoji: string) => void,
+  onCardReturnRequested?: (req: { instanceId: string; toZone: 'hand' | 'library' | 'exile' | 'command' }) => void,
 ): MultiplayerSession {
   const connRef = useRef<PeerConnection | null>(null)
 
@@ -92,6 +97,8 @@ export function useMultiplayer(
   onCardFlipRequestedRef.current = onCardFlipRequested
   const onCardDeleteRequestedRef = useRef(onCardDeleteRequested)
   onCardDeleteRequestedRef.current = onCardDeleteRequested
+  const onCardReturnRequestedRef = useRef(onCardReturnRequested)
+  onCardReturnRequestedRef.current = onCardReturnRequested
   const onRollReceivedRef = useRef(onRollReceived)
   onRollReceivedRef.current = onRollReceived
   const onPingReceivedRef = useRef(onPingReceived)
@@ -155,6 +162,7 @@ export function useMultiplayer(
     conn.on('cardTapRequested', (req) => onCardTapRequestedRef.current?.(req))
     conn.on('cardFlipRequested', (req) => onCardFlipRequestedRef.current?.(req))
     conn.on('cardDeleteRequested', (req) => onCardDeleteRequestedRef.current?.(req))
+    conn.on('cardReturnRequested', (req) => onCardReturnRequestedRef.current?.(req))
     conn.on('roll', (playerId, name, roll) => onRollReceivedRef.current?.(playerId, name, roll))
     conn.on('ping', (playerId, name, x, y) => onPingReceivedRef.current?.(playerId, name, x, y))
     conn.on('highlight', (instanceId) => onHighlightReceivedRef.current?.(instanceId))
@@ -206,6 +214,10 @@ export function useMultiplayer(
 
   const deleteRemoteCard = useCallback((toPlayerId: string, instanceId: string) => {
     connRef.current?.deleteCard(toPlayerId, instanceId)
+  }, [])
+
+  const returnRemoteCard = useCallback((toPlayerId: string, instanceId: string, toZone: 'hand' | 'library' | 'exile' | 'command') => {
+    connRef.current?.returnCard(toPlayerId, instanceId, toZone)
   }, [])
 
   const broadcastRoll = useCallback((roll: RollResult) => {
@@ -261,6 +273,7 @@ export function useMultiplayer(
     tapRemoteCard,
     flipRemoteCard,
     deleteRemoteCard,
+    returnRemoteCard,
     broadcastRoll,
     broadcastPing,
     broadcastHighlight,

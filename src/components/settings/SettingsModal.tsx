@@ -1,5 +1,8 @@
 import { useState } from 'react'
+import { resetInMemoryCardCache } from '../../api/scryfall'
 import { useProfileSettings } from '../../hooks/useProfileSettings'
+import { notifyInfo } from '../../notifications'
+import { clearCardCache } from '../../storage/cardCache'
 import ShortcutsModal from '../playtest/ShortcutsModal'
 import ThemePicker from '../shared/ThemePicker'
 import { useTutorialContext } from '../shared/TutorialContext'
@@ -21,9 +24,23 @@ function SettingsModal({ onClose }: Props) {
     setGoldfishStatsDefault,
     handDrawSide,
     setHandDrawSide,
+    cardCacheEnabled,
+    setCardCacheEnabled,
   } = useProfileSettings()
   const tutorial = useTutorialContext()
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [clearingCache, setClearingCache] = useState(false)
+
+  async function handleClearCardCache() {
+    setClearingCache(true)
+    try {
+      await clearCardCache()
+      resetInMemoryCardCache()
+      notifyInfo('Cleared cached card data.')
+    } finally {
+      setClearingCache(false)
+    }
+  }
 
   return (
     <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Settings" onClick={onClose}>
@@ -63,6 +80,21 @@ function SettingsModal({ onClose }: Props) {
           <p className="settings-modal__hint">
             Hover/tap/draw/shuffle cues everywhere in the app, not the table radio — that has its own volume slider in the radio panel.
           </p>
+        </section>
+
+        <section className="settings-modal__section">
+          <h3>Card data cache</h3>
+          <label className="settings-modal__checkbox-row">
+            <input type="checkbox" checked={cardCacheEnabled} onChange={(event) => setCardCacheEnabled(event.target.checked)} />
+            Cache fetched card data locally
+          </label>
+          <p className="settings-modal__hint">
+            Keeps card names, mana costs, and art on this device so they don't need to be re-fetched from Scryfall next time. On by
+            default; turning it off still works normally for this session, it just won't be remembered next launch.
+          </p>
+          <button type="button" onClick={handleClearCardCache} disabled={clearingCache}>
+            {clearingCache ? 'Clearing…' : 'Clear cached card data'}
+          </button>
         </section>
 
         <section className="settings-modal__section">

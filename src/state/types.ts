@@ -82,6 +82,11 @@ export type ProfileSettings = {
   /** Which side of the hand fan a freshly-drawn card lands on (Draw button, the automatic
    *  once-per-turn draw) — 'left' (default) matches the app's original, only-ever behavior. */
   handDrawSide?: 'left' | 'right'
+  /** Whether fetched card data (name/mana cost/image URIs/etc., see storage/cardCache.ts) gets
+   *  persisted to the local IndexedDB cache — true (default) matches the app's original, always-on
+   *  behavior. Turning it off still fetches and displays cards normally for the current session;
+   *  it just skips writing them to disk, so nothing carries over to the next launch. */
+  cardCacheEnabled?: boolean
 }
 
 export type Profile = {
