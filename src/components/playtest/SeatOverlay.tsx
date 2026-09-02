@@ -88,6 +88,11 @@ type Props = {
    *  gates a "Hand n" chip alongside graveyard/exile, since handCount alone is always public
    *  but the actual cards are only viewable while this is true. */
   handRevealed?: boolean
+  /** This seat's top library card, present only while they've opted in to the public "play with
+   *  the top card of your library revealed" effect (GameState.revealTopToPod → PublicBoard
+   *  .topOfLibrary). Distinct from the private "you may look at the top card" toggle, which
+   *  never leaves its own client. */
+  revealedTopCard?: CommanderInfo
   /** Mana currently floating on this seat's board — public like life/poison (see
    *  PublicBoard.floatingMana). Sparse: only nonzero colors are guaranteed present. */
   floatingMana?: Partial<Record<ManaColorKey, number>>
@@ -278,6 +283,7 @@ function SeatOverlay({
   graveyardCount = 0,
   exileCount = 0,
   handRevealed = false,
+  revealedTopCard,
   floatingMana = {},
   onFocus,
   onLifeChange,
@@ -438,6 +444,20 @@ function SeatOverlay({
               >
                 Hand {handCount}
               </button>
+            )}
+            {/* A thumbnail rather than a count chip like its neighbours: this is one specific
+                card, and which card it is IS the information — a "Top 1" button would say
+                nothing. Reuses CommanderChip for the same hover-to-enlarge behaviour every
+                other card thumbnail here has. */}
+            {revealedTopCard && (
+              <span className="playtest__seat-zone-card" title={`${name} is revealing their top card: ${revealedTopCard.name}`}>
+                Top
+                <CommanderChip
+                  scryfallId={revealedTopCard.scryfallId}
+                  name={revealedTopCard.name}
+                  snapshot={revealedTopCard.snapshot}
+                />
+              </span>
             )}
           </div>
         )}

@@ -73,9 +73,22 @@ export type GameState = {
   turn: number
   mulligans: number
   startingLife: number
-  /** Persistent "play with the top card of your library revealed" toggle — purely a local display
-   *  preference (never shared: hand/library contents stay private, same as always). */
+  /** The PRIVATE half of Magic's two different top-of-library effects: "you may look at the top
+   *  card of your library any time" (Vizier of the Menagerie, Realmwalker…). Shows the card to
+   *  YOU only — purely a local display preference, never shared, same as hand/library contents
+   *  always have been. Its public counterpart is `revealTopToPod` below; the two are independent
+   *  because the effects granting them are independent, and a card can grant either one.
+   *
+   *  Kept under this name (rather than renamed to something like `lookAtTopOfLibrary`) on
+   *  purpose: it's persisted in autosaves (see storage/soloGameStorage.ts), so repurposing the
+   *  name would make an existing save's private peek come back as a public reveal. */
   revealTopOfLibrary: boolean
+  /** The PUBLIC half: "play with the top card of your library revealed" (Future Sight, Oracle of
+   *  Mul Daya, Bolas's Citadel…), where the card is open information for the whole table. When
+   *  true, the top card rides along in this client's PublicBoard broadcast (see toPublicBoard)
+   *  so every other seat can see it, exactly like `revealHand` does for the hand. Defaults off
+   *  and resets on START_GAME. Implies you can see it too, naturally. */
+  revealTopToPod: boolean
   /** Deliberate exception to the hand's usual privacy: when true, the whole hand's card identities
    *  are included in this client's PublicBoard broadcast (see toPublicBoard) instead of just
    *  handCount. Teaching/"okay look what I've got" moment, not a permanent state — defaults off
@@ -174,6 +187,8 @@ export type GameAction =
    *  is the quadrant it was dropped into (undefined = back to our own natural seat). */
   | { type: 'RECEIVE_RELOCATED_CARD'; instanceId: string; x: number; y: number; atSeat?: Seat }
   | { type: 'TOGGLE_REVEAL_TOP' }
+  /** Public counterpart to TOGGLE_REVEAL_TOP — see GameState.revealTopToPod. */
+  | { type: 'TOGGLE_REVEAL_TOP_TO_POD' }
   | { type: 'TOGGLE_REVEAL_HAND' }
   /** Single-level undo: replaces the whole state wholesale with a snapshot taken just before the
    *  last dispatched action (see PlaytestView's dispatch wrapper) — a misclick fix, not a semantic
@@ -279,6 +294,7 @@ function gameReducerInner(state: GameState, action: GameAction): GameState {
         mulligans: 0,
         startingLife: action.startingLife,
         revealTopOfLibrary: false,
+        revealTopToPod: false,
         revealHand: false,
         scooped: false,
         floatingMana: zeroManaPool(),
@@ -609,6 +625,9 @@ function gameReducerInner(state: GameState, action: GameAction): GameState {
 
     case 'TOGGLE_REVEAL_TOP':
       return { ...state, revealTopOfLibrary: !state.revealTopOfLibrary }
+
+    case 'TOGGLE_REVEAL_TOP_TO_POD':
+      return { ...state, revealTopToPod: !state.revealTopToPod }
 
     case 'TOGGLE_REVEAL_HAND':
       return { ...state, revealHand: !state.revealHand }

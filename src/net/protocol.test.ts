@@ -128,6 +128,26 @@ describe('serialization round-trips', () => {
     expect(deserialize(serialize(msg))).toEqual(msg)
   })
 
+  it('RETURN_CARD round-trips with and without a libraryPosition', () => {
+    const bottomed: NetMessage = {
+      type: 'RETURN_CARD',
+      v: PROTOCOL_VERSION,
+      toPlayerId: 'p2',
+      instanceId: 'i1',
+      toZone: 'library',
+      libraryPosition: 'bottom',
+    }
+    expect(deserialize(serialize(bottomed))).toEqual(bottomed)
+    // Omitted entirely by an older sender — still valid, and MOVE_CARD's own default takes over.
+    const plain: NetMessage = { type: 'RETURN_CARD', v: PROTOCOL_VERSION, toPlayerId: 'p2', instanceId: 'i1', toZone: 'hand' }
+    expect(deserialize(serialize(plain))).toEqual(plain)
+  })
+
+  it('rejects a RETURN_CARD with an unknown libraryPosition', () => {
+    const bad = { type: 'RETURN_CARD', v: PROTOCOL_VERSION, toPlayerId: 'p2', instanceId: 'i1', toZone: 'library', libraryPosition: 'middle' }
+    expect(deserialize(JSON.stringify(bad))).toBeNull()
+  })
+
   it('rejects a board with a malformed hand pile card', () => {
     const bad = board({ hand: [{ scryfallId: 's1' } as never] })
     expect(deserialize(JSON.stringify({ type: 'STATE', v: PROTOCOL_VERSION, board: bad }))).toBeNull()

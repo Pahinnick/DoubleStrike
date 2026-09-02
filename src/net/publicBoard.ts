@@ -131,6 +131,14 @@ export function toPublicBoard(state: GameState, identity: LocalIdentity): Public
   // Deliberate, opt-in exception to the hand's usual privacy — same masked-by-default pattern as
   // face-down cards, just inverted: only sent while the player has explicitly toggled it on.
   if (state.revealHand) board.hand = zoneCards(state, 'hand').map(toPublicPileCard)
+  // Same opt-in shape for the library's top card — the PUBLIC "play with the top card revealed"
+  // effect. Its private sibling (GameState.revealTopOfLibrary, "you may look at the top card any
+  // time") is deliberately absent here: that one shows the card to its owner only and must never
+  // reach the wire. An empty library simply has no top card to share.
+  if (state.revealTopToPod) {
+    const top = zoneCards(state, 'library')[0]
+    if (top) board.topOfLibrary = toPublicPileCard(top)
+  }
   if (identity.battlefieldSkin) board.battlefieldSkin = identity.battlefieldSkin
   if (state.scooped) board.scooped = true
   const floatingMana = toPublicFloatingMana(state.floatingMana)

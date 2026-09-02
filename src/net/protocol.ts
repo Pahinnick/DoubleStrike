@@ -159,6 +159,12 @@ export type PublicBoard = {
    *  graveyard/exile/command. Absent (not an empty array) means hand contents are still private;
    *  receivers must keep relying on handCount in that case, same as always. */
   hand?: PublicPileCard[]
+  /** The sender's top library card, present only while they've opted in to "play with the top
+   *  card of your library revealed" (GameState.revealTopToPod) — the public one of Magic's two
+   *  top-of-library effects. Same opt-in shape as `hand` above: absent (not null) means the
+   *  library's top is private, which is the normal case. The separate private "you may look at
+   *  the top card any time" toggle deliberately never reaches the wire at all. */
+  topOfLibrary?: PublicPileCard
   /** The sender's chosen Playtest playmat skin (see useBattlefieldSkin.ts) — cosmetic only, so
    *  kept as a loose string here rather than importing that hook's union type (this module stays
    *  React-free). The renderer falls back to 'felt' for anything it doesn't recognize, which
@@ -327,6 +333,12 @@ export type ReturnCardMessage = {
   toPlayerId: string
   instanceId: string
   toZone: 'hand' | 'library' | 'exile' | 'command'
+  /** Only meaningful for `toZone: 'library'` — which end it goes to, matching MOVE_CARD's own
+   *  `libraryPosition`. Optional and defaulting to 'top' (MOVE_CARD's own default) so an older
+   *  sender that omits it behaves exactly as it did before this existed. Bottoming a card is a
+   *  real and distinct effect from putting it on top, and the local drop path already offered
+   *  both — this is what lets that reach a card sitting on someone else's board too. */
+  libraryPosition?: 'top' | 'bottom'
 }
 
 /** A single die roll or coin flip result. */
@@ -517,7 +529,8 @@ export function parseMessage(raw: unknown): ParseResult {
       if (
         isNonEmptyString(m.toPlayerId) &&
         isNonEmptyString(m.instanceId) &&
-        (m.toZone === 'hand' || m.toZone === 'library' || m.toZone === 'exile' || m.toZone === 'command')
+        (m.toZone === 'hand' || m.toZone === 'library' || m.toZone === 'exile' || m.toZone === 'command') &&
+        (m.libraryPosition === undefined || m.libraryPosition === 'top' || m.libraryPosition === 'bottom')
       ) {
         return { ok: true, msg: obj as ReturnCardMessage }
       }
@@ -783,6 +796,7 @@ function isPublicBoard(v: unknown): v is PublicBoard {
     isOptionalPile(b.command) &&
     isOptionalPile(b.commanders) &&
     isOptionalPile(b.hand) &&
+    (b.topOfLibrary === undefined || isPublicPileCard(b.topOfLibrary)) &&
     (b.battlefieldSkin === undefined || typeof b.battlefieldSkin === 'string') &&
     (b.scooped === undefined || typeof b.scooped === 'boolean') &&
     isFloatingMana(b.floatingMana)

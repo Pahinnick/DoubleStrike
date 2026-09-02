@@ -2016,6 +2016,22 @@
   border-color: var(--accent);
 }
 
+/* Sits in the same row as the GY/EX/Hand chips and borrows their shape, but is a static label +
+   thumbnail rather than a button: a revealed top card has nothing to open (it's a single card,
+   already visible), so it must not look clickable the way its neighbours do. */
+.playtest__seat-zone-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px 2px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  background-color: var(--bg-panel-raised);
+  color: var(--text);
+  font-size: 0.62rem;
+  font-weight: 700;
+}
+
 .playtest__seat-zone:disabled {
   opacity: 0.4;
   cursor: default;

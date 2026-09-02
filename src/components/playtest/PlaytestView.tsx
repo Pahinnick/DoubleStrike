@@ -369,7 +369,7 @@ function PlaytestView({ onClose }: Props) {
     (reactorId, _name, emoji) => addReaction(reactorId, emoji),
     // Another player sent one of our own cards sitting on their board (given, or just taken via
     // relocate) back to one of our own zones — apply it locally; our next STATE broadcast shows everyone.
-    (req) => dispatch({ type: 'MOVE_CARD', instanceId: req.instanceId, toZone: req.toZone }),
+    (req) => dispatch({ type: 'MOVE_CARD', instanceId: req.instanceId, toZone: req.toZone, libraryPosition: req.libraryPosition }),
   )
   const [mpModalOpen, setMpModalOpen] = useState(false)
   // Honors the deck-editor header's "Multiplayer" button (see multiplayerEntryBridge) — jumps
@@ -1084,6 +1084,10 @@ function PlaytestView({ onClose }: Props) {
       for (const c of board.command ?? []) ids.add(c.scryfallId)
       for (const c of board.commanders ?? []) if (c.scryfallId !== FACE_DOWN_SCRYFALL_ID) ids.add(c.scryfallId)
       for (const c of board.hand ?? []) ids.add(c.scryfallId)
+      // A revealed top-of-library card is one they've deliberately made public — without this
+      // its chip would render as a nameless fallback initial, since nothing else would ever
+      // fetch that id.
+      if (board.topOfLibrary) ids.add(board.topOfLibrary.scryfallId)
     }
     return [...ids]
   }, [state.cards, boards, mockBoards])
@@ -1550,6 +1554,10 @@ function PlaytestView({ onClose }: Props) {
       { zone: 'graveyard', label: 'Move to Graveyard' },
       { zone: 'exile', label: 'Move to Exile' },
       { zone: 'library', label: 'Move to Library (Top)', libraryPosition: 'top' },
+      // Bottoming is a genuinely distinct effect from putting a card on top (scry, Brainstorm,
+      // "put it on the bottom of its owner's library"), and the reducer has always supported it —
+      // only the menu never offered it.
+      { zone: 'library', label: 'Move to Library (Bottom)', libraryPosition: 'bottom' },
     ]
     if (deck.format === 'commander') moveTargets.push({ zone: 'command', label: 'Move to Command' })
     for (const { zone, label, libraryPosition } of moveTargets) {
@@ -2051,7 +2059,9 @@ function PlaytestView({ onClose }: Props) {
       if (data.fromPlayerId && mpActive) {
         if (toZone === 'graveyard') deleteRemoteCard(data.fromPlayerId, data.instanceId)
         else if (toZone === 'hand' || toZone === 'library' || toZone === 'exile' || toZone === 'command') {
-          returnRemoteCard(data.fromPlayerId, data.instanceId, toZone)
+          // libraryPosition rides along so bottoming works for someone else's card too, not just
+          // our own — see ReturnCardMessage.libraryPosition. Ignored by the owner for any other zone.
+          returnRemoteCard(data.fromPlayerId, data.instanceId, toZone, libraryPosition)
         }
         return
       }
@@ -2320,11 +2330,20 @@ function PlaytestView({ onClose }: Props) {
     { key: 'tokens', label: 'Create Token', icon: '⭐', onClick: () => setTokenPickerOpen(true) },
     { key: 'dice', label: 'Roll Die', icon: '🎲', onClick: (event) => setCountPrompt({ mode: 'dice', x: event.clientX, y: event.clientY }) },
     { key: 'coin', label: 'Flip Coin', icon: '🪙', onClick: () => flipCoin() },
+    // Magic's two top-of-library effects are separate, so these are two separate toggles, named
+    // with the game's own vocabulary: "look at" is private to you, "reveal" is open information
+    // for the whole table. See GameState.revealTopOfLibrary / revealTopToPod.
     {
-      key: 'reveal-top',
-      label: state.revealTopOfLibrary ? 'Hide Top Card' : 'Reveal Top Card',
+      key: 'look-at-top',
+      label: state.revealTopOfLibrary ? 'Stop Looking at Top Card' : 'Look at Top Card',
       icon: state.revealTopOfLibrary ? '🙈' : '👁',
       onClick: () => dispatch({ type: 'TOGGLE_REVEAL_TOP' }),
+    },
+    {
+      key: 'reveal-top',
+      label: state.revealTopToPod ? 'Hide Top Card from Table' : 'Reveal Top Card to Table',
+      icon: state.revealTopToPod ? '🔒' : '🔎',
+      onClick: () => dispatch({ type: 'TOGGLE_REVEAL_TOP_TO_POD' }),
     },
     {
       key: 'reveal-hand',
@@ -2999,6 +3018,15 @@ function PlaytestView({ onClose }: Props) {
                   graveyardCount={board.graveyard?.length ?? 0}
                   exileCount={board.exile?.length ?? 0}
                   handRevealed={board.hand !== undefined}
+                  revealedTopCard={
+                    board.topOfLibrary
+                      ? {
+                          scryfallId: board.topOfLibrary.scryfallId,
+                          name: snapshotFor(board.topOfLibrary.scryfallId)?.name ?? board.topOfLibrary.scryfallId,
+                          snapshot: snapshotFor(board.topOfLibrary.scryfallId),
+                        }
+                      : undefined
+                  }
                   floatingMana={board.floatingMana}
                   isSelf={false}
                   onFocus={() => centerOnSeat(board.seat)}
@@ -3124,7 +3152,10 @@ function PlaytestView({ onClose }: Props) {
           >
             {library.length > 0 &&
               topOfLibrary &&
-              (state.revealTopOfLibrary ? (
+              // Either effect shows it to US: the private "look at" one by definition, and the
+              // public "revealed" one because a card everyone else can see is hardly hidden from
+              // its own controller.
+              (state.revealTopOfLibrary || state.revealTopToPod ? (
                 <PlaytestCard
                   readOnly
                   draggableFromZone="library"

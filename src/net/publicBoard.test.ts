@@ -18,6 +18,7 @@ function state(overrides: Partial<GameState> = {}): GameState {
     mulligans: 0,
     startingLife: 40,
     revealTopOfLibrary: false,
+    revealTopToPod: false,
     revealHand: false,
     scooped: false,
     floatingMana: zeroManaPool(),
@@ -164,6 +165,31 @@ describe('toPublicBoard', () => {
     const pub = toPublicBoard(s, identity)
     expect(pub.handCount).toBe(1)
     expect(pub.hand).toBeUndefined()
+  })
+
+  it('never shares the top card for the PRIVATE "look at the top card" toggle', () => {
+    const s = state({
+      revealTopOfLibrary: true,
+      cards: [card({ instanceId: 'l1', scryfallId: 'lib-a', zone: 'library' })],
+    })
+    expect(toPublicBoard(s, identity).topOfLibrary).toBeUndefined()
+  })
+
+  it('shares the top card for the PUBLIC "play with the top card revealed" toggle', () => {
+    const s = state({
+      revealTopToPod: true,
+      cards: [
+        card({ instanceId: 'l1', scryfallId: 'lib-a', zone: 'library' }),
+        card({ instanceId: 'l2', scryfallId: 'lib-b', zone: 'library' }),
+      ],
+    })
+    // The FIRST library card is the top (see GameState.cards' ordering doc) — not the second.
+    expect(toPublicBoard(s, identity).topOfLibrary).toEqual({ instanceId: 'l1', scryfallId: 'lib-a' })
+  })
+
+  it('shares nothing when the top card is revealed but the library is empty', () => {
+    const s = state({ revealTopToPod: true, cards: [] })
+    expect(toPublicBoard(s, identity).topOfLibrary).toBeUndefined()
   })
 
   it('shares hand contents when the player has opted in via revealHand, like graveyard/exile/command', () => {

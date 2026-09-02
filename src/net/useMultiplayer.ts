@@ -51,7 +51,7 @@ export type MultiplayerSession = {
   /** Ask a card's owner to send it back to one of their own zones — hand/library/exile/command (a
    *  taken/given/relocated card sitting on our board; graveyard has its own deleteRemoteCard,
    *  battlefield its own relocateCard). No-op when not connected. */
-  returnRemoteCard: (toPlayerId: string, instanceId: string, toZone: 'hand' | 'library' | 'exile' | 'command') => void
+  returnRemoteCard: (toPlayerId: string, instanceId: string, toZone: 'hand' | 'library' | 'exile' | 'command', libraryPosition?: 'top' | 'bottom') => void
   /** Publish a die/coin roll to the pod. No-op when not connected. */
   broadcastRoll: (roll: RollResult) => void
   /** Publish a "look here" ping (table-space x/y) to the pod. No-op when not connected. */
@@ -80,7 +80,7 @@ export function useMultiplayer(
   onCardDeleteRequested?: (req: { instanceId: string }) => void,
   onHighlightReceived?: (instanceId: string) => void,
   onReactionReceived?: (playerId: string, name: string, emoji: string) => void,
-  onCardReturnRequested?: (req: { instanceId: string; toZone: 'hand' | 'library' | 'exile' | 'command' }) => void,
+  onCardReturnRequested?: (req: { instanceId: string; toZone: 'hand' | 'library' | 'exile' | 'command'; libraryPosition?: 'top' | 'bottom' }) => void,
 ): MultiplayerSession {
   const connRef = useRef<PeerConnection | null>(null)
 
@@ -224,8 +224,8 @@ export function useMultiplayer(
     connRef.current?.deleteCard(toPlayerId, instanceId)
   }, [])
 
-  const returnRemoteCard = useCallback((toPlayerId: string, instanceId: string, toZone: 'hand' | 'library' | 'exile' | 'command') => {
-    connRef.current?.returnCard(toPlayerId, instanceId, toZone)
+  const returnRemoteCard = useCallback((toPlayerId: string, instanceId: string, toZone: 'hand' | 'library' | 'exile' | 'command', libraryPosition?: 'top' | 'bottom') => {
+    connRef.current?.returnCard(toPlayerId, instanceId, toZone, libraryPosition)
   }, [])
 
   const broadcastRoll = useCallback((roll: RollResult) => {

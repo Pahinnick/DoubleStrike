@@ -68,7 +68,7 @@ export type PeerConnectionEvents = {
   cardDeleteRequested: (req: { instanceId: string }) => void
   /** A directed "send it back to one of our own zones" request for one of OUR cards (see
    *  ReturnCardMessage) — move it to that zone locally. */
-  cardReturnRequested: (req: { instanceId: string; toZone: 'hand' | 'library' | 'exile' | 'command' }) => void
+  cardReturnRequested: (req: { instanceId: string; toZone: 'hand' | 'library' | 'exile' | 'command'; libraryPosition?: 'top' | 'bottom' }) => void
   /** A die/coin roll from any player (including relayed ones from other guests). */
   roll: (playerId: string, name: string, roll: RollResult) => void
   /** A "look here" ping at a table-space point, from any player (including relayed ones). */
@@ -651,7 +651,7 @@ export class PeerConnection {
   /** Deliver a RETURN_CARD to the card owner's client, same routing as deliverDelete. */
   private deliverReturn(msg: Extract<NetMessage, { type: 'RETURN_CARD' }>) {
     if (msg.toPlayerId === this.local.playerId) {
-      this.emit('cardReturnRequested', { instanceId: msg.instanceId, toZone: msg.toZone })
+      this.emit('cardReturnRequested', { instanceId: msg.instanceId, toZone: msg.toZone, libraryPosition: msg.libraryPosition })
       return
     }
     const conn = this.findGuestConn(msg.toPlayerId)
@@ -892,7 +892,7 @@ export class PeerConnection {
       case 'RETURN_CARD':
         // The host delivered a "send it back to one of our own zones" request meant for one of our own cards.
         if (msg.toPlayerId === this.local.playerId) {
-          this.emit('cardReturnRequested', { instanceId: msg.instanceId, toZone: msg.toZone })
+          this.emit('cardReturnRequested', { instanceId: msg.instanceId, toZone: msg.toZone, libraryPosition: msg.libraryPosition })
         }
         break
       case 'ROLL':
@@ -1041,8 +1041,8 @@ export class PeerConnection {
    * owner's client applies MOVE_CARD and the result comes back to everyone through their next
    * STATE broadcast.
    */
-  returnCard(toPlayerId: string, instanceId: string, toZone: 'hand' | 'library' | 'exile' | 'command'): void {
-    const msg: NetMessage = { type: 'RETURN_CARD', v: PROTOCOL_VERSION, toPlayerId, instanceId, toZone }
+  returnCard(toPlayerId: string, instanceId: string, toZone: 'hand' | 'library' | 'exile' | 'command', libraryPosition?: 'top' | 'bottom'): void {
+    const msg: NetMessage = { type: 'RETURN_CARD', v: PROTOCOL_VERSION, toPlayerId, instanceId, toZone, libraryPosition }
     if (this.role === 'host') {
       this.deliverReturn(msg)
     } else if (this.role === 'guest' && this.hostConn) {

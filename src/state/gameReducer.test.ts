@@ -758,6 +758,23 @@ describe('gameReducer', () => {
     expect(twice.revealTopOfLibrary).toBe(false)
   })
 
+  it('the private look-at-top and public reveal-to-pod toggles are independent', () => {
+    const looking = apply(startedGame(20), { type: 'TOGGLE_REVEAL_TOP' })
+    expect(looking.revealTopOfLibrary).toBe(true)
+    expect(looking.revealTopToPod).toBe(false)
+    const both = apply(looking, { type: 'TOGGLE_REVEAL_TOP_TO_POD' })
+    expect(both.revealTopOfLibrary).toBe(true)
+    expect(both.revealTopToPod).toBe(true)
+    // Turning the private one back off must not drag the public one down with it.
+    const publicOnly = apply(both, { type: 'TOGGLE_REVEAL_TOP' })
+    expect(publicOnly.revealTopOfLibrary).toBe(false)
+    expect(publicOnly.revealTopToPod).toBe(true)
+  })
+
+  it('START_GAME starts with revealTopToPod off', () => {
+    expect(startedGame(20).revealTopToPod).toBe(false)
+  })
+
   it('START_GAME starts with revealHand off', () => {
     expect(startedGame(20).revealHand).toBe(false)
   })
