@@ -235,6 +235,51 @@ describe('gameReducer', () => {
     expect(state.cards.find((c) => c.instanceId === cardId)!.tapped).toBe(false)
   })
 
+  it('UNTAP_ALL leaves a card sitting on another seat alone — its controller untaps it, not its owner', () => {
+    const before = startedGame(20)
+    const [mine, lent] = zoneCards(before, 'hand').map((c) => c.instanceId)
+    const state = apply(
+      before,
+      { type: 'MOVE_CARD', instanceId: mine, toZone: 'battlefield', x: 0, y: 0 },
+      { type: 'MOVE_CARD', instanceId: lent, toZone: 'battlefield', x: 0, y: 0 },
+      { type: 'SET_TAPPED', instanceId: mine, tapped: true },
+      { type: 'SET_TAPPED', instanceId: lent, tapped: true },
+      // Now sitting on seat 2's battlefield, so seat 2 controls it.
+      { type: 'RECEIVE_RELOCATED_CARD', instanceId: lent, x: 10, y: 10, atSeat: 2 },
+      { type: 'UNTAP_ALL' },
+    )
+    expect(state.cards.find((c) => c.instanceId === mine)!.tapped).toBe(false)
+    expect(state.cards.find((c) => c.instanceId === lent)!.tapped).toBe(true)
+  })
+
+  it('NEXT_TURN also leaves a card sitting on another seat tapped', () => {
+    const before = startedGame(20)
+    const lent = zoneCards(before, 'hand')[0].instanceId
+    const state = apply(
+      before,
+      { type: 'MOVE_CARD', instanceId: lent, toZone: 'battlefield', x: 0, y: 0 },
+      { type: 'SET_TAPPED', instanceId: lent, tapped: true },
+      { type: 'RECEIVE_RELOCATED_CARD', instanceId: lent, x: 10, y: 10, atSeat: 3 },
+      { type: 'NEXT_TURN' },
+    )
+    expect(state.cards.find((c) => c.instanceId === lent)!.tapped).toBe(true)
+  })
+
+  it('a relocated card untaps again once it comes back to its own seat', () => {
+    const before = startedGame(20)
+    const cardId = zoneCards(before, 'hand')[0].instanceId
+    const state = apply(
+      before,
+      { type: 'MOVE_CARD', instanceId: cardId, toZone: 'battlefield', x: 0, y: 0 },
+      { type: 'SET_TAPPED', instanceId: cardId, tapped: true },
+      { type: 'RECEIVE_RELOCATED_CARD', instanceId: cardId, x: 10, y: 10, atSeat: 2 },
+      // Dragged home again — atSeat normalizes back to undefined, so we control it once more.
+      { type: 'RECEIVE_RELOCATED_CARD', instanceId: cardId, x: 1, y: 1 },
+      { type: 'UNTAP_ALL' },
+    )
+    expect(state.cards.find((c) => c.instanceId === cardId)!.tapped).toBe(false)
+  })
+
   it('NEXT_TURN increments the turn, untaps, and draws one', () => {
     const before = startedGame(20)
     const cardId = zoneCards(before, 'hand')[0].instanceId

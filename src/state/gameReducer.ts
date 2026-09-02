@@ -250,6 +250,22 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
   return next
 }
 
+/**
+ * Untaps the battlefield permanents this player actually CONTROLS — the untap step's real rule
+ * in Magic is "permanents you control", not "permanents you own", and those come apart here.
+ *
+ * A card of ours with `atSeat` set is sitting on someone else's battlefield (see GameCard.atSeat;
+ * it's normalized back to undefined the moment the card returns to our own quadrant, so a set
+ * value always means "not on our seat"). Whoever's board it's on controls it, so it untaps on
+ * THEIR untap step, not ours — previously our own untap swept it up from across the table while
+ * their untap couldn't touch it at all, since it lives in our state rather than theirs. The
+ * controller's side of that is handled over the wire (see PlaytestView's untapAll/Next Turn,
+ * which send a directed TAP_CARD to the owner for each foreign card on their quadrant).
+ */
+function untapControlled(cards: GameCard[]): GameCard[] {
+  return cards.map((c) => (c.zone === 'battlefield' && c.tapped && c.atSeat === undefined ? { ...c, tapped: false } : c))
+}
+
 function gameReducerInner(state: GameState, action: GameAction): GameState {
   switch (action.type) {
     case 'START_GAME': {
@@ -526,10 +542,7 @@ function gameReducerInner(state: GameState, action: GameAction): GameState {
       }
 
     case 'UNTAP_ALL':
-      return {
-        ...state,
-        cards: state.cards.map((c) => (c.zone === 'battlefield' && c.tapped ? { ...c, tapped: false } : c)),
-      }
+      return { ...state, cards: untapControlled(state.cards) }
 
     case 'ADJUST_LIFE':
       return { ...state, life: state.life + action.delta }
@@ -557,11 +570,7 @@ function gameReducerInner(state: GameState, action: GameAction): GameState {
       return {
         ...state,
         turn: state.turn + 1,
-        cards: drawCards(
-          state.cards.map((c) => (c.zone === 'battlefield' && c.tapped ? { ...c, tapped: false } : c)),
-          1,
-          action.toSide,
-        ),
+        cards: drawCards(untapControlled(state.cards), 1, action.toSide),
         // Real Magic: mana doesn't carry over between turns.
         floatingMana: zeroManaPool(),
       }

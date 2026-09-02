@@ -1475,6 +1475,32 @@ function PlaytestView({ onClose }: Props) {
     }
   }
 
+  /**
+   * The other half of the untap step's "permanents you CONTROL" rule (see gameReducer's
+   * untapControlled for our own side of it): cards someone else owns that are sitting on OUR
+   * quadrant untap with us, not with their owner. They live in the owner's state, so this asks
+   * each owner to untap them — the same directed TAP_CARD route a click on one of those cards
+   * already uses; the result comes back to the whole pod via their next STATE broadcast.
+   */
+  function untapForeignCardsOnMyBoard() {
+    if (!inPod || !mpActive) return
+    for (const board of opponentBoards) {
+      for (const pc of board.battlefield) {
+        if (pc.atSeat === mySeatResolved && pc.tapped) tapRemoteCard(board.playerId, pc.instanceId, false)
+      }
+    }
+  }
+
+  function handleUntapAll() {
+    dispatch({ type: 'UNTAP_ALL' })
+    untapForeignCardsOnMyBoard()
+  }
+
+  function handleNextTurn() {
+    dispatch({ type: 'NEXT_TURN', toSide: handDrawSide })
+    untapForeignCardsOnMyBoard()
+  }
+
   /** Right-click menu for a battlefield card — replaces the old bolt-on clone/counter buttons with one consistent interaction. */
   function battlefieldCardActions(gameCard: (typeof battlefield)[number]): ContextMenuAction[] {
     const snapshot = snapshotFor(gameCard.scryfallId)
@@ -2393,7 +2419,7 @@ function PlaytestView({ onClose }: Props) {
             {spinSeat !== null ? 'Spinning…' : 'Who Goes First?'}
           </button>
         ) : (
-          <button type="button" onClick={() => dispatch({ type: 'NEXT_TURN', toSide: handDrawSide })}>
+          <button type="button" onClick={handleNextTurn}>
             Next Turn
           </button>
         )}
@@ -3018,7 +3044,7 @@ function PlaytestView({ onClose }: Props) {
             </div>
           )}
           <div className="playtest__quickbar">
-            <button type="button" className="playtest__quickbar-btn" onClick={() => dispatch({ type: 'UNTAP_ALL' })}>
+            <button type="button" className="playtest__quickbar-btn" onClick={handleUntapAll}>
               Untap
             </button>
             <button
