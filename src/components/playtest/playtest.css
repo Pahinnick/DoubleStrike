@@ -12,6 +12,17 @@
      in 0.5rem padding), plus a little breathing room — i.e. how far above --quickbar-bottom
      you must start to clear the bar even with its tray open. */
   --quickbar-stack-height: 118px;
+  /* The three left-edge tabs (Sort by Cost, Deck List, Turn Order) stack as one contiguous
+     group from this baseline upward, rather than sitting 174px apart down the whole edge as
+     they used to. Sort by Cost keeps its original slot and anchors the group.
+     A uniform height is what makes the stack predictable: these are vertical-rl buttons, so
+     their natural height is however long the label happens to be, and three different lengths
+     can't be stacked with fixed offsets without gaps or overlap. Sized for the longest label
+     ("Sort by Cost") with the rest centred inside the same box. */
+  --side-tab-bottom: 214px;
+  --side-tab-height: 116px;
+  --side-tab-gap: 6px;
+  --side-tab-step: calc(var(--side-tab-height) + var(--side-tab-gap));
   /* Anchors .playtest__hand, which floats over the battlefield's own row (see below) rather
      than reserving a row of its own, so the board stays visible underneath it. */
   position: relative;
@@ -21,6 +32,16 @@
      meant to be copy-selected. */
   user-select: none;
   -webkit-user-select: none;
+}
+
+/* Shared by all three left-edge tabs: centres each label inside the uniform box above, so a
+   short one ("Deck List") doesn't sit flush against one end while a long one fills its box. */
+.playtest__turn-order-tray-tab,
+.playtest__deck-tray-tab,
+.playtest__hand-sort-tab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .playtest__topbar {
@@ -1620,14 +1641,59 @@
    (constant size at any zoom), so the -50%/-50% centering has to be baked into every keyframe
    rather than sitting in the base rule — a CSS animation's `transform` replaces the element's
    whole computed transform each frame, it doesn't compose with a transform set outside it. */
-.playtest__reaction-marker {
+/* Wrapper carrying the projected board position; everything inside is laid out from its origin
+   so the whole burst moves as one and only this element needs the incoming style. */
+.playtest__reaction-burst {
   position: absolute;
-  font-size: 2.6rem;
-  line-height: 1;
   pointer-events: none;
   z-index: 45;
+}
+
+.playtest__reaction-marker {
+  position: absolute;
+  left: 0;
+  top: 0;
+  /* Bigger than the satellites by a wide margin — it's the actual message; they're just the
+     splash around it. */
+  font-size: 3.4rem;
+  line-height: 1;
+  pointer-events: none;
   filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.5));
   animation: playtest-reaction-marker-pop 2s ease-out forwards;
+}
+
+/* Smaller copies flung outward from the centre. Size and opacity come from the ring each one
+   belongs to (see ReactionMarker's RINGS), so the further out it sits the fainter and smaller
+   it is — the fade is what makes it read as a burst rather than a ring of clones. */
+.playtest__reaction-satellite {
+  position: absolute;
+  left: 0;
+  top: 0;
+  font-size: 3.4rem;
+  line-height: 1;
+  pointer-events: none;
+  filter: drop-shadow(0 1px 4px rgba(0, 0, 0, 0.45));
+  animation: playtest-reaction-satellite-fly 2s ease-out forwards;
+}
+
+@keyframes playtest-reaction-satellite-fly {
+  0% {
+    transform: translate(-50%, -50%) scale(0);
+    opacity: 0;
+  }
+  25% {
+    opacity: var(--sat-opacity);
+  }
+  55% {
+    transform: translate(-50%, -50%) translate(var(--sat-dx), var(--sat-dy)) scale(var(--sat-scale));
+    opacity: var(--sat-opacity);
+  }
+  100% {
+    /* Keeps drifting outward as it goes, so the burst dissipates instead of just blinking off. */
+    transform: translate(-50%, -50%) translate(calc(var(--sat-dx) * 1.35), calc(var(--sat-dy) * 1.35))
+      scale(calc(var(--sat-scale) * 0.75));
+    opacity: 0;
+  }
 }
 
 @keyframes playtest-reaction-marker-pop {
@@ -2683,9 +2749,11 @@
    sits just above the hand tray (see .playtest__hand, bottom:0 / min-height:210px) — rather
    than vertically centered, avoiding the collision with the player panel this used to have
    (see mtg-deckbuilder-vtt-static-player-panel memory). */
+/* Middle tab of the left-edge group — see --side-tab-bottom on .playtest. */
 .playtest__deck-tray-tab {
   position: absolute;
-  bottom: 388px;
+  bottom: calc(var(--side-tab-bottom) + var(--side-tab-step));
+  height: var(--side-tab-height);
   left: 0;
   padding: 0.6em 0.4em;
   border-radius: 0 8px 8px 0;
@@ -2704,13 +2772,13 @@
   transform: translateX(260px);
 }
 
-/* Second left-edge tab, stacked directly below Deck List (moved out of the hand row itself —
-   it used to sit inline with the fanned cards, see .playtest__hand-cards, which crowded it
-   as the hand grew). Same look as .playtest__deck-tray-tab, just a lower `bottom` so the two
-   stack instead of overlapping. */
+/* Bottom tab of the left-edge group, and the one the other two stack up from — see
+   --side-tab-bottom on .playtest. Moved out of the hand row itself long ago (it used to sit
+   inline with the fanned cards, see .playtest__hand-cards, which crowded it as the hand grew). */
 .playtest__hand-sort-tab {
   position: absolute;
-  bottom: 214px;
+  bottom: var(--side-tab-bottom);
+  height: var(--side-tab-height);
   left: 0;
   padding: 0.6em 0.4em;
   border-radius: 0 8px 8px 0;
@@ -2855,9 +2923,11 @@
 
 /* bottom: 388px (Deck List's own tab position) + its own ~174px height, so the two stack
    without overlapping — see .playtest__deck-tray-tab's comment for that arithmetic. */
+/* Top tab of the left-edge group — see --side-tab-bottom on .playtest. */
 .playtest__turn-order-tray-tab {
   position: absolute;
-  bottom: 562px;
+  bottom: calc(var(--side-tab-bottom) + 2 * var(--side-tab-step));
+  height: var(--side-tab-height);
   left: 0;
   padding: 0.6em 0.4em;
   border-radius: 0 8px 8px 0;
