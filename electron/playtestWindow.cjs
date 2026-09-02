@@ -4,6 +4,7 @@
 const { app, BrowserWindow, screen, ipcMain } = require('electron')
 const fs = require('node:fs')
 const path = require('node:path')
+const { hardenWindow } = require('./windowSecurity.cjs')
 
 const DEFAULT_BOUNDS = { width: 1300, height: 860 }
 const SAVE_DEBOUNCE_MS = 400
@@ -103,6 +104,9 @@ function openPlaytestWindow(baseUrl) {
     },
   })
   playtestWin = win
+  // Same webPreferences (and therefore the same preload) as the main window, so it needs the
+  // same window-open/navigation guards — see windowSecurity.cjs.
+  hardenWindow(win, baseUrl)
   win.loadURL(`${baseUrl}?mode=playtest`)
   win.on('move', () => persistBounds(win))
   win.on('resize', () => persistBounds(win))

@@ -24,6 +24,13 @@ export type ElectronNetBridge = {
   fetchArchidektDeck(deckId: string): Promise<unknown>
 }
 
+export type ElectronShellBridge = {
+  /** Opens an outbound link in the user's real browser rather than an Electron window. The main
+   *  process validates the URL against its own allow-list first (see electron/windowSecurity.cjs)
+   *  and resolves false without opening anything if it isn't on it. */
+  openExternal(url: string): Promise<boolean>
+}
+
 export type ElectronPlaytestBridge = {
   /** Opens (or focuses, if already open) the Playtest board's own OS window. */
   open(): Promise<void>
@@ -47,6 +54,7 @@ declare global {
   interface Window {
     electronStorage?: ElectronStorageBridge
     electronNet?: ElectronNetBridge
+    electronShell?: ElectronShellBridge
     electronPlaytest?: ElectronPlaytestBridge
     electronUpdater?: ElectronUpdaterBridge
   }

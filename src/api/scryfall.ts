@@ -98,7 +98,10 @@ export function resetInMemoryCardCache(): void {
 export async function getCardById(id: string): Promise<ScryfallCard> {
   const cached = getCachedCard(id)
   if (cached) return cached
-  const card = await scryfallFetch<ScryfallCard>(`${API_BASE}/cards/${id}`)
+  // Encoded like every other interpolated value in this module: ids are UUIDs in practice, but
+  // this one is reachable from card data that originated off-device, so it shouldn't be the one
+  // call site trusted to be URL-safe.
+  const card = await scryfallFetch<ScryfallCard>(`${API_BASE}/cards/${encodeURIComponent(id)}`)
   cacheCards([card])
   return card
 }

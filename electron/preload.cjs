@@ -23,6 +23,13 @@ contextBridge.exposeInMainWorld('electronNet', {
   fetchArchidektDeck: (deckId) => ipcRenderer.invoke('net:fetchArchidektDeck', deckId),
 })
 
+contextBridge.exposeInMainWorld('electronShell', {
+  // Hands an outbound link to the user's real browser instead of loading it in an Electron
+  // window (which would carry this preload with it — see windowSecurity.cjs). The main process
+  // re-checks the URL against its own allow-list, so this is not a general-purpose opener.
+  openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
+})
+
 contextBridge.exposeInMainWorld('electronUpdater', {
   onUpdateDownloaded: (callback) => {
     const listener = (_event, info) => callback(info)

@@ -1406,28 +1406,51 @@ function PlaytestView({ onClose }: Props) {
     return () => window.removeEventListener('keydown', onKey)
   }, [selectedIds, tapSelection])
 
-  /** Opens a card's Scryfall page (which includes its rulings) in a new tab. The trimmed-down
-   *  CardSnapshot this app caches deliberately drops set/collector_number (see storage/cardCache.ts),
-   *  so this needs the fuller ScryfallCard — getCardById serves the in-memory search cache when
-   *  possible, otherwise a single live lookup.
+  /** Opens a card's Scryfall page (which includes its rulings). The trimmed-down CardSnapshot
+   *  this app caches deliberately drops set/collector_number (see storage/cardCache.ts), so this
+   *  needs the fuller ScryfallCard — getCardById serves the in-memory search cache when possible,
+   *  otherwise a single live lookup.
    *
-   *  Opens the blank tab synchronously, before the `await` below, and navigates it once the
-   *  lookup resolves — opening it only after an awaited fetch gets silently popup-blocked in
-   *  most browsers, since the async gap breaks the "this came from a real click" gesture chain
-   *  they check for. Can't use `noopener` here (it nulls the reference this needs to navigate
-   *  the tab later), so `tab.opener` is cleared manually instead — same reverse-tabnabbing
-   *  protection, just applied after the fact rather than via the `window.open` option.
+   *  Two paths, because the safe thing to do differs by host:
    *
-   *  Silently closes the blank tab on failure (offline, deleted printing, etc.) — a failed
-   *  rulings lookup shouldn't interrupt the game it's attached to, same philosophy as the sound
-   *  cues (see utils/sound.ts). */
+   *  - Electron: resolve the URL first, then hand it to the main process, which opens it in the
+   *    user's REAL browser (see electron/windowSecurity.cjs). It must not be opened in an
+   *    Electron window: this used to open a blank tab and navigate it, and `window.open('')` is
+   *    `about:blank`, the one case where Chromium copies the parent's webPreferences — this
+   *    app's preload and all its ipcRenderer bridges — into the child with no way to override
+   *    it. Scryfall (and anywhere the user browsed on to from there, since nothing pinned that
+   *    window's navigation) therefore ran with window.electronStorage in scope.
+   *  - Plain browser (`npm run dev`): no preload to leak, so keep the original dance — open the
+   *    blank tab synchronously, before the `await`, and navigate it once the lookup resolves.
+   *    Opening it only after an awaited fetch gets silently popup-blocked in most browsers,
+   *    since the async gap breaks the "this came from a real click" gesture chain they check
+   *    for. `noopener` can't be used (it nulls the reference needed to navigate the tab later),
+   *    so `tab.opener` is cleared manually — same reverse-tabnabbing protection after the fact.
+   *
+   *  Either way a failure (offline, deleted printing, etc.) is silent — a failed rulings lookup
+   *  shouldn't interrupt the game it's attached to, same philosophy as the sound cues (see
+   *  utils/sound.ts). */
   async function lookUpRulings(scryfallId: string) {
+    const scryfallUrl = (card: { set?: string; collector_number?: string }) =>
+      card.set && card.collector_number ? `https://scryfall.com/card/${card.set}/${card.collector_number}` : null
+
+    const shell = window.electronShell
+    if (shell) {
+      try {
+        const url = scryfallUrl(await getCardById(scryfallId))
+        if (url) await shell.openExternal(url)
+      } catch {
+        // Nothing was opened yet, so there's nothing to clean up.
+      }
+      return
+    }
+
     const tab = window.open('', '_blank')
     if (tab) tab.opener = null
     try {
-      const card = await getCardById(scryfallId)
-      if (card.set && card.collector_number && tab) {
-        tab.location.href = `https://scryfall.com/card/${card.set}/${card.collector_number}`
+      const url = scryfallUrl(await getCardById(scryfallId))
+      if (url && tab) {
+        tab.location.href = url
       } else {
         tab?.close()
       }

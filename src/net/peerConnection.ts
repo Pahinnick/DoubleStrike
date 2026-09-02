@@ -350,6 +350,14 @@ export class PeerConnection {
         break
       }
       case 'STATE': {
+        // A board is only ever authoritative for the player who sent it. The host knows which
+        // connection this arrived on (record.playerId, set from that guest's HELLO), so a STATE
+        // claiming to be someone else's board is a spoof, not something to cache and fan out —
+        // e.g. broadcasting a rival's board with life 0 would show them as eliminated to the
+        // whole pod. Cheating-resistance rather than a hard security boundary (this is a
+        // share-a-room-code-with-friends table where moving each other's cards is a feature),
+        // but the sender is already known here, so there's no reason to take its word for it.
+        if (!record.playerId || msg.board.playerId !== record.playerId) break
         this.lastBoards.set(msg.board.playerId, msg.board)
         this.emit('board', msg.board)
         // Fan out to every other guest (star relay).

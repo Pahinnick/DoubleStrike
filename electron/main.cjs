@@ -5,6 +5,7 @@ const http = require('node:http')
 const { registerStorageIpc } = require('./storage.cjs')
 const { registerNetIpc } = require('./net.cjs')
 const { registerUpdaterIpc } = require('./updater.cjs')
+const { hardenWindow, registerShellIpc } = require('./windowSecurity.cjs')
 const {
   registerPlaytestWindowIpc,
   maybeReopenPlaytestWindow,
@@ -42,12 +43,17 @@ const MIME_TYPES = {
 // deck/card persistence) are unreliable or outright disabled for file://
 // pages — serving locally sidesteps that instead of hoping it works.
 function serveDist(distDir) {
+  const root = path.resolve(distDir)
+
   function requestHandler(req, res) {
     const requestPath = decodeURIComponent(req.url.split('?')[0])
-    const filePath = path.join(distDir, requestPath === '/' ? 'index.html' : requestPath)
+    const filePath = path.resolve(root, `.${requestPath === '/' ? '/index.html' : requestPath}`)
 
-    // Stay inside distDir even if req.url tries to traverse out of it (e.g. "/../").
-    if (!filePath.startsWith(distDir)) {
+    // Stay inside distDir even if req.url tries to traverse out of it (e.g. "/../"). Compared
+    // against `root + separator`, not a bare startsWith(root): path.join/resolve already
+    // normalize away "..", but a plain prefix test also accepts any SIBLING directory whose
+    // name merely starts with the root's (dist -> dist-anything), which is not inside it.
+    if (filePath !== root && !filePath.startsWith(root + path.sep)) {
       res.writeHead(403)
       res.end('Forbidden')
       return
@@ -125,6 +131,7 @@ function createMainWindow(baseUrl) {
       preload: path.join(__dirname, 'preload.cjs'),
     },
   })
+  hardenWindow(win, baseUrl)
   win.loadURL(baseUrl)
   // Closing the main window is "closing the app" in this single-window-by-default model —
   // take the Playtest window down with it, but mark it as having been open (not
@@ -141,6 +148,7 @@ app.whenReady().then(async () => {
   Menu.setApplicationMenu(null)
   registerStorageIpc()
   registerNetIpc()
+  registerShellIpc()
   const baseUrl = await resolveBaseUrl()
   registerPlaytestWindowIpc(baseUrl)
   const mainWindow = createMainWindow(baseUrl)
