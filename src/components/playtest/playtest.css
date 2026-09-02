@@ -4,6 +4,14 @@
   height: 100vh;
   min-height: 0;
   overflow: hidden;
+  /* Where the quickbar (Untap/Draw/Actions/Pass Turn) sits: the hand's min-height plus the
+     original clearance. Shared so anything stacking above the bar — currently the roll log —
+     stays put if that ever changes, instead of repeating the same magic numbers. */
+  --quickbar-bottom: calc(210px + 12px);
+  /* Height of the quickbar itself plus the Actions tray that floats 8px above it (40px icons
+     in 0.5rem padding), plus a little breathing room — i.e. how far above --quickbar-bottom
+     you must start to clear the bar even with its tray open. */
+  --quickbar-stack-height: 118px;
   /* Anchors .playtest__hand, which floats over the battlefield's own row (see below) rather
      than reserving a row of its own, so the board stays visible underneath it. */
   position: relative;
@@ -880,8 +888,9 @@
   position: absolute;
   /* .playtest__battlefield now spans the full table row (the hand overlays it instead of
      reserving its own row — see .playtest__hand), so this sits just above the hand's
-     min-height (210px) + the original 12px clearance, instead of the battlefield's own edge. */
-  bottom: calc(210px + 12px);
+     min-height + the original clearance, instead of the battlefield's own edge. The value
+     lives on .playtest so the roll log can stack above it from the same source. */
+  bottom: var(--quickbar-bottom);
   left: 50%;
   transform: translateX(-50%);
   display: flex;
@@ -2390,14 +2399,29 @@
    player panel for space in practice). Newest roll on top. */
 .playtest__roll-log {
   position: absolute;
-  top: 12px;
-  left: 12px;
+  /* Centred just above the quickbar and its Actions tray, rather than the old top-left corner
+     where it sat straight on top of the seat panels. Rolls persist until dismissed now, so a
+     stack of them in that corner covered player info indefinitely instead of briefly. */
+  bottom: calc(var(--quickbar-bottom) + var(--quickbar-stack-height));
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 40;
   display: flex;
-  flex-direction: column;
+  /* Reversed so the newest roll (first in the array) renders nearest the action bar, with
+     older ones stacking upward away from it — the eye lands on the latest result first. */
+  flex-direction: column-reverse;
+  align-items: center;
   gap: 4px;
-  max-width: 210px;
+  max-width: 320px;
+  /* The log as a whole stays click-through so it never steals a click meant for the board;
+     only your OWN entries opt back in, because those carry the dismiss button (and need
+     :hover to reveal it). Someone else's roll has nothing to click, so it keeps letting
+     clicks pass straight through. */
   pointer-events: none;
+}
+
+.playtest__roll-entry.is-dismissable {
+  pointer-events: auto;
 }
 
 .playtest__roll-entry {
