@@ -61,10 +61,11 @@ import { getCurrentDragData, getGameDragData, type DraggedGameCard } from './dra
 import GoldfishPanel, { type GoldfishRow } from './GoldfishPanel'
 import LibraryPeekModal, { type PeekEntry, type PeekPlacement } from './LibraryPeekModal'
 import MultiplayerModal from './MultiplayerModal'
+import DiceRollPrompt from './DiceRollPrompt'
 import NumberInputPrompt from './NumberInputPrompt'
 import PingMarker from './PingMarker'
 import PlaytestCard from './PlaytestCard'
-import { ALL_SEATS, buildSpinSequence, nextActiveSeat, pickRandomSeat, SEAT_COLOR_NAMES, SEAT_COLORS, SEAT_GRID, seatOrigin, tableSize } from './podLayout'
+import { ALL_SEATS, buildSpinSequence, completesRound, nextActiveSeat, pickRandomSeat, SEAT_COLOR_NAMES, SEAT_COLORS, SEAT_GRID, seatOrigin, tableSize } from './podLayout'
 import PtCounterPileStack from './PtCounterPileStack'
 import ReactionMarker from './ReactionMarker'
 import ReactionsTray from './ReactionsTray'
@@ -319,6 +320,7 @@ function PlaytestView({ onClose }: Props) {
     isActive: mpActive,
     boards,
     activeSeat: mpActiveSeat,
+    podTurn: mpPodTurn,
     radioStation: mpRadioStation,
     broadcast,
     broadcastRoll,
@@ -460,6 +462,8 @@ function PlaytestView({ onClose }: Props) {
   // Same dev-only duality as mockBoards: Pass Turn needs to be exercisable in the
   // mock-pod preview too, but broadcastTurnPass is a real-connection no-op there.
   const [mockActiveSeat, setMockActiveSeat] = useState<Seat | null>(null)
+  // Dev-preview counterpart to the pod's shared turn number, same duality as mockActiveSeat.
+  const [mockPodTurn, setMockPodTurn] = useState<number | null>(null)
   // Local-only override while the "Who Goes First" spin animation is running — takes
   // priority over the authoritative activeSeat (network or mock) so the intermediate
   // flashes are purely cosmetic and never themselves get broadcast; only the final
@@ -570,6 +574,7 @@ function PlaytestView({ onClose }: Props) {
   // or any other opponent C, not just whoever's card we're currently rendering.
   const seatNameBySeat = new Map<Seat, string>([[mySeatResolved, playerName], ...opponentBoards.map((b) => [b.seat, b.name] as const)])
   const activeSeat: Seat | null = spinSeat ?? (mockBoards !== null ? mockActiveSeat : mpActiveSeat)
+  const podTurn: number | null = mockBoards !== null ? mockPodTurn : mpPodTurn
 
   // "Whose turn" banner — a brief, hard-to-miss announcement on every genuine pass (Pass Turn or
   // Who Goes First landing), complementing the always-on topbar badge above (easy to miss once
@@ -617,8 +622,16 @@ function PlaytestView({ onClose }: Props) {
     // eliminated seat's own turn is skipped from the rotation.
     const living = [mySeatResolved, ...opponentBoards.map((b) => b.seat)].filter((seat) => !isEliminated(seat))
     const next = nextActiveSeat(activeSeat, living)
-    if (mockBoards !== null) setMockActiveSeat(next)
-    else if (mpActive) broadcastTurnPass(next)
+    // The shared counter ticks over once the rotation wraps back to the first seat — a full
+    // round of the table, which is the only "turn number" that means the same thing to
+    // everyone (GameState.turn counts just our own turns). Starts at 1 on the very first pass.
+    const nextTurn = (podTurn ?? 1) + (completesRound(activeSeat, living) ? 1 : 0)
+    if (mockBoards !== null) {
+      setMockActiveSeat(next)
+      setMockPodTurn(nextTurn)
+    } else if (mpActive) {
+      broadcastTurnPass(next, nextTurn)
+    }
   }
 
   // Voluntary concede ("Scoop," this group's term — not "concede"). Reuses the exact same
@@ -1702,9 +1715,13 @@ function PlaytestView({ onClose }: Props) {
     setCountPrompt(null)
   }
 
-  /** Rolls an N-sided die, logs it locally, and shares it with the pod (if connected). */
-  function rollDie(sides: number) {
-    const roll: RollResult = { kind: 'die', sides, value: 1 + Math.floor(Math.random() * sides) }
+  /** Rolls `count` N-sided dice as ONE result, logs it locally, and shares it with the pod (if
+   *  connected). A single die keeps the original shape exactly (no `values`), so the common case
+   *  reads the same as it always has — see RollResult. */
+  function rollDie(sides: number, count = 1) {
+    const rolled = Array.from({ length: count }, () => 1 + Math.floor(Math.random() * sides))
+    const total = rolled.reduce((sum, n) => sum + n, 0)
+    const roll: RollResult = { kind: 'die', sides, value: total, ...(count > 1 ? { values: rolled } : {}) }
     addRollEntry(playerId, playerName, roll)
     if (mpActive) broadcastRoll(roll)
     setCountPrompt(null)
@@ -2416,7 +2433,15 @@ function PlaytestView({ onClose }: Props) {
     <div className="playtest" aria-label="Playtest">
       <div className="playtest__topbar">
         <span className="playtest__deck-name">{deck.name}</span>
+        {/* Two different numbers, so both are labelled rather than one bare "Turn N": your own
+            turn count (what NEXT_TURN advances, meaningful solo) and — in a pod — the table's
+            shared round, which is the one everybody agrees on. See TurnPassMessage.turn. */}
         <span className="playtest__turn">Turn {state.turn}</span>
+        {inPod && podTurn !== null && (
+          <span className="playtest__turn playtest__turn--table" title="The table's shared turn — advances when play comes back around to the first seat">
+            Table Turn {podTurn}
+          </span>
+        )}
         {/* Whose turn it is, front and center in the topbar — not just the quadrant's gold glow
             (.playtest__quadrant.is-active-turn), which is easy to miss once you've panned/zoomed
             away from that seat. Same gold accent as that glow so "gold = whose turn" reads as one
@@ -3435,10 +3460,14 @@ function PlaytestView({ onClose }: Props) {
           }
           if (mode === 'dice') {
             return (
-              <CardContextMenu
+              <DiceRollPrompt
                 x={countPrompt.x}
                 y={countPrompt.y}
-                actions={DIE_SIZES.map((sides) => ({ label: `d${sides}`, onSelect: () => rollDie(sides) }))}
+                sizes={DIE_SIZES}
+                // d20 if the deck's dice are the usual ones, else whatever's listed first — the
+                // single most-reached-for die, so the common roll stays one click plus Roll.
+                defaultSides={DIE_SIZES.includes(20) ? 20 : DIE_SIZES[0]}
+                onRoll={(sides, count) => rollDie(sides, count)}
                 onClose={() => setCountPrompt(null)}
               />
             )

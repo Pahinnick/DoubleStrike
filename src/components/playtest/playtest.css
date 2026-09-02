@@ -36,6 +36,82 @@
   min-width: 4.5em;
 }
 
+/* Dice roller popover — shares .card-context-menu's frame/positioning, adds its own contents. */
+.dice-prompt {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* Roomier than the die-size list it replaced, so the size buttons wrap into a tidy grid
+     instead of one long column. */
+  max-width: 15rem;
+}
+
+.dice-prompt__sizes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.dice-prompt__size {
+  padding: 3px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  background-color: var(--bg-panel-raised);
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.dice-prompt__size:hover {
+  border-color: var(--accent);
+}
+
+.dice-prompt__size.is-selected {
+  border-color: var(--accent);
+  background-color: var(--accent);
+  color: var(--bg-panel);
+}
+
+.dice-prompt__row {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.dice-prompt__count {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.68rem;
+  color: var(--text-dim);
+}
+
+.dice-prompt__count input {
+  width: 4.5rem;
+}
+
+.dice-prompt__roll {
+  flex: 1;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--accent);
+  background-color: var(--accent);
+  color: var(--bg-panel);
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+/* Wider than its sibling (a longer label, and the number keeps growing all game) and slightly
+   brighter: in a pod the shared count is the one people actually call out to each other. */
+.playtest__turn--table {
+  min-width: 7em;
+  color: var(--text);
+  font-weight: 600;
+}
+
 .playtest__spacer {
   flex: 1;
 }

@@ -128,6 +128,29 @@ describe('serialization round-trips', () => {
     expect(deserialize(serialize(msg))).toEqual(msg)
   })
 
+  it('ROLL round-trips a multi-die result, and rejects non-numeric faces', () => {
+    const many: NetMessage = {
+      type: 'ROLL',
+      v: PROTOCOL_VERSION,
+      playerId: 'p1',
+      name: 'Alice',
+      roll: { kind: 'die', sides: 6, value: 14, values: [5, 3, 6] },
+    }
+    expect(deserialize(serialize(many))).toEqual(many)
+    // A single die stays exactly the shape it always had — no `values` at all.
+    const one: NetMessage = { type: 'ROLL', v: PROTOCOL_VERSION, playerId: 'p1', name: 'Alice', roll: { kind: 'die', sides: 20, value: 17 } }
+    expect(deserialize(serialize(one))).toEqual(one)
+    const bad = { type: 'ROLL', v: PROTOCOL_VERSION, playerId: 'p1', name: 'Alice', roll: { kind: 'die', sides: 6, value: 4, values: ['4'] } }
+    expect(deserialize(JSON.stringify(bad))).toBeNull()
+  })
+
+  it('TURN_PASS round-trips with and without the shared turn number', () => {
+    const withTurn: NetMessage = { type: 'TURN_PASS', v: PROTOCOL_VERSION, activeSeat: 2, turn: 7 }
+    expect(deserialize(serialize(withTurn))).toEqual(withTurn)
+    const withoutTurn: NetMessage = { type: 'TURN_PASS', v: PROTOCOL_VERSION, activeSeat: 2 }
+    expect(deserialize(serialize(withoutTurn))).toEqual(withoutTurn)
+  })
+
   it('RETURN_CARD round-trips with and without a libraryPosition', () => {
     const bottomed: NetMessage = {
       type: 'RETURN_CARD',

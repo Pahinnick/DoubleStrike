@@ -79,7 +79,7 @@ export type PeerConnectionEvents = {
   reaction: (playerId: string, name: string, emoji: string) => void
   /** Whose turn it is now, from any player's Pass Turn (including relayed ones, and the
    *  host's replay of its cached value to a newly-joined guest). */
-  turnPass: (activeSeat: Seat) => void
+  turnPass: (activeSeat: Seat, turn?: number) => void
   /** The shared table radio's station changed (including relayed ones, and the host's replay
    *  of its cached value to a newly-joined guest). Null means it's off. */
   radio: (station: string | null) => void
@@ -177,6 +177,9 @@ export class PeerConnection {
   // Cached like lastBoards (not transient like ROLL/PING) so a late joiner sees whose turn
   // it is immediately rather than a stale/default highlight until the next pass.
   private lastActiveSeat: Seat | null = null
+  // The pod's shared turn number, cached alongside lastActiveSeat and replayed in the same
+  // breath — the two always travel together (see TurnPassMessage.turn).
+  private lastTurn: number | null = null
   // Cached like lastActiveSeat so a late joiner hears whatever station is already playing
   // instead of silence until someone happens to change it.
   private lastRadioStation: string | null = null
@@ -434,7 +437,7 @@ export class PeerConnection {
           this.sendTo(conn, { type: 'STATE', v: PROTOCOL_VERSION, board })
         }
         if (this.lastActiveSeat !== null) {
-          this.sendTo(conn, { type: 'TURN_PASS', v: PROTOCOL_VERSION, activeSeat: this.lastActiveSeat })
+          this.sendTo(conn, { type: 'TURN_PASS', v: PROTOCOL_VERSION, activeSeat: this.lastActiveSeat, turn: this.lastTurn ?? undefined })
         }
         if (this.lastRadioStation !== null) {
           this.sendTo(conn, { type: 'RADIO', v: PROTOCOL_VERSION, station: this.lastRadioStation })
@@ -533,7 +536,8 @@ export class PeerConnection {
       }
       case 'TURN_PASS': {
         this.lastActiveSeat = msg.activeSeat
-        this.emit('turnPass', msg.activeSeat)
+        if (msg.turn !== undefined) this.lastTurn = msg.turn
+        this.emit('turnPass', msg.activeSeat, msg.turn)
         const targets = relayTargets([...this.guests.keys()], conn.peer)
         for (const peerId of targets) {
           const target = this.guests.get(peerId)
@@ -908,7 +912,7 @@ export class PeerConnection {
         this.emit('reaction', msg.playerId, msg.name, msg.emoji)
         break
       case 'TURN_PASS':
-        this.emit('turnPass', msg.activeSeat)
+        this.emit('turnPass', msg.activeSeat, msg.turn)
         break
       case 'RADIO':
         this.emit('radio', msg.station)
@@ -1095,13 +1099,14 @@ export class PeerConnection {
 
   /** Publish whose turn it is now. Cached (unlike broadcastRoll/broadcastPing) so a late
    *  joiner gets it via the HELLO replay instead of waiting for the next pass. */
-  broadcastTurnPass(activeSeat: Seat): void {
-    const msg: NetMessage = { type: 'TURN_PASS', v: PROTOCOL_VERSION, activeSeat }
+  broadcastTurnPass(activeSeat: Seat, turn?: number): void {
+    const msg: NetMessage = { type: 'TURN_PASS', v: PROTOCOL_VERSION, activeSeat, turn }
     // Unlike broadcastState (whose sender always renders its own board locally, never
     // through the `boards` map), the turn highlight has no separate "my own" render path —
     // it's driven entirely by this one shared value, so every sender (host or guest) has
     // to hear its own pass too, not just whoever it gets relayed to.
-    this.emit('turnPass', activeSeat)
+    this.emit('turnPass', activeSeat, turn)
+    if (turn !== undefined) this.lastTurn = turn
     if (this.role === 'host') {
       this.lastActiveSeat = activeSeat
       for (const guest of this.guests.values()) this.sendTo(guest.conn, msg)
@@ -1250,6 +1255,7 @@ export class PeerConnection {
     this.lastBoards.clear()
     this.lastSeatByPlayerId.clear()
     this.lastActiveSeat = null
+    this.lastTurn = null
     this.lastRadioStation = null
     this.hostConn = null
     this.peer?.destroy()

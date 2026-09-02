@@ -31,6 +31,10 @@ export type MultiplayerSession = {
   /** Whose turn it is, for the highlight — a visual cue only, never enforced. Null until
    *  someone's first Pass Turn (or, for a late joiner, the host's cached replay). */
   activeSeat: Seat | null
+  /** The pod's shared turn number — one value the whole table agrees on, unlike GameState.turn
+   *  which counts only this client's own turns. Null until the first Pass Turn (or, for a late
+   *  joiner, the host's cached replay). See TurnPassMessage.turn. */
+  podTurn: number | null
   /** True once the transport is live (regardless of how many others are seated). */
   isActive: boolean
   host: () => Promise<void>
@@ -61,7 +65,7 @@ export type MultiplayerSession = {
   /** Publish a one-click emoji reaction to the pod. No-op when not connected. */
   broadcastReaction: (emoji: string) => void
   /** Publish whose turn it is now. No-op when not connected. */
-  broadcastTurnPass: (activeSeat: Seat) => void
+  broadcastTurnPass: (activeSeat: Seat, turn?: number) => void
   /** The shared table radio's current station id (see RADIO_STATIONS), or null when it's off —
    *  like `activeSeat`, a late joiner gets whatever's already cached on the host. */
   radioStation: string | null
@@ -116,6 +120,7 @@ export function useMultiplayer(
   const [seat, setSeat] = useState<Seat | null>(null)
   const [boards, setBoards] = useState<Map<string, PublicBoard>>(new Map())
   const [activeSeat, setActiveSeat] = useState<Seat | null>(null)
+  const [podTurn, setPodTurn] = useState<number | null>(null)
   const [radioStation, setRadioStation] = useState<string | null>(null)
 
   const reset = useCallback(() => {
@@ -126,6 +131,7 @@ export function useMultiplayer(
     setSeat(null)
     setBoards(new Map())
     setActiveSeat(null)
+    setPodTurn(null)
     setRadioStation(null)
   }, [])
 
@@ -168,7 +174,11 @@ export function useMultiplayer(
     conn.on('ping', (playerId, name, x, y) => onPingReceivedRef.current?.(playerId, name, x, y))
     conn.on('highlight', (instanceId) => onHighlightReceivedRef.current?.(instanceId))
     conn.on('reaction', (playerId, name, emoji) => onReactionReceivedRef.current?.(playerId, name, emoji))
-    conn.on('turnPass', (activeSeat) => setActiveSeat(activeSeat))
+    conn.on('turnPass', (activeSeat, turn) => {
+      setActiveSeat(activeSeat)
+      // Omitted by an older peer — leave the shared counter as-is rather than clearing it.
+      if (turn !== undefined) setPodTurn(turn)
+    })
     conn.on('radio', (station) => setRadioStation(station))
     // Reuses the app's existing banner system rather than a second one (see src/notifications.ts).
     // Fired at most once per connection, so this can't stack up.
@@ -244,8 +254,8 @@ export function useMultiplayer(
     connRef.current?.broadcastReaction(emoji)
   }, [])
 
-  const broadcastTurnPass = useCallback((next: Seat) => {
-    connRef.current?.broadcastTurnPass(next)
+  const broadcastTurnPass = useCallback((next: Seat, turn?: number) => {
+    connRef.current?.broadcastTurnPass(next, turn)
   }, [])
 
   const broadcastRadio = useCallback((station: string | null) => {
@@ -271,6 +281,7 @@ export function useMultiplayer(
     seat,
     boards,
     activeSeat,
+    podTurn,
     isActive,
     host,
     join,

@@ -66,6 +66,25 @@ export function nextActiveSeat(current: Seat | null, occupiedSeats: readonly Sea
   return idx === -1 ? ring[0] : ring[(idx + 1) % ring.length]
 }
 
+/**
+ * True when passing the turn on from `current` wraps the ring back to its first seat — i.e. the
+ * table has just completed a full round and the shared turn counter should tick over.
+ *
+ * Deliberately false for the two cases nextActiveSeat also treats as "start at the beginning"
+ * rather than "continue": no current seat at all (the very first Pass Turn kicking the game off,
+ * which begins round 1 rather than ending one) and a `current` that's no longer occupied (a seat
+ * vacated mid-game — the rotation recovers by restarting at the ring's head, which isn't a round
+ * anyone actually played through).
+ */
+export function completesRound(current: Seat | null, occupiedSeats: readonly Seat[]): boolean {
+  if (current === null) return false
+  const ring = TURN_ORDER.filter((seat) => occupiedSeats.includes(seat))
+  if (ring.length === 0) return false
+  const idx = ring.indexOf(current)
+  if (idx === -1) return false
+  return (idx + 1) % ring.length === 0
+}
+
 /** Uniformly random seat among those occupied, for "who goes first". */
 export function pickRandomSeat(occupiedSeats: readonly Seat[]): Seat {
   return occupiedSeats[Math.floor(Math.random() * occupiedSeats.length)]

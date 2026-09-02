@@ -15,7 +15,13 @@ type Props = {
 }
 
 function formatRoll(roll: RollResult): string {
-  return roll.kind === 'die' ? `d${roll.sides} → ${roll.value}` : roll.value === 'heads' ? 'Heads' : 'Tails'
+  if (roll.kind !== 'die') return roll.value === 'heads' ? 'Heads' : 'Tails'
+  // Multi-die rolls show the total first (the number people actually want) with the individual
+  // faces after it, so "11d6 → 41" is readable at a glance but still auditable.
+  if (roll.values && roll.values.length > 1) {
+    return `${roll.values.length}d${roll.sides} → ${roll.value} (${roll.values.join(', ')})`
+  }
+  return `d${roll.sides} → ${roll.value}`
 }
 
 /** Small floating log of recent dice/coin results — newest first, visible to the whole pod (or just yourself, solo). */

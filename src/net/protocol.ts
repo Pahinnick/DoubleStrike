@@ -341,8 +341,15 @@ export type ReturnCardMessage = {
   libraryPosition?: 'top' | 'bottom'
 }
 
-/** A single die roll or coin flip result. */
-export type RollResult = { kind: 'die'; sides: number; value: number } | { kind: 'coin'; value: 'heads' | 'tails' }
+/**
+ * A die roll or coin flip result. A die roll can be several dice at once (11d6 and friends):
+ * `value` is always the TOTAL, and `values` carries the individual faces when more than one was
+ * rolled. `values` is omitted for a single die, so an ordinary roll is exactly the shape it has
+ * always been and an older receiver still reads `value` correctly.
+ */
+export type RollResult =
+  | { kind: 'die'; sides: number; value: number; values?: number[] }
+  | { kind: 'coin'; value: 'heads' | 'tails' }
 
 /**
  * Broadcast (any client → everyone, host relays): a die/coin result to share with
@@ -384,6 +391,13 @@ export type TurnPassMessage = {
   type: 'TURN_PASS'
   v: number
   activeSeat: Seat
+  /** The table's shared turn number as of this pass — one number the whole pod agrees on,
+   *  incremented by the passer when the rotation wraps back to the first seat (see podLayout's
+   *  completesRound). Distinct from GameState.turn, which counts only that one client's OWN
+   *  turns and so means nothing to anybody else in a pod. Cached by the host alongside
+   *  activeSeat and replayed to a late joiner. Optional so an older sender simply leaves the
+   *  shared counter untouched rather than failing validation. */
+  turn?: number
 }
 
 /**
@@ -546,7 +560,9 @@ export function parseMessage(raw: unknown): ParseResult {
       }
       return { ok: false, reason: 'malformed' }
     case 'TURN_PASS':
-      if (isSeat(m.activeSeat)) return { ok: true, msg: obj as TurnPassMessage }
+      if (isSeat(m.activeSeat) && (m.turn === undefined || typeof m.turn === 'number')) {
+        return { ok: true, msg: obj as TurnPassMessage }
+      }
       return { ok: false, reason: 'malformed' }
     case 'HIGHLIGHT':
       if (isNonEmptyString(m.instanceId)) return { ok: true, msg: obj as HighlightMessage }
@@ -708,7 +724,10 @@ function isPtCounterPileArray(v: unknown): v is PtCounterPile[] | undefined {
 function isRollResult(v: unknown): v is RollResult {
   if (typeof v !== 'object' || v === null) return false
   const r = v as Record<string, unknown>
-  if (r.kind === 'die') return typeof r.sides === 'number' && typeof r.value === 'number'
+  if (r.kind === 'die') {
+    if (typeof r.sides !== 'number' || typeof r.value !== 'number') return false
+    return r.values === undefined || (Array.isArray(r.values) && r.values.every((n) => typeof n === 'number'))
+  }
   if (r.kind === 'coin') return r.value === 'heads' || r.value === 'tails'
   return false
 }

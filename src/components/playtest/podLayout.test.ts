@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ALL_SEATS, buildSpinSequence, nextActiveSeat, pickRandomSeat, seatOrigin, tableSize } from './podLayout'
+import { ALL_SEATS, buildSpinSequence, completesRound, nextActiveSeat, pickRandomSeat, seatOrigin, tableSize } from './podLayout'
 
 const W = 2400
 const H = 1600
@@ -49,6 +49,40 @@ describe('nextActiveSeat', () => {
 
   it('restarts the ring if the current active seat has since left', () => {
     expect(nextActiveSeat(2, [0, 1])).toBe(0)
+  })
+})
+
+describe('completesRound', () => {
+  it('is true only on the pass that wraps back to the ring start', () => {
+    // Turn order 0,2,3,1 — only the last seat's pass closes the round.
+    expect(completesRound(0, [0, 1, 2, 3])).toBe(false)
+    expect(completesRound(2, [0, 1, 2, 3])).toBe(false)
+    expect(completesRound(3, [0, 1, 2, 3])).toBe(false)
+    expect(completesRound(1, [0, 1, 2, 3])).toBe(true)
+  })
+
+  it('tracks the occupied ring, not raw seat numbers', () => {
+    // With only 0 and 3 seated, 3 is the last seat in the ring even though 1 outranks it.
+    expect(completesRound(0, [0, 3])).toBe(false)
+    expect(completesRound(3, [0, 3])).toBe(true)
+  })
+
+  it('is true every pass in a one-player ring', () => {
+    expect(completesRound(0, [0])).toBe(true)
+  })
+
+  it('is false for the opening pass and for a seat that has left', () => {
+    expect(completesRound(null, [0, 1, 2, 3])).toBe(false)
+    // nextActiveSeat restarts the ring here rather than continuing it, so no round was completed.
+    expect(completesRound(2, [0, 1])).toBe(false)
+  })
+
+  it('agrees with nextActiveSeat about where the ring wraps', () => {
+    const occupied = [0, 1, 2, 3] as const
+    for (const seat of occupied) {
+      const wrapped = nextActiveSeat(seat, occupied) === 0
+      expect(completesRound(seat, occupied)).toBe(wrapped)
+    }
   })
 })
 
