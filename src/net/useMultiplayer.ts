@@ -11,6 +11,7 @@
  * spawn a duplicate peer.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { notifyWarning } from '../notifications'
 import { PeerConnection, type ConnectionStatus, type LocalPlayer, type RelocatedCard } from './peerConnection'
 import type { GivenCard, PublicBoard, RollResult, Seat } from './protocol'
 
@@ -169,6 +170,13 @@ export function useMultiplayer(
     conn.on('reaction', (playerId, name, emoji) => onReactionReceivedRef.current?.(playerId, name, emoji))
     conn.on('turnPass', (activeSeat) => setActiveSeat(activeSeat))
     conn.on('radio', (station) => setRadioStation(station))
+    // Reuses the app's existing banner system rather than a second one (see src/notifications.ts).
+    // Fired at most once per connection, so this can't stack up.
+    conn.on('versionMismatch', () =>
+      notifyWarning(
+        "Someone in this game is running a different version of DoubleStrike, so their moves won't show up. Updating everyone to the latest version fixes it.",
+      ),
+    )
     connRef.current = conn
     return conn
   }, [])

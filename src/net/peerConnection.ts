@@ -26,9 +26,9 @@ import {
   type PublicBoard,
   type RollResult,
   type Seat,
-  deserialize,
   generateRoomCode,
   nextFreeSeat,
+  parseMessage,
   relayTargets,
   roomCodeToPeerId,
   serialize,
@@ -83,6 +83,11 @@ export type PeerConnectionEvents = {
   /** The shared table radio's station changed (including relayed ones, and the host's replay
    *  of its cached value to a newly-joined guest). Null means it's off. */
   radio: (station: string | null) => void
+  /** Someone in the pod is on an incompatible PROTOCOL_VERSION, so their messages are being
+   *  dropped. parseMessage has always distinguished this from plain garbage ("the latter is
+   *  worth surfacing", per its doc) but nothing ever acted on the distinction — the symptom was
+   *  just a peer who silently did nothing. Fired at most once per connection. */
+  versionMismatch: () => void
 
   // --- draft mode (see draftProtocol.ts) ----------------------------------
   /** Who's seated where, for a pre-game draft lobby roster — see DraftRosterMessage. */
@@ -128,6 +133,31 @@ const MAX_ID_RETRIES = 5
 const MAX_RECONNECT_ATTEMPTS = 3
 const RECONNECT_RETRY_DELAY_MS = 1500
 
+// A guest whose *data* connection dies (as opposed to the signaling socket above) used to be
+// simply done: status went 'closed' and the only way back was typing the room code again by
+// hand. The board itself already survives that (see PlaytestView's autosave), so the session is
+// recoverable in principle — this makes it recover on its own. Rejoining reuses the same
+// playerId, which is exactly what the host's HELLO handler already keys its "offer the old seat
+// back" logic on, so a successful rejoin lands the player back in their own quadrant.
+const MAX_REJOIN_ATTEMPTS = 5
+const REJOIN_BASE_DELAY_MS = 1000
+// Doubles per attempt from the base above: ~1s, 2s, 4s, 8s, 16s. Long enough overall to ride out
+// a laptop lid or a router reboot, short enough that the first (far more common) blip is
+// invisible.
+const rejoinDelayMs = (attempt: number) => REJOIN_BASE_DELAY_MS * 2 ** (attempt - 1)
+
+// Bounds a single connection attempt, start to finish: registering our own peer with the broker,
+// opening the channel, and hearing WELCOME back. Anything short of a full success within this
+// window counts as a failed attempt.
+//
+// A per-attempt deadline rather than just a WELCOME deadline, because every stage can stall
+// silently. Live testing caught exactly that: with the host gone, retries froze permanently on
+// "attempt 2 of 5" — the replacement Peer never finished registering with the public broker, so
+// peer.connect() was never reached, so no 'peer-unavailable' error ever fired, so nothing
+// advanced the retry chain or ended it. Only failures that announce themselves were being
+// handled.
+const ATTEMPT_TIMEOUT_MS = 10_000
+
 export class PeerConnection {
   private readonly local: LocalPlayer
   private peer: Peer | null = null
@@ -153,6 +183,17 @@ export class PeerConnection {
 
   // Guest state: the single connection to the host.
   private hostConn: DataConnection | null = null
+  // Guest reconnection bookkeeping. `roomCode` is remembered purely so a dropped connection can
+  // be re-established without asking the player to re-enter it; `deliberateDisconnect` keeps
+  // leave() from being mistaken for a drop and immediately retried.
+  private roomCode: string | null = null
+  private deliberateDisconnect = false
+  private rejoinAttempts = 0
+  private rejoinTimer: number | null = null
+  private attemptTimer: number | null = null
+  // Emitted at most once per connection: a peer on a different PROTOCOL_VERSION produces a
+  // parse failure for every single message, and warning on each one would be a flood.
+  private versionMismatchReported = false
 
   private readonly listeners: { [K in EventKey]: Set<PeerConnectionEvents[K]> } = {
     status: new Set(),
@@ -181,6 +222,7 @@ export class PeerConnection {
     draftRoundComplete: new Set(),
     draftComplete: new Set(),
     draftProgress: new Set(),
+    versionMismatch: new Set(),
   }
 
   constructor(local: LocalPlayer) {
@@ -202,9 +244,48 @@ export class PeerConnection {
 
   private emit<K extends EventKey>(event: K, ...args: Parameters<PeerConnectionEvents[K]>): void {
     for (const handler of this.listeners[event]) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ;(handler as (...a: any[]) => void)(...args)
+      // Each listener is isolated: these run synchronously inside PeerJS's own 'data' callback,
+      // so an exception from one (a React state setter hitting a renderer bug, say) used to
+      // abort the remaining listeners for that message AND propagate back into the transport.
+      // A bug in one feature shouldn't be able to take the whole connection's message handling
+      // down with it.
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ;(handler as (...a: any[]) => void)(...args)
+      } catch (err) {
+        console.error(`[peerConnection] listener for "${event}" threw:`, err)
+      }
     }
+  }
+
+  /** Parses an incoming frame, surfacing a version mismatch (once) instead of silently
+   *  discarding it like any other unusable message — see the `versionMismatch` event. */
+  private parseIncoming(data: unknown): NetMessage | null {
+    const result = parseMessage(data)
+    if (result.ok) return result.msg
+    if (result.reason === 'version' && !this.versionMismatchReported) {
+      this.versionMismatchReported = true
+      this.emit('versionMismatch')
+    }
+    return null
+  }
+
+  /** Watches the underlying RTCPeerConnection for terminal ICE failure. PeerJS's own
+   *  'close'/'error' events don't reliably fire when a link dies mid-session (see the HELLO
+   *  handler's note about connections left "quietly dead"), which is precisely the case that
+   *  strands a ghost guest holding a seat, or leaves a guest sitting on a connection that will
+   *  never carry another byte. 'disconnected' is deliberately NOT treated as terminal — it's
+   *  routinely transient and recovers on its own; only 'failed'/'closed' are acted on. */
+  private watchConnectionHealth(conn: DataConnection, onDead: () => void): void {
+    const pc = conn.peerConnection
+    if (!pc) return
+    const check = () => {
+      if (pc.connectionState === 'failed' || pc.connectionState === 'closed' || pc.iceConnectionState === 'failed') {
+        onDead()
+      }
+    }
+    pc.addEventListener('connectionstatechange', check)
+    pc.addEventListener('iceconnectionstatechange', check)
   }
 
   // --- host --------------------------------------------------------------
@@ -277,22 +358,43 @@ export class PeerConnection {
 
   private acceptGuest(conn: DataConnection) {
     conn.on('open', () => {
-      // Reject once the pod is full — the guest's connection just closes. Seat isn't
-      // assigned yet (that happens on HELLO, once we know playerId — see onHostData),
-      // so this is just a raw-connection-slot cap.
+      // Reap anything already dead BEFORE counting: the capacity test below counts raw
+      // connection slots, and a guest whose link died without ever firing 'close'/'error'
+      // (see the HELLO handler's note) keeps holding one indefinitely. Since the stale-entry
+      // purge for a returning player only runs once their HELLO arrives — strictly after this
+      // check — a full pod would refuse a legitimate reconnect on the strength of that
+      // player's OWN ghost entry, reported to them as "the game may be full."
+      this.pruneDeadGuests()
+      // Seat isn't assigned yet (that happens on HELLO, once we know playerId — see
+      // onHostData), so this is just a raw-connection-slot cap.
       if (this.guests.size >= MAX_PLAYERS - 1) {
         conn.close()
         return
       }
       this.guests.set(conn.peer, { conn, seat: null })
+      // Catches a link that dies without a clean close — otherwise this record lingers, its
+      // seat stays occupied, and every directed send to it silently goes nowhere.
+      this.watchConnectionHealth(conn, () => this.dropGuest(conn.peer))
     })
     conn.on('data', (data) => this.onHostData(conn, data))
     conn.on('close', () => this.dropGuest(conn.peer))
     conn.on('error', () => this.dropGuest(conn.peer))
   }
 
+  /** Drops every guest record whose connection is no longer open. Records are only ever created
+   *  in acceptGuest's 'open' handler, so a closed one here is genuinely finished, never a
+   *  connection still mid-handshake. Ids are collected first rather than dropped mid-iteration,
+   *  since dropGuest itself walks `guests` to fan out PLAYER_LEFT. */
+  private pruneDeadGuests(): void {
+    const dead: string[] = []
+    for (const [peerId, guest] of this.guests) {
+      if (!guest.conn.open) dead.push(peerId)
+    }
+    for (const peerId of dead) this.dropGuest(peerId)
+  }
+
   private onHostData(conn: DataConnection, data: unknown) {
-    const msg = deserialize(data)
+    const msg = this.parseIncoming(data)
     if (!msg) return
     const record = this.guests.get(conn.peer)
     if (!record) return
@@ -592,7 +694,26 @@ export class PeerConnection {
   /** Connect to a host by room code. Resolves once the data channel opens. */
   joinGame(roomCode: string): Promise<void> {
     this.role = 'guest'
-    this.emit('status', 'connecting')
+    // Remembered for the lifetime of this connection so a dropped link can be re-established
+    // without asking the player to type the code again — see scheduleRejoin.
+    this.roomCode = roomCode
+    this.deliberateDisconnect = false
+    this.rejoinAttempts = 0
+    return this.openGuestConnection(roomCode, false)
+  }
+
+  /**
+   * One attempt at establishing (or re-establishing) the guest's connection to the host. A
+   * rejoin gets a brand-new Peer rather than reusing the old one — which is exactly the shape
+   * the host's HELLO handler already expects and de-duplicates ("a reconnect arrives as a
+   * brand-new PeerJS connection"). On a rejoin attempt, failures feed back into the retry
+   * schedule instead of being surfaced as a fatal error.
+   */
+  private openGuestConnection(roomCode: string, isRejoin: boolean): Promise<void> {
+    this.emit('status', 'connecting', isRejoin ? this.rejoinStatusDetail() : undefined)
+    // Started here, not once the channel opens: the attempt can stall at any earlier stage too
+    // (see ATTEMPT_TIMEOUT_MS), and those stalls are silent.
+    this.startAttemptTimeout(isRejoin)
     return new Promise<void>((resolve, reject) => {
       const peer = new Peer()
       this.peer = peer
@@ -616,20 +737,40 @@ export class PeerConnection {
             name: this.local.name,
             deckFormat: this.local.deckFormat,
           })
+          // A link that fails mid-session usually dies without a clean 'close' (the very case
+          // that used to strand a guest); treat it as a drop and start reconnecting.
+          this.watchConnectionHealth(conn, () => this.handleGuestDisconnect('Lost connection to the game.'))
           resolve()
         })
         conn.on('data', (data) => this.onGuestData(data))
         conn.on('close', () => {
           // If we never got WELCOME (ownSeat still null), the host rejected/dropped us before
           // ever accepting us into the pod — most commonly because it's already full — rather
-          // than a session we were genuinely part of being ended.
-          const detail =
-            this.ownSeat === null ? "Couldn't join — the game may be full or no longer available." : 'The host ended the session.'
-          this.emit('status', 'closed', detail)
+          // than a session we were genuinely part of being ended. A rejection is final, so it
+          // is reported as-is; a session we were really part of is worth trying to recover.
+          if (this.ownSeat === null) {
+            this.clearAttemptTimeout()
+            this.emit('status', 'closed', "Couldn't join — the game may be full or no longer available.")
+            return
+          }
+          this.handleGuestDisconnect('The host ended the session.')
         })
-        conn.on('error', (err) => this.emit('status', 'error', describePeerError(err)))
+        conn.on('error', (err) => {
+          if (this.ownSeat === null) {
+            this.emit('status', 'error', describePeerError(err))
+            return
+          }
+          this.handleGuestDisconnect(describePeerError(err))
+        })
       })
       peer.on('error', (err) => {
+        // On a rejoin attempt the peer failing is just this attempt failing — fold it back into
+        // the retry schedule rather than tearing the session down on the first miss.
+        if (isRejoin || this.ownSeat !== null) {
+          this.handleGuestDisconnect(describePeerError(err))
+          reject(err)
+          return
+        }
         this.emit('status', 'error', describePeerError(err))
         reject(err)
       })
@@ -637,12 +778,78 @@ export class PeerConnection {
     })
   }
 
+  private rejoinStatusDetail(): string {
+    return `Reconnecting to the game (attempt ${this.rejoinAttempts} of ${MAX_REJOIN_ATTEMPTS})…`
+  }
+
+  /** Fails the current attempt if it hasn't fully succeeded within ATTEMPT_TIMEOUT_MS. WELCOME
+   *  clears this timer, so reaching the callback always means this attempt did not complete —
+   *  no need to re-check ownSeat, which may still hold a seat from a previous session. */
+  private startAttemptTimeout(isRejoin: boolean): void {
+    this.clearAttemptTimeout()
+    this.attemptTimer = window.setTimeout(() => {
+      this.attemptTimer = null
+      if (isRejoin || this.ownSeat !== null) {
+        // Schedule the next retry FIRST: closing the channel below re-enters
+        // handleGuestDisconnect, which then sees a retry already pending and leaves it alone,
+        // so the attempt counter advances exactly once.
+        this.handleGuestDisconnect('Lost connection to the game.')
+        this.hostConn?.close()
+        return
+      }
+      this.emit('status', 'closed', "Couldn't join — the game didn't respond. Check the code and try again.")
+      this.hostConn?.close()
+    }, ATTEMPT_TIMEOUT_MS)
+  }
+
+  private clearAttemptTimeout(): void {
+    if (this.attemptTimer !== null) {
+      window.clearTimeout(this.attemptTimer)
+      this.attemptTimer = null
+    }
+  }
+
+  /**
+   * A guest's connection to the host went away for a reason we didn't ask for. Rather than
+   * ending the session (the old behaviour — status 'closed', re-enter the room code by hand),
+   * retry on a backoff, reusing the same playerId so the host hands back the same seat. Only
+   * gives up, and only then reports 'closed', once the attempts are exhausted.
+   */
+  private handleGuestDisconnect(reason: string): void {
+    if (this.deliberateDisconnect || this.role !== 'guest') return
+    if (this.rejoinTimer !== null) return // a retry is already pending; don't stack them
+    this.clearAttemptTimeout()
+    if (!this.roomCode || this.rejoinAttempts >= MAX_REJOIN_ATTEMPTS) {
+      this.emit('status', 'closed', reason)
+      return
+    }
+    this.rejoinAttempts += 1
+    this.emit('status', 'connecting', this.rejoinStatusDetail())
+    this.rejoinTimer = window.setTimeout(() => {
+      this.rejoinTimer = null
+      if (this.deliberateDisconnect || !this.roomCode) return
+      // Tear the old peer down first: it's dead, and leaving it registered would keep its
+      // stale broker id alive alongside the new one.
+      this.peer?.destroy()
+      this.peer = null
+      this.hostConn = null
+      void this.openGuestConnection(this.roomCode, true).catch(() => {
+        // Surfaced through the status events above; a rejected promise here is expected on a
+        // failed attempt and must not become an unhandled rejection.
+      })
+    }, rejoinDelayMs(this.rejoinAttempts))
+  }
+
   private onGuestData(data: unknown) {
-    const msg = deserialize(data)
+    const msg = this.parseIncoming(data)
     if (!msg) return
     switch (msg.type) {
       case 'WELCOME':
         this.ownSeat = msg.seat
+        // Accepted into the pod — this attempt succeeded, so the next unexpected drop starts
+        // its own fresh backoff rather than inheriting this one's spent attempts.
+        this.clearAttemptTimeout()
+        this.rejoinAttempts = 0
         this.emit('seat', msg.seat)
         // The host has now actually accepted us into the pod — this is the real "connected"
         // moment, not just the raw channel opening (see joinGame's conn.on('open') doc).
@@ -1027,6 +1234,18 @@ export class PeerConnection {
   }
 
   disconnect(): void {
+    // Set before anything is torn down: the teardown below fires the same 'close' events an
+    // unexpected drop would, and without this flag handleGuestDisconnect would dutifully start
+    // reconnecting to a session the player just chose to leave.
+    this.deliberateDisconnect = true
+    if (this.rejoinTimer !== null) {
+      window.clearTimeout(this.rejoinTimer)
+      this.rejoinTimer = null
+    }
+    this.clearAttemptTimeout()
+    this.roomCode = null
+    this.rejoinAttempts = 0
+    this.versionMismatchReported = false
     this.guests.clear()
     this.lastBoards.clear()
     this.lastSeatByPlayerId.clear()

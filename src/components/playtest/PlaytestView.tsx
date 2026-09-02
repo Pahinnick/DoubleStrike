@@ -434,13 +434,20 @@ function PlaytestView({ onClose }: Props) {
   // stay stuck on a stale mirror (e.g. showing someone as eliminated from an old life<=0
   // snapshot, wrongly, after they reconnected fine) until *their* own game state happened to
   // change again. This closes that gap without needing to know it happened.
+  //
+  // The latest state is read through a ref so it isn't an effect dependency: including it would
+  // tear down and recreate the interval on every single game change, restarting the timer each
+  // time — which is precisely backwards, since the case this exists to cover is a player whose
+  // state ISN'T changing.
+  const heartbeatStateRef = useRef(state)
+  heartbeatStateRef.current = state
   useEffect(() => {
     if (!mpActive || mySeat === null) return
     const handle = window.setInterval(() => {
-      broadcast(toPublicBoard(state, { playerId, name: playerName, seat: mySeat, battlefieldSkin }))
+      broadcast(toPublicBoard(heartbeatStateRef.current, { playerId, name: playerName, seat: mySeat, battlefieldSkin }))
     }, BOARD_HEARTBEAT_MS)
     return () => window.clearInterval(handle)
-  }, [mpActive, mySeat, broadcast, playerId, playerName, battlefieldSkin, state])
+  }, [mpActive, mySeat, broadcast, playerId, playerName, battlefieldSkin])
 
   // DEV-only "preview pod" seam: inject mock opponents so the shared-table layout
   // and camera can be exercised without a live connection (real P2P joining is
@@ -548,7 +555,16 @@ function PlaytestView({ onClose }: Props) {
     [mySeatResolved, state.scooped],
     ...opponentBoards.map((b) => [b.seat, !!b.scooped] as const),
   ])
-  const isEliminated = (seat: Seat) => (lifeBySeat.get(seat) ?? 0) <= 0 || scoopedBySeat.get(seat) === true
+  // Occupancy is checked FIRST, and it's the whole reason this isn't just the life/scoop test:
+  // lifeBySeat only has entries for seats we actually have a board for, so every other seat fell
+  // through the `?? 0` fallback and read as "0 life" — i.e. eliminated. An empty seat therefore
+  // rendered an "Eliminated" scrim over its quadrant and an eliminated-styled nameplate, while
+  // the label right next to it still said "Open". The same fallback also mislabelled a player
+  // whose board mirror was merely missing for a moment (dropped, or mid-reconnect) as dead
+  // rather than absent — the exact shape of the desync that made a reconnecting player look
+  // eliminated to some of the pod but not others.
+  const isEliminated = (seat: Seat) =>
+    lifeBySeat.has(seat) && ((lifeBySeat.get(seat) ?? 0) <= 0 || scoopedBySeat.get(seat) === true)
   // Every seat's name, keyed by seat — needed to label an opponent's incoming commander-damage
   // pills (see the SeatOverlay calls below): a source dealing damage to opponent B could be us
   // or any other opponent C, not just whoever's card we're currently rendering.
