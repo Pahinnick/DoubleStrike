@@ -2,7 +2,17 @@
 // download/bundle). Deliberately quiet and short; muted by default is NOT the goal here,
 // but any failure to play must never be fatal to the actual game action it accompanies.
 
-export type SoundCue = 'draw' | 'life-up' | 'life-down' | 'play-card' | 'hover' | 'shuffle' | 'board-tap' | 'your-turn' | 'turn-passed'
+export type SoundCue =
+  | 'draw'
+  | 'life-up'
+  | 'life-down'
+  | 'play-card'
+  | 'hover'
+  | 'shuffle'
+  | 'board-tap'
+  | 'your-turn'
+  | 'turn-passed'
+  | 'create-token'
 
 const BASE_VOLUME = 0.05
 
@@ -144,6 +154,18 @@ const CUES: Record<SoundCue, () => void> = {
   // brighter ascending pair) so the two are never confused for one another: this one just means
   // "the turn moved on," not "act now."
   'turn-passed': () => tone(420, 0, 0.07, 'sine'),
+  // A token being conjured: a quick ascending sparkle with a bright hiss over it, so it reads as
+  // something appearing out of nothing rather than a real card arriving from hand ('play-card'
+  // above is deliberately the duller, lower two-note thunk of cardboard hitting the table).
+  // Faster and brighter than 'your-turn's chime, which is also ascending, so the two can't be
+  // mistaken for each other. Kept short and quiet on purpose — one Krenko activation can make a
+  // dozen of these back to back, and anything longer would smear into a drone.
+  'create-token': () => {
+    tone(620, 0, 0.045, 'triangle')
+    tone(930, 0.038, 0.045, 'triangle')
+    tone(1400, 0.075, 0.08, 'sine')
+    noiseBurst(0.05, 7000, 0.02)
+  },
 }
 
 export function playCue(cue: SoundCue): void {

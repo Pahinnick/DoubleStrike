@@ -1447,6 +1447,7 @@ function PlaytestView({ onClose }: Props) {
   function createToken(source: (typeof battlefield)[number]) {
     const { x, y } = clampToCanvas((source.x ?? 0) + 16, (source.y ?? 0) + 16)
     dispatch({ type: 'CREATE_TOKEN', sourceInstanceId: source.instanceId, x, y })
+    playCue('create-token')
   }
 
   // T: the keyboard version of clicking a card within an active multi-selection (see
@@ -3575,6 +3576,7 @@ function PlaytestView({ onClose }: Props) {
           onPick={(scryfallId) => {
             const { x, y } = tokenSpawnPoint ?? autoPosition()
             dispatch({ type: 'ADD_TOKEN', scryfallId, x, y })
+            playCue('create-token')
             // The modal stays open for multiple picks — nudge the spawn point each time so a
             // right-click session's tokens fan out instead of stacking exactly on top of each other.
             if (tokenSpawnPoint) setTokenSpawnPoint(clampToCanvas(tokenSpawnPoint.x + 14, tokenSpawnPoint.y + 14))
