@@ -368,7 +368,14 @@ function gameReducerInner(state: GameState, action: GameAction): GameState {
       if (!card || card.zone !== 'battlefield') return state
       // Re-append so the dragged card renders above overlapping neighbors.
       const rest = state.cards.filter((c) => c.instanceId !== action.instanceId)
-      return { ...state, cards: [...rest, { ...card, x: action.x, y: action.y }] }
+      // Clearing atSeat is what brings a card HOME. This action means "I dropped this on my own
+      // quadrant" — its only dispatcher is the drop handler's own-quadrant fallback, which
+      // computes x/y against our own seat origin. Preserving atSeat through the spread meant
+      // dragging a card you'd previously parked on someone else's board back onto your own just
+      // moved it around THEIR quadrant instead (new coordinates, still drawn at their origin),
+      // so it looked like your card refused to come back. A move that really is meant to land at
+      // another seat goes through RECEIVE_RELOCATED_CARD, which takes atSeat explicitly.
+      return { ...state, cards: [...rest, { ...card, x: action.x, y: action.y, atSeat: undefined }] }
     }
 
     case 'CREATE_TOKEN': {

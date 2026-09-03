@@ -172,6 +172,22 @@ describe('gameReducer', () => {
     expect(field[field.length - 1].x).toBe(30)
   })
 
+  it('SET_POSITION brings a card parked on another seat back home by clearing atSeat', () => {
+    const before = startedGame(20)
+    const cardId = zoneCards(before, 'hand')[0].instanceId
+    const state = apply(
+      before,
+      { type: 'MOVE_CARD', instanceId: cardId, toZone: 'battlefield', x: 0, y: 0 },
+      // Parked on seat 2's quadrant, e.g. dragged there earlier.
+      { type: 'RECEIVE_RELOCATED_CARD', instanceId: cardId, x: 80, y: 90, atSeat: 2 },
+      // Dragged back onto our own board — x/y are ours, so the seat must be ours again too.
+      { type: 'SET_POSITION', instanceId: cardId, x: 12, y: 34 },
+    )
+    // Without clearing atSeat this rendered at seat 2's origin plus the new coordinates, i.e.
+    // "the matching spot on their board" rather than coming home at all.
+    expect(state.cards.find((c) => c.instanceId === cardId)).toMatchObject({ x: 12, y: 34, atSeat: undefined })
+  })
+
   it('SET_POSITION ignores cards not on the battlefield', () => {
     const before = startedGame(20)
     const handCard = zoneCards(before, 'hand')[0].instanceId
