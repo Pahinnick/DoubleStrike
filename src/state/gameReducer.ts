@@ -166,6 +166,13 @@ export type GameAction =
    *  on the target by summing power and toughness separately, consistent with
    *  ADJUST_PT_COUNTER_PILE treating them as independent stats. */
   | { type: 'MOVE_PT_COUNTER_PILE'; fromInstanceId: string; pileId: string; toInstanceId: string }
+  /** Stamps a copied set of piles onto a card — the paste half of copy/paste counters, for
+   *  replicating a counter layout across several cards without rebuilding it by hand each time.
+   *  Adds to whatever's already there rather than replacing it, merging into same-color piles
+   *  exactly like MOVE_COUNTER_PILE/MOVE_PT_COUNTER_PILE do, so pasting can't silently wipe
+   *  counters the target already had. Pasted piles get fresh ids: the source card keeps its own,
+   *  and two cards never end up sharing a pile id. */
+  | { type: 'PASTE_COUNTER_PILES'; instanceId: string; counters: CounterPile[]; ptCounters: PtCounterPile[] }
   | { type: 'FLIP_CARD'; instanceId: string }
   | { type: 'SET_FACE_DOWN'; instanceId: string; faceDown: boolean }
   | { type: 'SET_TAPPED'; instanceId: string; tapped: boolean }
@@ -537,6 +544,48 @@ function gameReducerInner(state: GameState, action: GameAction): GameState {
           }
           return c
         }),
+      }
+    }
+
+    case 'PASTE_COUNTER_PILES': {
+      const card = state.cards.find((c) => c.instanceId === action.instanceId)
+      if (!card || card.zone !== 'battlefield') return state
+      if (action.counters.length === 0 && action.ptCounters.length === 0) return state
+
+      // Same "merge into a same-color pile, otherwise append" rule the MOVE_*_COUNTER_PILE cases
+      // above use, so a pasted pile behaves like one dragged across rather than inventing a
+      // second, competing pile of a color the card already carries.
+      let counters = [...(card.counters ?? [])]
+      for (const pile of action.counters) {
+        const existing = counters.find((p) => p.color === pile.color)
+        counters = existing
+          ? counters.map((p) => (p.id === existing.id ? { ...p, value: p.value + pile.value } : p))
+          : [...counters, { ...pile, id: crypto.randomUUID() }]
+      }
+
+      let ptCounters = [...(card.ptCounters ?? [])]
+      for (const pile of action.ptCounters) {
+        const existing = ptCounters.find((p) => p.color === pile.color)
+        ptCounters = existing
+          ? ptCounters.map((p) =>
+              p.id === existing.id ? { ...p, power: p.power + pile.power, toughness: p.toughness + pile.toughness } : p,
+            )
+          : [...ptCounters, { ...pile, id: crypto.randomUUID() }]
+      }
+
+      return {
+        ...state,
+        cards: state.cards.map((c) =>
+          c.instanceId === action.instanceId
+            ? {
+                ...c,
+                // Kept absent rather than an empty array when there's nothing, matching the
+                // convention the other counter cases hold to (see GameCard.counters).
+                counters: counters.length > 0 ? counters : undefined,
+                ptCounters: ptCounters.length > 0 ? ptCounters : undefined,
+              }
+            : c,
+        ),
       }
     }
 

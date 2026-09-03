@@ -172,6 +172,63 @@ describe('gameReducer', () => {
     expect(field[field.length - 1].x).toBe(30)
   })
 
+  it('PASTE_COUNTER_PILES stamps copied piles onto a bare card, with fresh ids', () => {
+    const before = startedGame(20)
+    const cardId = zoneCards(before, 'hand')[0].instanceId
+    const state = apply(
+      before,
+      { type: 'MOVE_CARD', instanceId: cardId, toZone: 'battlefield', x: 0, y: 0 },
+      {
+        type: 'PASTE_COUNTER_PILES',
+        instanceId: cardId,
+        counters: [{ id: 'source-pile', color: 'green', value: 3 }],
+        ptCounters: [{ id: 'source-pt', color: 'red', power: 2, toughness: 1 }],
+      },
+    )
+    const card = state.cards.find((c) => c.instanceId === cardId)!
+    expect(card.counters).toMatchObject([{ color: 'green', value: 3 }])
+    expect(card.ptCounters).toMatchObject([{ color: 'red', power: 2, toughness: 1 }])
+    // Fresh ids, so the card it was copied FROM keeps sole ownership of its own pile ids.
+    expect(card.counters![0].id).not.toBe('source-pile')
+    expect(card.ptCounters![0].id).not.toBe('source-pt')
+  })
+
+  it('PASTE_COUNTER_PILES merges into a same-color pile instead of replacing or duplicating it', () => {
+    const before = startedGame(20)
+    const cardId = zoneCards(before, 'hand')[0].instanceId
+    let state = apply(
+      before,
+      { type: 'MOVE_CARD', instanceId: cardId, toZone: 'battlefield', x: 0, y: 0 },
+      { type: 'ADD_COUNTER_PILE', instanceId: cardId, color: 'green' },
+      { type: 'ADD_PT_COUNTER_PILE', instanceId: cardId, color: 'red' },
+    )
+    // ADD_* start at 1 / 1-1, so the target already carries a green and a red pile.
+    state = apply(state, {
+      type: 'PASTE_COUNTER_PILES',
+      instanceId: cardId,
+      counters: [
+        { id: 's1', color: 'green', value: 3 },
+        { id: 's2', color: 'blue', value: 2 },
+      ],
+      ptCounters: [{ id: 's3', color: 'red', power: 2, toughness: 2 }],
+    })
+    const card = state.cards.find((c) => c.instanceId === cardId)!
+    // Green merged (1 + 3), blue appended as its own pile — never a second green.
+    expect(card.counters).toHaveLength(2)
+    expect(card.counters!.find((p) => p.color === 'green')!.value).toBe(4)
+    expect(card.counters!.find((p) => p.color === 'blue')!.value).toBe(2)
+    expect(card.ptCounters).toHaveLength(1)
+    expect(card.ptCounters![0]).toMatchObject({ color: 'red', power: 3, toughness: 3 })
+  })
+
+  it('PASTE_COUNTER_PILES leaves a card alone when there is nothing to paste', () => {
+    const before = startedGame(20)
+    const cardId = zoneCards(before, 'hand')[0].instanceId
+    const played = apply(before, { type: 'MOVE_CARD', instanceId: cardId, toZone: 'battlefield', x: 0, y: 0 })
+    const after = apply(played, { type: 'PASTE_COUNTER_PILES', instanceId: cardId, counters: [], ptCounters: [] })
+    expect(after).toBe(played)
+  })
+
   it('SET_POSITION brings a card parked on another seat back home by clearing atSeat', () => {
     const before = startedGame(20)
     const cardId = zoneCards(before, 'hand')[0].instanceId

@@ -17,7 +17,7 @@ import { BATTLEFIELD_SKINS, normalizeBattlefieldSkin, useBattlefieldSkin, type B
 import { useCardSnapshots } from '../../hooks/useCardSnapshots'
 import { usePlaytestWindowMode } from '../../hooks/usePlaytestWindowMode'
 import { useProfileSettings } from '../../hooks/useProfileSettings'
-import { FACE_DOWN_SCRYFALL_ID, type PublicBoard, type RollResult, type Seat } from '../../net/protocol'
+import { FACE_DOWN_SCRYFALL_ID, type CounterPile, type PtCounterPile, type PublicBoard, type RollResult, type Seat } from '../../net/protocol'
 import { toPublicBoard } from '../../net/publicBoard'
 import { useMultiplayer } from '../../net/useMultiplayer'
 import { useDeck } from '../../state/DeckContext'
@@ -1581,6 +1581,16 @@ function PlaytestView({ onClose }: Props) {
         })),
       },
     ]
+    // Copy/paste a whole counter layout, for stamping the same setup onto several cards without
+    // rebuilding it by hand each time (Ctrl+C / Ctrl+V over a card do the same). Each only
+    // appears when it would actually do something: nothing to copy off a bare card, nothing to
+    // paste before something's been copied.
+    if ((gameCard.counters?.length ?? 0) > 0 || (gameCard.ptCounters?.length ?? 0) > 0) {
+      actions.push({ label: 'Copy Counters', onSelect: () => copyCounters(gameCard) })
+    }
+    if (counterClipboard) {
+      actions.push({ label: 'Paste Counters', onSelect: () => pasteCounters(gameCard.instanceId) })
+    }
     if (snapshot && isFlippableSnapshot(snapshot)) {
       actions.push({
         label: gameCard.showBackFace ? 'Flip to Front' : 'Flip to Back',
@@ -2138,6 +2148,72 @@ function PlaytestView({ onClose }: Props) {
       dispatch({ type: 'MOVE_CARD', instanceId: data.instanceId, toZone, libraryPosition })
     }
   }
+
+  /** Right-clicking ANOTHER player's battlefield card — a one-item menu offering to make your
+   *  own token copy of it. Separate from `contextMenu` (which looks its card up in our own
+   *  `battlefield`) because this one only ever knows the card by scryfallId: it isn't ours, and
+   *  the copy it makes is a brand-new token of our own rather than anything tied to the original. */
+  const [copyCardMenu, setCopyCardMenu] = useState<{ scryfallId: string; x: number; y: number } | null>(null)
+
+  /** Makes a token copy of any card on the table — yours or anyone else's — on YOUR board.
+   *  Purely local: it's a new token in our own state, so our next STATE broadcast shows it to
+   *  the pod like any other card we played, and the original is untouched. */
+  function copyCardAsToken(scryfallId: string) {
+    const { x, y } = autoPosition()
+    dispatch({ type: 'ADD_TOKEN', scryfallId, x, y })
+    playCue('create-token')
+    setCopyCardMenu(null)
+  }
+
+  /** Copied counter layout, waiting to be stamped onto another card. Session-only and
+   *  deliberately not part of GameState: it's a scratch buffer for the person playing, not
+   *  something the board should remember, broadcast, or restore from an autosave. */
+  const [counterClipboard, setCounterClipboard] = useState<{ counters: CounterPile[]; ptCounters: PtCounterPile[] } | null>(null)
+
+  function copyCounters(card: (typeof battlefield)[number]) {
+    const counters = card.counters ?? []
+    const ptCounters = card.ptCounters ?? []
+    if (counters.length === 0 && ptCounters.length === 0) return
+    setCounterClipboard({ counters, ptCounters })
+  }
+
+  function pasteCounters(instanceId: string) {
+    if (!counterClipboard) return
+    dispatch({ type: 'PASTE_COUNTER_PILES', instanceId, counters: counterClipboard.counters, ptCounters: counterClipboard.ptCounters })
+  }
+
+  // Ctrl/Cmd+C and +V over a card, mirroring the two context-menu entries. Its own effect rather
+  // than folded into the undo/redo one above, which is declared earlier than the battlefield and
+  // clipboard it would need to read. Both only fire while actually pointing at one of your own
+  // battlefield cards, so the shortcuts stay out of the browser's way everywhere else — and
+  // Playtest sets user-select: none, so there's no text selection here to steal either.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) {
+        return
+      }
+      if (!(event.ctrlKey || event.metaKey) || !hoveredInstanceId) return
+      const key = event.key.toLowerCase()
+      if (key === 'c') {
+        const card = battlefield.find((c) => c.instanceId === hoveredInstanceId)
+        if (!card || ((card.counters?.length ?? 0) === 0 && (card.ptCounters?.length ?? 0) === 0)) return
+        event.preventDefault()
+        setCounterClipboard({ counters: card.counters ?? [], ptCounters: card.ptCounters ?? [] })
+      } else if (key === 'v' && counterClipboard) {
+        if (!battlefield.some((c) => c.instanceId === hoveredInstanceId)) return
+        event.preventDefault()
+        dispatch({
+          type: 'PASTE_COUNTER_PILES',
+          instanceId: hoveredInstanceId,
+          counters: counterClipboard.counters,
+          ptCounters: counterClipboard.ptCounters,
+        })
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [hoveredInstanceId, battlefield, counterClipboard, dispatch])
 
   /** Drop target for dragging a counter-pile chip (see CounterPileStack/PtCounterPileStack) onto
    *  one of your own OTHER battlefield cards — moves the whole pile there, merging into a
@@ -2829,6 +2905,19 @@ function PlaytestView({ onClose }: Props) {
                     } as CSSProperties}
                     onMouseEnter={() => setHoveredInstanceId(pc.instanceId)}
                     onMouseLeave={() => setHoveredInstanceId((cur) => (cur === pc.instanceId ? null : cur))}
+                    // Copying a card is something you do to your OWN board — it makes a token of
+                    // yours and never touches theirs — so unlike tap/flip/move it needs no
+                    // permission from the card's owner and no wire message. A face-down card is
+                    // skipped: its real identity was never sent to us (see FACE_DOWN_SCRYFALL_ID),
+                    // so there's nothing here that could be copied.
+                    onContextMenu={
+                      pc.faceDown
+                        ? undefined
+                        : (event) => {
+                            event.preventDefault()
+                            setCopyCardMenu({ scryfallId: pc.scryfallId, x: event.clientX, y: event.clientY })
+                          }
+                    }
                   >
                     <PlaytestCard
                       readOnly
@@ -3497,6 +3586,15 @@ function PlaytestView({ onClose }: Props) {
             />
           )
         })()}
+
+      {copyCardMenu && (
+        <CardContextMenu
+          x={copyCardMenu.x}
+          y={copyCardMenu.y}
+          actions={[{ label: 'Copy as Token', onSelect: () => copyCardAsToken(copyCardMenu.scryfallId) }]}
+          onClose={() => setCopyCardMenu(null)}
+        />
+      )}
 
       {countPrompt &&
         (() => {
