@@ -10,6 +10,9 @@ export const profilesStore = createStore('mtgdb-profiles', 'profiles')
 export const soloGameStore = createStore('mtgdb-solo-game', 'saves')
 export const saltScoresStore = createStore('mtgdb-salt-scores', 'salt')
 export const commanderPopularityStore = createStore('mtgdb-commander-popularity', 'popularity')
+// EDHREC's per-commander card recommendations, keyed by commander slug. Additive store, no
+// SCHEMA_VERSION bump needed.
+export const edhrecRecommendationsStore = createStore('mtgdb-edhrec-recommendations', 'recommendations')
 // Draft mode (behind the isDraftModeEnabled feature flag) — saved cubes, and later a resumable
 // in-progress draft session. Additive store, no SCHEMA_VERSION bump needed.
 export const cubesStore = createStore('mtgdb-cubes', 'cubes')

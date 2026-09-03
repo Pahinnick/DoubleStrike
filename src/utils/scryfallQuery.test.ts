@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { buildScryfallQuery, EMPTY_FILTERS } from './scryfallQuery'
+import {
+  buildScryfallQuery,
+  EMPTY_FILTERS,
+  formatPriceCap,
+  nearestPriceCapIndex,
+  PRICE_CAP_STEPS,
+  type SearchFilters,
+} from './scryfallQuery'
 
 describe('buildScryfallQuery', () => {
   it('returns just the text when no filters are set', () => {
@@ -90,5 +97,94 @@ describe('buildScryfallQuery', () => {
   it('builds rarity and set clauses', () => {
     const query = buildScryfallQuery('', { ...EMPTY_FILTERS, rarity: 'mythic', set: 'mh3' })
     expect(query).toBe('r:mythic s:mh3')
+  })
+})
+
+const filters = (overrides: Partial<SearchFilters> = {}): SearchFilters => ({ ...EMPTY_FILTERS, ...overrides })
+
+describe('buildScryfallQuery price cap', () => {
+  it('adds a usd<= clause for a cap', () => {
+    expect(buildScryfallQuery('bolt', filters({ maxUsd: 5 }))).toBe('bolt usd<=5')
+  })
+
+  it('adds nothing when uncapped', () => {
+    expect(buildScryfallQuery('bolt', filters())).toBe('bolt')
+  })
+
+  it('keeps a sub-dollar cap intact rather than rounding it away', () => {
+    expect(buildScryfallQuery('', filters({ maxUsd: 0.25 }))).toBe('usd<=0.25')
+  })
+
+  it('treats a zero cap as a real cap, not as "no cap"', () => {
+    // `undefined` is the only "uncapped" value — a falsy-check here would silently drop the clause.
+    expect(buildScryfallQuery('', filters({ maxUsd: 0 }))).toBe('usd<=0')
+  })
+
+  it('combines with the other clauses', () => {
+    const query = buildScryfallQuery('', filters({ format: 'commander', types: ['Creature'], maxUsd: 2 }))
+    expect(query).toBe('f:commander t:Creature usd<=2')
+  })
+})
+
+describe('PRICE_CAP_STEPS', () => {
+  it('ends at an uncapped stop, which is the default position', () => {
+    expect(PRICE_CAP_STEPS[PRICE_CAP_STEPS.length - 1]).toBeUndefined()
+  })
+
+  it('is strictly ascending, so the slider reads left-to-right as cheap-to-expensive', () => {
+    const caps = PRICE_CAP_STEPS.slice(0, -1) as number[]
+    expect(caps.every((cap, i) => i === 0 || cap > caps[i - 1])).toBe(true)
+  })
+
+  it('has exactly one uncapped stop', () => {
+    expect(PRICE_CAP_STEPS.filter((cap) => cap === undefined)).toHaveLength(1)
+  })
+})
+
+describe('formatPriceCap', () => {
+  it('labels the uncapped stop', () => {
+    expect(formatPriceCap(undefined)).toBe('Any')
+  })
+
+  it('shows cents below a dollar and whole dollars above', () => {
+    expect(formatPriceCap(0.25)).toBe('$0.25')
+    expect(formatPriceCap(0.5)).toBe('$0.50')
+    expect(formatPriceCap(5)).toBe('$5')
+    expect(formatPriceCap(100)).toBe('$100')
+  })
+})
+
+describe('nearestPriceCapIndex', () => {
+  const capAt = (index: number) => PRICE_CAP_STEPS[index]
+
+  it('parks an uncapped filter at the far end', () => {
+    expect(nearestPriceCapIndex(undefined)).toBe(PRICE_CAP_STEPS.length - 1)
+  })
+
+  it('lands exactly on a value that is one of the steps', () => {
+    expect(capAt(nearestPriceCapIndex(5))).toBe(5)
+    expect(capAt(nearestPriceCapIndex(0.25))).toBe(0.25)
+  })
+
+  it('snaps a typed value that is not a step to the closest one', () => {
+    // $7 sits between the $5 and $10 stops, nearer $5.
+    expect(capAt(nearestPriceCapIndex(7))).toBe(5)
+    expect(capAt(nearestPriceCapIndex(9))).toBe(10)
+  })
+
+  it('breaks a tie toward the cheaper step', () => {
+    // $7.50 is equidistant from $5 and $10; presenting it as the pricier stop would overstate it.
+    expect(capAt(nearestPriceCapIndex(7.5))).toBe(5)
+  })
+
+  it('clamps beyond either end rather than falling off', () => {
+    expect(capAt(nearestPriceCapIndex(0))).toBe(0.25)
+    expect(capAt(nearestPriceCapIndex(9999))).toBe(100)
+  })
+
+  it('never returns the uncapped index for a real cap, which would read as "Any"', () => {
+    for (const cap of [0, 0.3, 7, 250, 9999]) {
+      expect(nearestPriceCapIndex(cap)).not.toBe(PRICE_CAP_STEPS.length - 1)
+    }
   })
 })

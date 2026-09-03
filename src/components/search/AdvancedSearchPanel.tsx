@@ -9,6 +9,7 @@ import {
   type SearchFilters,
 } from '../../utils/scryfallQuery'
 import OracleTagBrowser from './OracleTagBrowser'
+import PriceCapFilter from './PriceCapFilter'
 import TypeMultiSelect from './TypeMultiSelect'
 
 type Filters = Omit<SearchFilters, 'format'>
@@ -123,6 +124,8 @@ function AdvancedSearchPanel({ filters, onChange }: Props) {
         {renderStatField('Toughness', 'toughnessComparator', 'toughnessValue')}
         {renderStatField('Loyalty', 'loyaltyComparator', 'loyaltyValue')}
       </div>
+
+      <PriceCapFilter value={filters.maxUsd} onChange={(maxUsd) => set('maxUsd', maxUsd)} />
 
       <div className="advanced-search__row">
         <label className="advanced-search__select-field">

@@ -183,6 +183,24 @@
   width: 6rem;
 }
 
+/* Budget cap row: a fixed-width number box like the stat inputs, then the slider taking whatever
+   width is left, then a readout so the "Any" state is legible when the handle is at the far end. */
+.advanced-search__price-input {
+  width: 4.5rem;
+}
+
+.advanced-search__price-slider {
+  flex: 1 1 auto;
+  min-width: 80px;
+}
+
+.advanced-search__price-readout {
+  font-size: 0.8rem;
+  color: var(--text);
+  min-width: 3.5rem;
+  text-align: right;
+}
+
 .advanced-search__select-field--grow {
   flex: 1 1 auto;
 }
@@ -283,6 +301,35 @@
   cursor: grab;
 }
 
+/* Already in the open deck. The tile stays fully interactive — you can still add a second copy
+   in a format that allows it — so this dims rather than disables, and the accent border does the
+   real signalling at a glance across a 175-tile grid. */
+.card-result-item.is-in-deck {
+  border-color: var(--accent);
+}
+
+.card-result-item.is-in-deck img {
+  opacity: 0.55;
+}
+
+.card-result-item.is-in-deck:hover img,
+.card-result-item.is-in-deck:focus-visible img {
+  opacity: 1;
+}
+
+.card-result-item__in-deck {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.25rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 1;
+  color: #fff;
+  background-color: var(--accent);
+  border-radius: 4px;
+  padding: 0.15rem 0.3rem;
+}
+
 .card-result-item__price {
   position: absolute;
   bottom: 0.25rem;
@@ -312,6 +359,34 @@
   text-align: center;
   background-color: var(--bg-panel-raised);
   border-radius: 8px;
+}
+
+/* The rules-text rescue: shown under an empty name search, and offered as a switch under a
+   successful one. Separated from the results above it by a rule so it reads as a second answer
+   to the query rather than more of the same list. */
+.search-text-fallback {
+  margin-top: 0.75rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.search-text-fallback__switch {
+  display: block;
+  width: 100%;
+  margin-bottom: 0.4rem;
+  padding: 0.2rem 0;
+  font-size: 0.78rem;
+  text-align: left;
+  color: var(--text-dim);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.search-text-fallback__switch:hover,
+.search-text-fallback__switch:focus-visible {
+  color: var(--accent);
+  text-decoration: underline;
 }
 
 .search-load-more {

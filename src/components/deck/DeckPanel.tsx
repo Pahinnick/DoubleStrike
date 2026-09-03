@@ -2,9 +2,11 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { getCachedCard } from '../../api/scryfall'
 import CardSizeToggle from '../shared/CardSizeToggle'
 import { useCategoryRecommendationsContext } from '../shared/CategoryRecommendationsContext'
+import { useCommanderRecommendationsContext } from '../shared/CommanderRecommendationsContext'
 import { COMMANDERS_LABEL, groupByCategory, groupByType, TOKEN_CARDS_LABEL, type DeckCardEntry } from '../../engine/deckGrouping'
 import { computeDeckLegality } from '../../engine/legality'
 import { useCardSnapshots } from '../../hooks/useCardSnapshots'
+import { useCommanderNames } from '../../hooks/useCommanderNames'
 import { useSaltScores } from '../../hooks/useSaltScores'
 import { useDeck } from '../../state/DeckContext'
 import { useJumpToCardContext } from '../../state/JumpToCardContext'
@@ -35,6 +37,8 @@ function DeckPanel({ cardSize, onCardSizeChange }: Props) {
   const { deck, dispatch, addCard } = useDeck()
   const { jumpTarget, clearJumpTarget } = useJumpToCardContext()
   const { setOpenCategory } = useCategoryRecommendationsContext()
+  const { setOpen: setCommanderRecommendationsOpen } = useCommanderRecommendationsContext()
+  const commanderNames = useCommanderNames()
   const [activeBoard, setActiveBoard] = useState<Board>('mainboard')
   const [layout, setLayout] = useState<Layout>('grid')
   const [groupBy, setGroupBy] = useState<GroupBy>('category')
@@ -255,6 +259,10 @@ function DeckPanel({ cardSize, onCardSizeChange }: Props) {
         // Commanders/Uncategorized/Token Cards sections, which aren't otag-driven groupings.
         const isRecommendable =
           groupBy === 'category' && category !== undefined && category !== COMMANDERS_LABEL && category !== TOKEN_CARDS_LABEL
+        // The Commanders section gets its own kind of recommendation: EDHREC's most-played cards
+        // for this commander, the same list the search pane's Recommended button opens. Unlike the
+        // category recommendations above it isn't tag-driven, so it works in any grouping mode.
+        const isCommanderGroup = group.label === COMMANDERS_LABEL && commanderNames.length > 0
         return (
           <DeckCardGroupDropZone
             key={group.label || 'all'}
@@ -280,15 +288,26 @@ function DeckPanel({ cardSize, onCardSizeChange }: Props) {
                     className="deck-card-group__toggle"
                     data-tutorial-id={isRecommendable ? 'deck-category-header' : group.label === 'Uncategorized' ? 'deck-uncategorized' : undefined}
                     aria-expanded={!isCollapsed}
-                    title={isRecommendable ? 'Right-click for card recommendations based on this category' : undefined}
+                    title={
+                      isCommanderGroup
+                        ? "Right-click for EDHREC's most-played cards with this commander"
+                        : isRecommendable
+                          ? 'Right-click for card recommendations based on this category'
+                          : undefined
+                    }
                     onClick={() => toggleGroup(group.label)}
                     onContextMenu={
-                      isRecommendable && category !== undefined
+                      isCommanderGroup
                         ? (event) => {
                             event.preventDefault()
-                            setOpenCategory(category)
+                            setCommanderRecommendationsOpen(true)
                           }
-                        : undefined
+                        : isRecommendable && category !== undefined
+                          ? (event) => {
+                              event.preventDefault()
+                              setOpenCategory(category)
+                            }
+                          : undefined
                     }
                   >
                     <span className={`deck-card-group__chevron ${isCollapsed ? 'is-collapsed' : ''}`} aria-hidden="true">

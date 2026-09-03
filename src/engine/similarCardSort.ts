@@ -20,7 +20,7 @@ export type SortableMatch = { card: ScryfallCard; matchCount: number }
  *  reading either absence as zero would park those cards at the top of a "cheapest" or
  *  "most played" sort — exactly where they'd be most misleading. Returns 0 when neither side has
  *  the value so the caller's name tiebreak still applies. */
-function compareMissingLast(a: number | undefined, b: number | undefined, ascending: boolean): number {
+export function compareMissingLast(a: number | undefined, b: number | undefined, ascending: boolean): number {
   if (a === undefined && b === undefined) return 0
   if (a === undefined) return 1
   if (b === undefined) return -1

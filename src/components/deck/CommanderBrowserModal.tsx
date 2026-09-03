@@ -1,8 +1,8 @@
-import { useMemo, useState } from 'react'
-import { getDisplayImage } from '../../api/scryfall'
+import { useEffect, useMemo, useState } from 'react'
+import { getCardsByIdentifiers, getDisplayImage } from '../../api/scryfall'
 import type { ScryfallCard } from '../../api/scryfallTypes'
 import { useCardSearch } from '../../hooks/useCardSearch'
-import { useCommanderPopularity } from '../../hooks/useCommanderPopularity'
+import { useTopCommanders } from '../../hooks/useTopCommanders'
 import { useHoverPreview } from '../../hooks/useHoverPreview'
 import { useSimilarCardsTrigger } from '../../hooks/useSimilarCardsTrigger'
 import { useDeck } from '../../state/DeckContext'
@@ -18,9 +18,12 @@ type Props = {
 
 const SEARCH_FILTERS = { ...EMPTY_FILTERS, sort: 'edhrec' as const }
 
-/** Browse every card Scryfall considers commander-eligible, ranked by EDHREC popularity (most-played
- *  first) — a quick-start path into a Commander deck without already knowing who you want to build
- *  around. Only surfaced from the header when the active deck's format is 'commander' (see AppShell). */
+/** Browse every card Scryfall considers commander-eligible, ranked by how many EDHREC decks are
+ *  *commanded by* it — a quick-start path into a Commander deck without already knowing who you want
+ *  to build around. That count is deliberately not the card page's `num_decks`, which counts every
+ *  deck the card appears in at all: the two diverge sharply (Atraxa commands ~44k decks but is played
+ *  as a card in ~21k, since only four-colour decks can run it). Only surfaced from the header when
+ *  the active deck's format is 'commander' (see AppShell). */
 function CommanderBrowserModal({ onClose }: Props) {
   const { deck, dispatch, addCard } = useDeck()
   const [search, setSearch] = useState('')
@@ -28,16 +31,51 @@ function CommanderBrowserModal({ onClose }: Props) {
   // `is:commander` is always the base filter; anything the user types narrows it further by name,
   // same as a normal Scryfall search — so "is:commander goblin" still only returns commanders.
   const query = ['is:commander', search.trim()].filter(Boolean).join(' ')
-  const { results, status, error, hasMore, loadingMore, loadMore } = useCardSearch(query, SEARCH_FILTERS)
-  const deckCounts = useCommanderPopularity(results.map((card) => card.name))
+  // Browsing (no search text) and searching are two different sources. Browsing is driven straight
+  // from EDHREC's top-commanders list, because Scryfall's `is:commander order=edhrec` ranks by how
+  // often a card is *played*, not how often it's *commanded* — its first page misses Atraxa and
+  // Edgar Markov outright (see useTopCommanders). Typing a name falls back to the Scryfall search,
+  // which is the only thing that can find the other ~2,000 commanders.
+  const isBrowsing = search.trim().length === 0
+  const { ranked, countsByName, hasMore: hasMoreTop, loading: loadingTop, loadMore: loadMoreTop } = useTopCommanders(true)
+  const { results, status, error, hasMore, loadingMore, loadMore } = useCardSearch(query, SEARCH_FILTERS, {
+    enabled: !isBrowsing,
+  })
 
-  // Re-ranks Scryfall's edhrec-rank order by the actual EDHREC "decks with this commander" count
-  // once it's loaded. Sort is stable, and cards with no count yet (undefined) or no commander page
-  // at all (null) both fall to -1, so they sink to the bottom in their original relative order
-  // instead of jumping around as counts trickle in.
+  const [topCards, setTopCards] = useState<ScryfallCard[]>([])
+  const [topStatus, setTopStatus] = useState<'idle' | 'loading' | 'ready'>('idle')
+
+  // EDHREC hands back Scryfall card ids, so the ranked list hydrates through the same batched,
+  // cache-aware collection endpoint everything else uses — two requests for all 100.
+  useEffect(() => {
+    if (ranked.length === 0) return
+    let cancelled = false
+    setTopStatus('loading')
+    getCardsByIdentifiers(ranked.map((rec) => ({ id: rec.scryfallId })))
+      .then((cards) => {
+        if (cancelled) return
+        const byId = new Map(cards.map((card) => [card.id, card]))
+        // Re-applied in EDHREC's order; anything that failed to resolve just drops out.
+        setTopCards(ranked.map((rec) => byId.get(rec.scryfallId)).filter((c): c is ScryfallCard => c !== undefined))
+        setTopStatus('ready')
+      })
+      .catch(() => {
+        if (!cancelled) setTopStatus('ready')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [ranked])
+
+  // Search results still get ranked by commander deck count where it's known; anything outside the
+  // top-commanders list falls to -1 and sinks in its original relative order.
   const sortedResults = useMemo(() => {
-    return [...results].sort((a, b) => (deckCounts.get(b.name) ?? -1) - (deckCounts.get(a.name) ?? -1))
-  }, [results, deckCounts])
+    return [...results].sort(
+      (a, b) => (countsByName.get(b.name.toLowerCase()) ?? -1) - (countsByName.get(a.name.toLowerCase()) ?? -1),
+    )
+  }, [results, countsByName])
+
+  const visibleCards = isBrowsing ? topCards : sortedResults
 
   const commanderIds = new Set(deck.cards.filter((c) => c.isCommander).map((c) => c.scryfallId))
 
@@ -55,8 +93,9 @@ function CommanderBrowserModal({ onClose }: Props) {
       <div className="modal-content commander-browser" onClick={(event) => event.stopPropagation()}>
         <h2>Choose a Commander</h2>
         <p className="search-status">
-          Every commander-eligible card, ranked by number of decks on EDHREC. Click one to add it to your deck as
-          the commander — click again to unset it.
+          EDHREC's most-commanded cards — ranked by how many decks run each as their commander, not by how many
+          play it as a card. Search to reach any other commander. Click one to add it to your deck as the
+          commander — click again to unset it.
         </p>
         <input
           type="text"
@@ -66,26 +105,42 @@ function CommanderBrowserModal({ onClose }: Props) {
           autoFocus
         />
         <div className="commander-browser__list">
-          {status === 'loading' && <p className="search-status">Searching…</p>}
-          {status === 'error' && <p className="search-status search-status--error">{error}</p>}
-          {status === 'done' && results.length === 0 && <p className="search-status">No commanders found.</p>}
+          {isBrowsing && topCards.length === 0 && topStatus !== 'ready' && (
+            <p className="search-status">Loading top commanders…</p>
+          )}
+          {isBrowsing && topStatus === 'ready' && topCards.length === 0 && !loadingTop && (
+            <p className="search-status">Couldn't load EDHREC's commander rankings — search by name instead.</p>
+          )}
+          {!isBrowsing && status === 'loading' && <p className="search-status">Searching…</p>}
+          {!isBrowsing && status === 'error' && <p className="search-status search-status--error">{error}</p>}
+          {!isBrowsing && status === 'done' && results.length === 0 && (
+            <p className="search-status">No commanders found.</p>
+          )}
           <div className="similar-cards-panel__list">
-            {sortedResults.map((card) => (
+            {visibleCards.map((card) => (
               <CommanderBrowserTile
                 key={card.id}
                 card={card}
                 isCommander={commanderIds.has(card.id)}
-                deckCount={deckCounts.get(card.name)}
+                deckCount={countsByName.get(card.name.toLowerCase())}
                 onPick={() => toggleCommander(card)}
               />
             ))}
           </div>
         </div>
-        {hasMore && (
-          <button type="button" className="search-load-more" onClick={loadMore} disabled={loadingMore}>
-            {loadingMore ? 'Loading…' : 'Load more'}
-          </button>
-        )}
+        {/* Both paths page, from different sources: EDHREC's ranking when browsing, Scryfall's
+            when searching by name. */}
+        {isBrowsing
+          ? hasMoreTop && (
+              <button type="button" className="search-load-more" onClick={loadMoreTop} disabled={loadingTop}>
+                {loadingTop ? 'Loading…' : 'Load more'}
+              </button>
+            )
+          : hasMore && (
+              <button type="button" className="search-load-more" onClick={loadMore} disabled={loadingMore}>
+                {loadingMore ? 'Loading…' : 'Load more'}
+              </button>
+            )}
         <button type="button" onClick={onClose}>
           Close
         </button>
@@ -102,8 +157,8 @@ function CommanderBrowserTile({
 }: {
   card: ScryfallCard
   isCommander: boolean
-  /** undefined = not loaded yet, null = EDHREC has no commander page for this card. */
-  deckCount: number | null | undefined
+  /** undefined = not among EDHREC's top commanders (or the list hasn't loaded yet). */
+  deckCount: number | undefined
   onPick: () => void
 }) {
   const onContextMenu = useSimilarCardsTrigger(card)
@@ -128,7 +183,7 @@ function CommanderBrowserTile({
       <div className="similar-card-tile__caption">
         <span className="similar-card-tile__name">{card.name}</span>
         {typeof deckCount === 'number' && (
-          <span className="commander-browser-tile__decks" title="Decks on EDHREC with this commander">
+          <span className="commander-browser-tile__decks" title="EDHREC decks with this card as their commander — not decks that merely include it">
             {deckCount.toLocaleString()} decks
           </span>
         )}

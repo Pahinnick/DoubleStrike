@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import type { ScryfallCard } from '../../api/scryfallTypes'
 import { useCardSearch } from '../../hooks/useCardSearch'
 import { useCardSnapshots } from '../../hooks/useCardSnapshots'
+import { useCommanderNames } from '../../hooks/useCommanderNames'
+import { useDeckMembership } from '../../hooks/useDeckMembership'
 import { useNameAutocomplete } from '../../hooks/useNameAutocomplete'
 import Autocomplete from '../shared/Autocomplete'
 import CardSizeToggle from '../shared/CardSizeToggle'
@@ -10,6 +12,7 @@ import type { CardSizeKey } from '../../utils/cardSize'
 import { COLOR_NAMES, WUBRG, type Color } from '../../utils/colors'
 import { EMPTY_FILTERS, SORT_ORDERS, type SearchFilters, type SortOrder } from '../../utils/scryfallQuery'
 import AdvancedSearchPanel from './AdvancedSearchPanel'
+import { useCommanderRecommendationsContext } from '../shared/CommanderRecommendationsContext'
 import CardResultGrid from './CardResultGrid'
 import TypeMultiSelect from './TypeMultiSelect'
 import './search.css'
@@ -29,9 +32,34 @@ function SearchPanel({ onAddCard, text, onTextChange, expanded, onExpand, onColl
   const { deck } = useDeck()
   const [localFilters, setLocalFilters] = useState<Omit<SearchFilters, 'format'>>(EMPTY_FILTERS)
   const [advancedOpen, setAdvancedOpen] = useState(false)
+  // The modal itself is mounted once in App.tsx — the deck list's Commanders header raises it too.
+  const { setOpen: setRecommendationsOpen } = useCommanderRecommendationsContext()
   const filters = useMemo<SearchFilters>(() => ({ ...localFilters, format: deck.format }), [localFilters, deck.format])
   const { results, status, error, hasMore, loadingMore, loadMore } = useCardSearch(text, filters)
   const nameSuggestions = useNameAutocomplete(text)
+  const membership = useDeckMembership()
+
+  // The main box searches card *names* only — Scryfall's unprefixed search never looks at rules
+  // text (see utils/scryfallQuery.ts). So the most natural query a deckbuilder can type, "draw a
+  // card", matches nothing at all. When a name search comes back empty we re-run it as a rules-text
+  // search instead of leaving the user at a dead end. Gated on the primary search being *done* and
+  // empty, so it costs nothing whenever searching by name worked.
+  const trimmedText = text.trim()
+  const fallbackWanted = status === 'done' && results.length === 0 && trimmedText.length > 0
+  const fallbackFilters = useMemo<SearchFilters>(() => ({ ...filters, cardText: trimmedText }), [filters, trimmedText])
+  const fallback = useCardSearch('', fallbackFilters, { enabled: fallbackWanted })
+
+  /** Moves what's in the name box into the rules-text filter — the manual version of the fallback
+   *  above, for a query like "flying" that *does* match a card name and so never triggers it, while
+   *  the user almost certainly wanted the thousands of cards with the keyword instead. */
+  function searchRulesTextInstead() {
+    setLocalFilters((prev) => ({ ...prev, cardText: trimmedText }))
+    onTextChange('')
+    // Open Advanced so the filter this just set is visible. Card text sticks around like every
+    // other filter, and an invisible one silently ANDs itself into the next search — type a new
+    // name afterwards and you'd get a baffling "no results" with nothing on screen explaining why.
+    setAdvancedOpen(true)
+  }
 
   // When a commander is designated, the Color identity filter defaults to its color identity
   // (with the "at most these" default match, that means "cards this deck could actually play").
@@ -47,6 +75,10 @@ function SearchPanel({ onAddCard, text, onTextChange, expanded, onExpand, onColl
     return [...new Set(identity.filter((c): c is Color => (WUBRG as readonly string[]).includes(c)))]
   }, [commanderIds, commanderSnapshots])
   const identityKey = commanderIdentity.join('')
+
+  // EDHREC only publishes per-commander data, so the Recommended button appears only once there's
+  // a commander to ask about.
+  const commanderNames = useCommanderNames()
 
   // Re-applied whenever the commander (identity) changes; manual edits persist until then.
   useEffect(() => {
@@ -143,6 +175,16 @@ function SearchPanel({ onAddCard, text, onTextChange, expanded, onExpand, onColl
         >
           Advanced
         </button>
+        {commanderNames.length > 0 && (
+          <button
+            type="button"
+            className="search-advanced-toggle"
+            title="EDHREC's most-played cards for this commander"
+            onClick={() => setRecommendationsOpen(true)}
+          >
+            Recommended
+          </button>
+        )}
       </div>
 
       {advancedOpen && (
@@ -156,7 +198,6 @@ function SearchPanel({ onAddCard, text, onTextChange, expanded, onExpand, onColl
 
       {status === 'loading' && <p className="search-status">Searching…</p>}
       {status === 'error' && <p className="search-status search-status--error">{error}</p>}
-      {status === 'done' && results.length === 0 && <p className="search-status">No cards found.</p>}
       {results.length > 0 && (
         <div className="search-results-header">
           <span className="search-status">
@@ -165,13 +206,38 @@ function SearchPanel({ onAddCard, text, onTextChange, expanded, onExpand, onColl
           <CardSizeToggle value={cardSize} onChange={onCardSizeChange} />
         </div>
       )}
+      {results.length > 0 && trimmedText.length > 0 && (
+        <button type="button" className="search-text-fallback__switch" onClick={searchRulesTextInstead}>
+          Search rules text for “{trimmedText}” instead
+        </button>
+      )}
 
-      <CardResultGrid cards={results} onAdd={onAddCard} cardSize={cardSize} />
+      <CardResultGrid cards={results} onAdd={onAddCard} cardSize={cardSize} membership={membership} />
 
       {hasMore && (
         <button type="button" className="search-load-more" onClick={loadMore} disabled={loadingMore}>
           {loadingMore ? 'Loading…' : 'Load more'}
         </button>
+      )}
+
+      {fallbackWanted && (
+        <div className="search-text-fallback">
+          <p className="search-status">
+            No cards named “{trimmedText}”.
+            {fallback.status === 'loading' && ' Looking for cards that say it…'}
+            {fallback.status === 'done' &&
+              (fallback.results.length > 0
+                ? ` Showing ${fallback.results.length} card${fallback.results.length > 1 ? 's' : ''} that say it.`
+                : ' No cards say it either.')}
+          </p>
+          {fallback.status === 'error' && <p className="search-status search-status--error">{fallback.error}</p>}
+          <CardResultGrid cards={fallback.results} onAdd={onAddCard} cardSize={cardSize} membership={membership} />
+          {fallback.hasMore && (
+            <button type="button" className="search-load-more" onClick={fallback.loadMore} disabled={fallback.loadingMore}>
+              {fallback.loadingMore ? 'Loading…' : 'Load more'}
+            </button>
+          )}
+        </div>
       )}
     </section>
   )

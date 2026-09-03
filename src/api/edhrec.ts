@@ -79,6 +79,74 @@ type EdhrecCommanderPage = {
   }
 }
 
+/**
+ * EDHREC's "Top Commanders (Past Year)" page — 100 commanders with their deck counts in a single
+ * request, in the same `cardlists` shape as a commander page (so engine/edhrecRecommendations.ts
+ * parses it with parseCommanderPage).
+ *
+ * This exists because the per-commander endpoint costs one request each: ranking a 175-card
+ * commander search that way takes minutes of serialized fetches. One request covers the
+ * commanders anyone browsing is realistically choosing between.
+ */
+export async function fetchEdhrecTopCommanders(page = 1): Promise<unknown | null> {
+  // Page 1 is `year.json`; subsequent pages are `year-2.json`, `year-3.json`, … Verified to run at
+  // least 30 pages deep with 100 commanders each and counts descending monotonically, so this
+  // reaches well past the point anyone is still browsing rather than searching.
+  const slug = page <= 1 ? 'year' : `year-${page}`
+  return scheduleRequest(async () => {
+    const res = await fetch(`${EDHREC_COMMANDER_JSON_BASE}/${slug}.json`)
+    if (!res.ok) return null
+    return (await res.json()) as unknown
+  })
+}
+
+/** A partner pair's page lives under one canonical slug ordering. Asking for the other ordering
+ *  returns `{"redirect": "/commanders/<canonical>"}` instead of page data, so one hop is enough —
+ *  the cap is only there so a server-side redirect loop can't hang the request queue. */
+const MAX_COMMANDER_REDIRECTS = 2
+
+function readRedirectSlug(body: unknown): string | null {
+  if (typeof body !== 'object' || body === null) return null
+  const redirect = (body as { redirect?: unknown }).redirect
+  if (typeof redirect !== 'string' || redirect.length === 0) return null
+  const slug = redirect.split('/').filter(Boolean).pop()
+  return slug ?? null
+}
+
+/**
+ * The raw commander page JSON — the same payload `fetchEdhrecCommanderDecks` reads one field
+ * from, returned whole so engine/edhrecRecommendations.ts can parse the recommendation lists out
+ * of it. Follows EDHREC's own `redirect` response rather than trying to guess the canonical slug
+ * ordering for partners, Backgrounds and the like.
+ *
+ * Raw network fetch only, rate-limited on the shared queue — no persistence. See
+ * storage/edhrecRecommendationsCache.ts + hooks/useCommanderRecommendations.ts for the cached
+ * layer components should actually use.
+ */
+export async function fetchEdhrecCommanderPage(slug: string): Promise<unknown | null> {
+  let currentSlug = slug
+  const seen = new Set<string>()
+
+  for (let hop = 0; hop <= MAX_COMMANDER_REDIRECTS; hop += 1) {
+    if (seen.has(currentSlug)) return null
+    seen.add(currentSlug)
+    const requestedSlug = currentSlug
+    const body = await scheduleRequest(async () => {
+      // Same contract as the other two fetchers: 404/403 means "no such commander page", which is
+      // a real answer rather than a retryable failure.
+      const res = await fetch(`${EDHREC_COMMANDER_JSON_BASE}/${requestedSlug}.json`)
+      if (!res.ok) return null
+      return (await res.json()) as unknown
+    })
+    if (body === null) return null
+    const redirect = readRedirectSlug(body)
+    if (redirect === null) return body
+    currentSlug = redirect
+  }
+
+  return null
+}
+
 /** How many decks on EDHREC have this card as their commander — separate from (and always ≤) the
  *  plain card page's `num_decks`, which counts every deck the card appears in at all. Raw network
  *  fetch only, rate-limited, shares the same request queue as fetchEdhrecSalt — no persistence.

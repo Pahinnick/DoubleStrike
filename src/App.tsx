@@ -3,10 +3,12 @@ import './App.css'
 import CardHoverPreview from './components/shared/CardHoverPreview'
 import { CategoryRecommendationsProvider } from './components/shared/CategoryRecommendationsContext'
 import CategoryRecommendationsView from './components/shared/CategoryRecommendationsView'
+import { CommanderRecommendationsProvider } from './components/shared/CommanderRecommendationsContext'
 import { HoverPreviewProvider } from './components/shared/HoverPreviewContext'
 import PanelResizer from './components/shared/PanelResizer'
 import { SimilarCardsProvider } from './components/shared/SimilarCardsContext'
 import SimilarCardsView from './components/shared/SimilarCardsView'
+import CommanderRecommendationsModal from './components/search/CommanderRecommendationsModal'
 import SearchPanel from './components/search/SearchPanel'
 import CommanderBrowserModal from './components/deck/CommanderBrowserModal'
 import DraftView from './components/draft/DraftView'
@@ -313,6 +315,7 @@ function AppShell() {
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
       <SimilarCardsView onAddTagToSearch={handleAddTagToSearch} />
       <CategoryRecommendationsView />
+      <CommanderRecommendationsModal />
       <TutorialOverlay />
     </div>
   )
@@ -363,10 +366,12 @@ function WorkspaceInner() {
         <HoverPreviewProvider>
           <SimilarCardsProvider>
             <CategoryRecommendationsProvider>
-              <JumpToCardProvider>
-                <AppShell />
-                <CardHoverPreview />
-              </JumpToCardProvider>
+              <CommanderRecommendationsProvider>
+                <JumpToCardProvider>
+                  <AppShell />
+                  <CardHoverPreview />
+                </JumpToCardProvider>
+              </CommanderRecommendationsProvider>
             </CategoryRecommendationsProvider>
           </SimilarCardsProvider>
         </HoverPreviewProvider>

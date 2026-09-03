@@ -27,7 +27,17 @@ function sortByType(cards: ScryfallCard[]): ScryfallCard[] {
   return [...cards].sort((a, b) => a.type_line.localeCompare(b.type_line) || a.name.localeCompare(b.name))
 }
 
-export function useCardSearch(text: string, filters: SearchFilters): CardSearchResult {
+export type CardSearchOptions = {
+  /** When false the hook stays idle and issues no request. Callers can't express "don't search"
+   *  by passing empty text: with a format and a commander's color identity in play,
+   *  buildScryfallQuery('', filters) still yields something like `f:commander id<=WUBG`, which
+   *  would fire a broad, expensive search. The rules-text fallback in SearchPanel needs a real
+   *  off switch — it only runs once the primary name search has come back empty. */
+  enabled?: boolean
+}
+
+export function useCardSearch(text: string, filters: SearchFilters, options?: CardSearchOptions): CardSearchResult {
+  const enabled = options?.enabled ?? true
   const [rawResults, setRawResults] = useState<ScryfallCard[]>([])
   const [status, setStatus] = useState<CardSearchStatus>('idle')
   const [error, setError] = useState<string | null>(null)
@@ -43,7 +53,7 @@ export function useCardSearch(text: string, filters: SearchFilters): CardSearchR
   const orderRef = useRef<SortOrder | undefined>(undefined)
 
   useEffect(() => {
-    const query = buildScryfallQuery(debouncedText, filters)
+    const query = enabled ? buildScryfallQuery(debouncedText, filters) : ''
     const order = scryfallOrderFor(filters.sort)
     queryRef.current = query
     orderRef.current = order
@@ -84,7 +94,7 @@ export function useCardSearch(text: string, filters: SearchFilters): CardSearchR
     // place of the object reference, which changes every render unless the
     // caller memoizes it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedText, filtersKey])
+  }, [debouncedText, filtersKey, enabled])
 
   function loadMore() {
     if (!hasMore || loadingMore) return

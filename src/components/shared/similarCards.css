@@ -305,8 +305,12 @@
   white-space: nowrap;
 }
 
+/* nowrap keeps a meta line on one row; overflow/ellipsis stop it running out past the tile edge
+   when it can't fit — the name above has always clipped this way, this line used to just spill. */
 .similar-card-tile__count {
   font-size: 0.76rem;
   color: var(--text-dim);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

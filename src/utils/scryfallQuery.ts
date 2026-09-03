@@ -79,7 +79,53 @@ export type SearchFilters = {
   loyaltyValue?: number
   rarity?: Rarity
   set: string
+  /** Budget cap in USD, or undefined for no cap. Becomes Scryfall's `usd<=` clause, which matches
+   *  against *every* printing and returns the one that matched — so this reads as "the cheapest
+   *  printing costs at most this" and the result tile shows that cheap printing's price. Verified
+   *  live: `!"Lightning Bolt" usd<=1` returns the $0.70 printing while `usd>=100` returns the $349
+   *  Beta one, and Rhystic Study (cheapest ~$70) drops out entirely under a $2 cap.
+   *  Cards Scryfall has no USD price for cannot satisfy the clause, so a cap also hides those. */
+  maxUsd?: number
   sort?: SortOrder
+}
+
+/**
+ * Stops for the search price-cap slider, cheapest first, with `undefined` ("Any") as the last.
+ *
+ * A hand-picked ladder rather than a linear range: card prices are wildly non-linear — the bulk of
+ * Magic sits under a dollar while the caps people actually budget to are $5, $20, $100 — so a
+ * plain 0-100 slider would spend nearly all its travel on distinctions nobody needs.
+ */
+export const PRICE_CAP_STEPS: readonly (number | undefined)[] = [
+  0.25, 0.5, 1, 2, 3, 5, 10, 15, 20, 30, 50, 100, undefined,
+]
+
+/** Label for one price-cap stop — "Any" for the uncapped end, whole dollars where exact. */
+export function formatPriceCap(cap: number | undefined): string {
+  if (cap === undefined) return 'Any'
+  return cap < 1 || !Number.isInteger(cap) ? `$${cap.toFixed(2)}` : `$${cap}`
+}
+
+/**
+ * Slider position for a cap, which may be any number the user typed rather than one of the steps.
+ * Picks the closest step so the handle sits somewhere sensible; the typed value itself is left
+ * alone. Ties go to the cheaper step, so a cap typed exactly between two stops doesn't quietly
+ * present as the more expensive one.
+ */
+export function nearestPriceCapIndex(cap: number | undefined): number {
+  const uncapped = PRICE_CAP_STEPS.length - 1
+  if (cap === undefined) return uncapped
+  let best = uncapped
+  let bestDistance = Infinity
+  PRICE_CAP_STEPS.forEach((step, index) => {
+    if (step === undefined) return
+    const distance = Math.abs(step - cap)
+    if (distance < bestDistance) {
+      bestDistance = distance
+      best = index
+    }
+  })
+  return best
 }
 
 export const EMPTY_FILTERS: SearchFilters = {
@@ -126,6 +172,7 @@ export function buildScryfallQuery(text: string, filters: SearchFilters): string
   if (filters.toughnessValue !== undefined) clauses.push(`tou${filters.toughnessComparator ?? '='}${filters.toughnessValue}`)
   if (filters.loyaltyValue !== undefined) clauses.push(`loy${filters.loyaltyComparator ?? '='}${filters.loyaltyValue}`)
   if (filters.rarity) clauses.push(`r:${filters.rarity}`)
+  if (filters.maxUsd !== undefined) clauses.push(`usd<=${filters.maxUsd}`)
   if (filters.set.trim().length > 0) clauses.push(`s:${filters.set.trim()}`)
   return clauses.join(' ')
 }
