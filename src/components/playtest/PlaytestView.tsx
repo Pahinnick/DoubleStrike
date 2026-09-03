@@ -63,6 +63,7 @@ import LibraryPeekModal, { type PeekEntry, type PeekPlacement } from './LibraryP
 import MultiplayerModal from './MultiplayerModal'
 import DiceRollPrompt from './DiceRollPrompt'
 import NumberInputPrompt from './NumberInputPrompt'
+import { createPanKeys } from './panKeys'
 import PingMarker from './PingMarker'
 import PlaytestCard from './PlaytestCard'
 import { ALL_SEATS, buildSpinSequence, completesRound, nextActiveSeat, pickRandomSeat, SEAT_COLOR_NAMES, SEAT_COLORS, SEAT_GRID, seatOrigin, tableSize } from './podLayout'
@@ -945,10 +946,10 @@ function PlaytestView({ onClose }: Props) {
   // right) decreases camera.x like dragging the table left, etc.
   // heldKeys/rAF state lives in this effect's own closure rather than React state — this runs
   // every animation frame while a key's held, and re-rendering the component that often just to
-  // read a Set would be wasteful; setCamera is the only piece that actually needs to be state.
+  // read it would be wasteful; setCamera is the only piece that actually needs to be state.
   useEffect(() => {
     const PAN_SPEED = 700 // px/sec at zoom 1; divided by zoom below so it feels the same zoomed in/out
-    const heldKeys = new Set<string>()
+    const heldKeys = createPanKeys()
     let rafId: number
     let lastTime: number | null = null
 
@@ -964,14 +965,15 @@ function PlaytestView({ onClose }: Props) {
       }
       const dt = (now - lastTime) / 1000
       lastTime = now
+      const dirs = heldKeys.directions()
       setCamera((prev) => {
         const distance = (PAN_SPEED / prev.zoom) * dt
         let dx = 0
         let dy = 0
-        if (heldKeys.has('w')) dy += distance
-        if (heldKeys.has('s')) dy -= distance
-        if (heldKeys.has('a')) dx += distance
-        if (heldKeys.has('d')) dx -= distance
+        if (dirs.has('w')) dy += distance
+        if (dirs.has('s')) dy -= distance
+        if (dirs.has('a')) dx += distance
+        if (dirs.has('d')) dx -= distance
         return dx === 0 && dy === 0 ? prev : { ...prev, x: prev.x + dx, y: prev.y + dy }
       })
     }
@@ -982,33 +984,36 @@ function PlaytestView({ onClose }: Props) {
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) {
         return
       }
-      if (event.ctrlKey || event.metaKey || event.altKey) return
-      const key = event.key.toLowerCase()
-      if (key !== 'w' && key !== 'a' && key !== 's' && key !== 'd') return
-      if (!heldKeys.has(key)) {
-        // A fresh press, not an OS auto-repeat re-firing the same key: cancel any in-flight
-        // animateCameraTo glide (center-on-seat, fit-all) the moment manual panning starts, same
-        // as a mouse-drag pan already does — otherwise the two fight over camera state.
-        cancelCameraAnim()
-        heldKeys.add(key)
-      }
+      // A fresh press, not an OS auto-repeat re-firing the same key: cancel any in-flight
+      // animateCameraTo glide (center-on-seat, fit-all) the moment manual panning starts, same
+      // as a mouse-drag pan already does — otherwise the two fight over camera state.
+      if (heldKeys.press(event)) cancelCameraAnim()
     }
     function onKeyUp(event: KeyboardEvent) {
-      heldKeys.delete(event.key.toLowerCase())
+      heldKeys.release(event)
     }
     // Alt-tabbing away (or anything else that steals focus) mid-hold never fires keyup, which
-    // would otherwise pan forever in one direction — the classic "stuck key" bug.
+    // would otherwise pan forever in one direction — the classic "stuck key" bug. A
+    // modifier-held pointerdown is the same story from the other end: it catches an Alt+click
+    // even in the case where the Alt keydown itself never reached us.
     function onBlur() {
       heldKeys.clear()
+    }
+    function onPointerDown(event: PointerEvent) {
+      if (event.altKey || event.ctrlKey || event.metaKey) heldKeys.clear()
     }
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('keyup', onKeyUp)
     window.addEventListener('blur', onBlur)
+    window.addEventListener('pointerdown', onPointerDown, true)
+    document.addEventListener('visibilitychange', onBlur)
     return () => {
       cancelAnimationFrame(rafId)
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
       window.removeEventListener('blur', onBlur)
+      window.removeEventListener('pointerdown', onPointerDown, true)
+      document.removeEventListener('visibilitychange', onBlur)
     }
   }, [cancelCameraAnim])
 
