@@ -648,17 +648,28 @@ function PlaytestView({ onClose }: Props) {
   // it has nothing to save — which keeps the freshly shuffled game Playtest opens with from
   // being written over a saved one before the resume below has had its say.
   const persistedStateRef = useRef(state)
+  // Which version of which deck that save is stamped with. A save only resumes while its stamp
+  // still matches the deck (see SoloGameSave.deckUpdatedAt), and the deck's stamp moves without
+  // the board changing — marking a card in the tray, renaming the deck from Switch Deck, another
+  // window saving it. The save has to be re-stamped then, or the game it holds is thrown away
+  // on the next launch as "built from an older decklist".
+  const persistedDeckStampRef = useRef({ deckId: deck.id, updatedAt: deck.updatedAt })
   const autosaveDeckRef = useRef(deck)
   autosaveDeckRef.current = deck
   const persistGame = useCallback((toSave: GameState) => {
     const current = autosaveDeckRef.current
     persistedStateRef.current = toSave
+    persistedDeckStampRef.current = { deckId: current.id, updatedAt: current.updatedAt }
     void saveSoloGameSave(current.id, { state: toSave, deckUpdatedAt: current.updatedAt }).catch((err: unknown) =>
       console.error('[playtest] failed to autosave the game', err),
     )
   }, [])
+  // Only a newer stamp on the SAME deck counts: after a deck switch the board on screen is still
+  // the previous deck's until the effect further down deals the new one.
+  const isSaveStampStale = (current: { id: string; updatedAt: string }) =>
+    persistedDeckStampRef.current.deckId === current.id && persistedDeckStampRef.current.updatedAt !== current.updatedAt
   useEffect(() => {
-    if (state === persistedStateRef.current) return
+    if (state === persistedStateRef.current && !isSaveStampStale({ id: deck.id, updatedAt: deck.updatedAt })) return
     const handle = window.setTimeout(() => persistGame(state), SOLO_AUTOSAVE_DEBOUNCE_MS)
     return () => window.clearTimeout(handle)
   }, [state, deck.id, deck.updatedAt, persistGame])
@@ -666,7 +677,7 @@ function PlaytestView({ onClose }: Props) {
   // the last action before Exit never reached storage. Write it on the way out instead.
   useEffect(() => {
     const flush = () => {
-      if (stateRef.current !== persistedStateRef.current) persistGame(stateRef.current)
+      if (stateRef.current !== persistedStateRef.current || isSaveStampStale(autosaveDeckRef.current)) persistGame(stateRef.current)
     }
     window.addEventListener('pagehide', flush)
     return () => {
@@ -688,6 +699,7 @@ function PlaytestView({ onClose }: Props) {
     setPlaytestWindowMode(next)
     if (inPod) return
     persistedStateRef.current = state
+    persistedDeckStampRef.current = { deckId: deck.id, updatedAt: deck.updatedAt }
     await saveSoloGameSave(deck.id, { state, deckUpdatedAt: deck.updatedAt })
     if (isPlaytestWindow) {
       // We're the dedicated window switching to inline — hand off to the main window and close.
@@ -1104,6 +1116,7 @@ function PlaytestView({ onClose }: Props) {
       clearUndoHistory()
       const resumed = gameReducer(stateRef.current, { type: 'RESTORE_STATE', state: saved.state })
       persistedStateRef.current = resumed
+      persistedDeckStampRef.current = { deckId: deck.id, updatedAt: saved.deckUpdatedAt }
       rawDispatch({ type: 'RESTORE_STATE', state: resumed })
     })
     // deck.id is the trigger (see lastDeckIdRef); the rest of `deck` is read as of that moment.

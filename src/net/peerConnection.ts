@@ -341,8 +341,15 @@ export class PeerConnection {
         peer.on('connection', (conn) => this.acceptGuest(conn))
         peer.on('error', (err) => {
           const type = (err as unknown as { type?: string }).type
-          if (type === 'unavailable-id' && retriesLeft > 0) {
+          // Only before the room is up. The broker answers "ID taken" to a RE-registration too,
+          // when our own previous socket hasn't been released on its side yet (a wifi roam, a
+          // laptop waking) — and that arrives here as the same 'unavailable-id'. Treating it as
+          // a collision destroyed the live peer, every guest's channel with it, and opened a
+          // brand-new room under a different code. PeerJS disconnects after raising it, so
+          // handleSignalingDisconnect below simply tries again.
+          if (type === 'unavailable-id' && !registered && retriesLeft > 0) {
             // Code collided with an existing room — throw it away and try another.
+            this.peer = null
             peer.destroy()
             attempt(retriesLeft - 1)
             return
@@ -383,7 +390,10 @@ export class PeerConnection {
   private handleSignalingDisconnect(peer: Peer, onExhausted: () => void): void {
     let attempts = 0
     peer.on('disconnected', () => {
-      if (peer.destroyed) return
+      // `this.peer !== peer` is the check that actually catches a peer being torn down:
+      // PeerJS's destroy() raises 'disconnected' BEFORE it marks the peer destroyed, so every
+      // teardown here (which detaches the peer first) would otherwise announce a reconnect.
+      if (peer.destroyed || this.peer !== peer) return
       attempts += 1
       if (attempts > MAX_RECONNECT_ATTEMPTS) {
         onExhausted()
@@ -923,7 +933,14 @@ export class PeerConnection {
         return
       }
       this.emit('status', 'closed', "Couldn't join — the game didn't respond. Check the code and try again.")
-      this.hostConn?.close()
+      // Detached before it is torn down, for the same reason as in handleGuestDisconnect: the
+      // channel's own 'close' would otherwise report "the game may be full" over the message
+      // above. The peer goes too — one still stalled on the broker could finish registering
+      // minutes later and walk into the game after the player had been told the join failed.
+      const stalledPeer = this.peer
+      this.peer = null
+      this.hostConn = null
+      stalledPeer?.destroy()
     }, ATTEMPT_TIMEOUT_MS)
   }
 
@@ -1432,8 +1449,10 @@ export class PeerConnection {
     this.lastFirstSeat = null
     this.lastRadioStation = null
     this.hostConn = null
-    this.peer?.destroy()
+    // Detached first — see handleSignalingDisconnect.
+    const peer = this.peer
     this.peer = null
+    peer?.destroy()
     this.role = null
     this.ownSeat = null
     this.emit('status', 'closed')

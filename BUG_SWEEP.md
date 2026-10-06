@@ -217,6 +217,36 @@ not the installed app's data). Delete it from My Decks if you open the dev build
   `gameReducer.ts`). Checked live: clicking the button turned Delver of Secrets over in hand
   without playing it.
 
+## Second pass (same day, after the fix commit)
+
+A review of the fix commit itself plus the code around it. Uncommitted. `npx tsc -b` clean,
+599/599 tests, lint unchanged.
+
+- [x] **A saved Playtest game was thrown away after marking a card or renaming the deck in
+  Playtest** — `PlaytestView.tsx` autosave. Introduced by the first pass: the "don't re-save an
+  unchanged board" check also skipped the re-save that keeps the game's deck stamp current, so
+  a mark set as the last thing before exiting left the save stamped with the old `updatedAt` and
+  it was discarded on the next open. Reproduced live on the commit (stamps diverged), then
+  confirmed fixed live (save re-stamped within the debounce).
+- [x] **Host: the broker answering "ID taken" to a reconnect destroyed the room** —
+  `peerConnection.ts` `hostGame`. The room-code-collision retry ran before the "room is already
+  up" check, so a re-registration refused because the broker hadn't released the old socket yet
+  tore down the live peer and every guest channel and opened a new room under a new code. From
+  reading PeerJS (`_abort` raises `unavailable-id`, then disconnects a registered peer), not
+  reproduced.
+- [x] **Tearing a peer down announced "Reconnecting to the game server (attempt 1 of 3)…"** —
+  PeerJS's `destroy()` raises `disconnected` before it marks the peer destroyed, so the
+  `peer.destroyed` guard never caught it. Now guarded on the peer no longer being the current
+  one; every teardown detaches first.
+- [x] **Guest: a first join that timed out reported "the game may be full" and left the stalled
+  peer alive** — it could finish registering later and join after the failure was shown.
+- [x] **Draft lobby: Host/Join failures were unhandled promise rejections** (status text was
+  already shown; console noise only).
+
+Looked at and left alone: Playtest's Ctrl+Z and Delete still act while a modal is open. Useful
+with the graveyard viewer open (undo a mis-move); only the scry/surveil/cascade prompt holds a
+stale list an undo underneath could invalidate.
+
 ## Open: cards stop being movable/playable in a pod
 
 Reported: after moving own cards onto other players' boards, hand and battlefield cards stopped

@@ -66,7 +66,7 @@ function DraftLobbyPanel({ profileId, session, cubesVersion }: Props) {
     return (
       <div className="draft-lobby">
         <p className="draft-lobby__intro">Draft a shared cube with up to {MAX_PLAYERS - 1} friends. Host to get a code, or join with one.</p>
-        <button type="button" className="draft-lobby__primary" onClick={() => void session.host()}>
+        <button type="button" className="draft-lobby__primary" onClick={() => void session.host().catch(() => undefined)}>
           Host Draft
         </button>
         <div className="draft-lobby__divider">or</div>
@@ -74,7 +74,7 @@ function DraftLobbyPanel({ profileId, session, cubesVersion }: Props) {
           className="draft-lobby__join"
           onSubmit={(event) => {
             event.preventDefault()
-            if (isValidRoomCode(code)) void session.join(code)
+            if (isValidRoomCode(code)) void session.join(code).catch(() => undefined)
           }}
         >
           <input
