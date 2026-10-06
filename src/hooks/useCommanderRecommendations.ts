@@ -51,13 +51,23 @@ export function useCommanderRecommendations(names: string[], enabled: boolean): 
         return
       }
 
-      refreshedSlugs.add(slug)
-      void fetchEdhrecCommanderPage(slug).then((payload) => {
-        if (cancelled) return
-        const data = parseCommanderPage(payload)
-        void saveEdhrecRecommendationsSnapshot({ slug, data, cachedAt: new Date().toISOString() })
-        setState({ status: data ? 'ready' : 'empty', data })
-      })
+      // Saved and marked done when the page actually arrives, whether or not this modal is
+      // still open to show it. Marking it before the request meant closing the modal mid-load
+      // threw the result away and then refused to ask again: every reopen said "no
+      // recommendations" until the app restarted.
+      void fetchEdhrecCommanderPage(slug).then(
+        (payload) => {
+          const data = parseCommanderPage(payload)
+          refreshedSlugs.add(slug)
+          void saveEdhrecRecommendationsSnapshot({ slug, data, cachedAt: new Date().toISOString() })
+          if (!cancelled) setState({ status: data ? 'ready' : 'empty', data })
+        },
+        () => {
+          // Offline or the request failed: not an answer, so nothing is cached and the next
+          // open tries again. Whatever the cache already showed stays on screen.
+          if (!cancelled) setState((prev) => (prev.status === 'loading' ? { status: 'empty', data: null } : prev))
+        },
+      )
     })
 
     return () => {

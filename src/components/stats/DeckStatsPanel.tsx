@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { isLandCard } from '../../engine/cardTypes'
 import { computeCastabilityIndex } from '../../engine/castability'
 import { computeColorPipTotals, computeManaCurve } from '../../engine/deckStats'
 import { parseManaCost } from '../../engine/manaCost'
@@ -26,7 +27,7 @@ type Props = {
 }
 
 function isLand(snapshot: CardSnapshot): boolean {
-  return snapshot.type_line.includes('Land')
+  return isLandCard(snapshot)
 }
 
 /**

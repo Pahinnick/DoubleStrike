@@ -13,6 +13,7 @@ import {
 import { useCommanderNames } from '../../hooks/useCommanderNames'
 import { useCommanderRecommendations } from '../../hooks/useCommanderRecommendations'
 import { useDeckMembership } from '../../hooks/useDeckMembership'
+import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 import { useDeck } from '../../state/DeckContext'
 import { useCommanderRecommendationsContext } from '../shared/CommanderRecommendationsContext'
 import SimilarCardRow from '../shared/SimilarCardRow'
@@ -100,6 +101,8 @@ function CommanderRecommendationsModal() {
       return card ? membership.has(card.oracle_id) : false
     }).length
   }, [activeList, cards, membership])
+
+  useEscapeToClose(onClose, open)
 
   if (!open) return null
 

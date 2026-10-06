@@ -106,6 +106,9 @@ function Autocomplete({
               setOpen(false)
             }
           } else if (event.key === 'Escape') {
+            // With the list showing, Escape closes the list and nothing else; with it already
+            // closed the press carries on to whatever modal this input sits in.
+            if (show) event.stopPropagation()
             setOpen(false)
           }
         }}

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 
 /** Free-form flagging palette — deliberately distinct from Magic's WUBRG mana colors (this marks
  *  arbitrary player notes like "already drawn" or "combo piece", not color identity). */
@@ -13,6 +14,7 @@ type Props = {
  *  wrapper) — same dismiss-on-outside-interaction/Escape pattern as CardContextMenu, just picking
  *  one of a fixed small palette instead of a list of text actions. */
 function CardMarkPicker({ onPick, onClose }: Props) {
+  useEscapeToClose(onClose)
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -26,15 +28,10 @@ function CardMarkPicker({ onPick, onClose }: Props) {
       window.addEventListener('pointerdown', dismissIfOutside)
       window.addEventListener('contextmenu', dismissIfOutside)
     })
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', handleKeyDown)
     return () => {
       cancelAnimationFrame(id)
       window.removeEventListener('pointerdown', dismissIfOutside)
       window.removeEventListener('contextmenu', dismissIfOutside)
-      window.removeEventListener('keydown', handleKeyDown)
     }
   }, [onClose])
 

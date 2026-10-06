@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { getCardsByIdentifiers, getDisplayImage } from '../../api/scryfall'
 import type { ScryfallCard } from '../../api/scryfallTypes'
 import { useCardSearch } from '../../hooks/useCardSearch'
+import { useCardSnapshots } from '../../hooks/useCardSnapshots'
+import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 import { useTopCommanders } from '../../hooks/useTopCommanders'
 import { useHoverPreview } from '../../hooks/useHoverPreview'
 import { useSimilarCardsTrigger } from '../../hooks/useSimilarCardsTrigger'
@@ -25,6 +27,7 @@ const SEARCH_FILTERS = { ...EMPTY_FILTERS, sort: 'edhrec' as const }
  *  as a card in ~21k, since only four-colour decks can run it). Only surfaced from the header when
  *  the active deck's format is 'commander' (see AppShell). */
 function CommanderBrowserModal({ onClose }: Props) {
+  useEscapeToClose(onClose)
   const { deck, dispatch, addCard } = useDeck()
   const [search, setSearch] = useState('')
 
@@ -77,11 +80,24 @@ function CommanderBrowserModal({ onClose }: Props) {
 
   const visibleCards = isBrowsing ? topCards : sortedResults
 
-  const commanderIds = new Set(deck.cards.filter((c) => c.isCommander).map((c) => c.scryfallId))
+  // The deck's copy of a card is matched by Oracle card, not by printing: the tile shown here is
+  // whichever printing EDHREC or the search returned, which is rarely the one already in the
+  // deck. Matching on the printing id alone added a second copy of a card the deck already ran
+  // and never showed the badge for a commander held in a different printing.
+  const deckCardIds = useMemo(() => [...new Set(deck.cards.map((c) => c.scryfallId))], [deck.cards])
+  const [deckSnapshots] = useCardSnapshots(deckCardIds)
+
+  function mainboardEntryFor(card: ScryfallCard) {
+    const sameCard = (c: (typeof deck.cards)[number]) =>
+      c.scryfallId === card.id || (Boolean(card.oracle_id) && deckSnapshots.get(c.scryfallId)?.oracle_id === card.oracle_id)
+    const candidates = deck.cards.filter((c) => c.board === 'mainboard' && !c.isToken && sameCard(c))
+    return candidates.find((c) => c.isCommander) ?? candidates.find((c) => c.scryfallId === card.id) ?? candidates[0]
+  }
 
   function toggleCommander(card: ScryfallCard) {
-    if (commanderIds.has(card.id)) {
-      dispatch({ type: 'SET_COMMANDER', scryfallId: card.id, board: 'mainboard', isCommander: false })
+    const existing = mainboardEntryFor(card)
+    if (existing) {
+      dispatch({ type: 'SET_COMMANDER', scryfallId: existing.scryfallId, board: 'mainboard', isCommander: !existing.isCommander })
       return
     }
     addCard(card, 'mainboard')
@@ -121,7 +137,7 @@ function CommanderBrowserModal({ onClose }: Props) {
               <CommanderBrowserTile
                 key={card.id}
                 card={card}
-                isCommander={commanderIds.has(card.id)}
+                isCommander={mainboardEntryFor(card)?.isCommander === true}
                 deckCount={countsByName.get(card.name.toLowerCase())}
                 onPick={() => toggleCommander(card)}
               />

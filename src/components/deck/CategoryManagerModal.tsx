@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useDeck } from '../../state/DeckContext'
+import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 import './categoryManager.css'
 
 type Props = {
@@ -7,6 +8,7 @@ type Props = {
 }
 
 function CategoryManagerModal({ onClose }: Props) {
+  useEscapeToClose(onClose)
   const { deck, dispatch } = useDeck()
   const [newCategory, setNewCategory] = useState('')
   const [renaming, setRenaming] = useState<{ original: string; draft: string } | null>(null)
@@ -40,7 +42,10 @@ function CategoryManagerModal({ onClose }: Props) {
                   onBlur={commitRename}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') commitRename()
-                    if (event.key === 'Escape') setRenaming(null)
+                    if (event.key === 'Escape') {
+                      event.stopPropagation()
+                      setRenaming(null)
+                    }
                   }}
                 />
               ) : (

@@ -55,8 +55,12 @@ function NumberInputPrompt({ x, y, label, onSubmit, onClose, allowNegative }: Pr
   }, [onClose])
 
   function submit() {
+    // An empty box is not zero. Number('') is 0, so pressing Enter on a blank Cascade prompt
+    // "cascaded for 0", which matches nothing and laid the entire library out in order. Whole
+    // numbers only, too: Enter calls this directly, past the input's own step validation.
+    if (value.trim() === '') return
     const parsed = Number(value)
-    if (!Number.isFinite(parsed)) return
+    if (!Number.isInteger(parsed)) return
     if (!allowNegative && parsed < 0) return
     onSubmit(parsed)
     onClose()

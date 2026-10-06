@@ -1,3 +1,5 @@
+import { useEscapeToClose } from '../../hooks/useEscapeToClose'
+
 type Shortcut = { keys: string; description: string }
 
 const KEYBOARD_SHORTCUTS: Shortcut[] = [
@@ -7,13 +9,18 @@ const KEYBOARD_SHORTCUTS: Shortcut[] = [
   {
     keys: 'F',
     description:
-      'Flip the hovered double-faced card to its other face; for any other card, turn it face down/up instead — or, hovering the library, flip its top card face-up/down',
+      'Flip the hovered double-faced card to its other face (in play or in hand — or click the ↻ button on the card); for any other card, turn it face down/up instead — or, hovering the library, flip its top card face-up/down',
   },
   { keys: 'R', description: 'Shuffle your library (while hovering the library pile)' },
   { keys: 'T', description: 'Tap/untap the current multi-selection, all together' },
   { keys: 'Ctrl+Z / Cmd+Z', description: 'Undo' },
   { keys: 'Ctrl+Y or Ctrl+Shift+Z / Cmd+Shift+Z', description: 'Redo' },
   { keys: 'Esc', description: 'Close the open menu/dialog, or clear the current multi-selection' },
+  {
+    keys: 'F9',
+    description:
+      'Copy a debug snapshot of the table to the clipboard — press it if cards ever stop responding, then paste the result into a bug report',
+  },
   { keys: 'Delete / Backspace', description: 'Send the hovered card (hand or battlefield), or the whole multi-selection, to the graveyard' },
 ]
 
@@ -43,6 +50,7 @@ type Props = {
 }
 
 function ShortcutsModal({ onClose }: Props) {
+  useEscapeToClose(onClose)
   return (
     <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" onClick={onClose}>
       <div className="modal-content shortcuts-modal" onClick={(event) => event.stopPropagation()}>

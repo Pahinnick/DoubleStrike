@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { getSnapshotImage, getSnapshots, type CardSnapshot } from '../../storage/cardCache'
+import { getCardsByIdentifiers } from '../../api/scryfall'
+import { getSnapshotImage, getSnapshots, saveSnapshots, toSnapshot, type CardSnapshot } from '../../storage/cardCache'
 import { getCardImageUrl } from '../../utils/cardSize'
 import type { CurrentPack } from '../../draft/useDraftSession'
 import './draft.css'
@@ -17,11 +18,25 @@ function PackView({ pack, myPool, onPick }: Props) {
     const ids = [...new Set([...(pack?.cards ?? []), ...myPool])]
     if (ids.length === 0) return
     let cancelled = false
-    void getSnapshots(ids).then((results) => {
+    void getSnapshots(ids).then(async (results) => {
       if (cancelled) return
       setSnapshots((prev) => {
         const next = new Map(prev)
         for (const snapshot of results) if (snapshot) next.set(snapshot.id, snapshot)
+        return next
+      })
+      // The cube's cards are cached on the HOST's machine, where the cube was built; a pack
+      // arrives as bare ids. Reading only the local cache left a guest looking at a grid of
+      // "Loading…" tiles for every card they had never seen before — drafting blind. Fetch
+      // whatever is missing.
+      const missing = ids.filter((_id, index) => !results[index])
+      if (missing.length === 0) return
+      const cards = await getCardsByIdentifiers(missing.map((id) => ({ id })))
+      void saveSnapshots(cards)
+      if (cancelled || cards.length === 0) return
+      setSnapshots((prev) => {
+        const next = new Map(prev)
+        for (const card of cards) next.set(card.id, toSnapshot(card))
         return next
       })
     })
@@ -38,11 +53,12 @@ function PackView({ pack, myPool, onPick }: Props) {
           <>
             <p className="pack-view__count">{pack.cards.length} cards — pick one</p>
             <ul className="pack-view__grid">
-              {pack.cards.map((id) => {
+              {pack.cards.map((id, index) => {
                 const snapshot = snapshots.get(id)
                 const image = snapshot ? getSnapshotImage(snapshot) : undefined
                 return (
-                  <li key={id}>
+                  // Index in the key: a cube can run two copies of a card in one pack.
+                  <li key={`${id}-${index}`}>
                     <button type="button" className="pack-view__card" onClick={() => onPick(id)} title={snapshot?.name ?? id}>
                       {image ? (
                         <img src={getCardImageUrl(image, 'medium')} alt={snapshot?.name ?? ''} draggable={false} />

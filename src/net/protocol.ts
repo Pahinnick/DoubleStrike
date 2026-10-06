@@ -234,6 +234,12 @@ export type GivenCard = {
   showBackFace?: boolean
   isToken?: boolean
   faceDown?: boolean
+  /** Travel with a commander so it is still a commander — with its tax — when it comes home.
+   *  A given card used to arrive as a plain card, and getting your commander back from whoever
+   *  took control of it lost its tax tracker for the rest of the game. Whoever is merely
+   *  holding the card carries these along without acting on them (see GameCard.isCommander). */
+  isCommander?: boolean
+  commanderTax?: number
 }
 
 /**
@@ -441,6 +447,12 @@ export type TurnPassMessage = {
    *  activeSeat and replayed to a late joiner. Optional so an older sender simply leaves the
    *  shared counter untouched rather than failing validation. */
   turn?: number
+  /** The seat that took the game's first turn — what a "round" is measured from. The counter
+   *  above ticks when the rotation comes back round to this seat; measured from the head of the
+   *  fixed seat order instead, it ticked after one turn whenever someone else went first. Set
+   *  when a game starts (Who Goes First, or the first Pass Turn) and carried on every pass after.
+   *  Optional for the same reason `turn` is. */
+  firstSeat?: Seat
 }
 
 /**
@@ -613,7 +625,7 @@ export function parseMessage(raw: unknown): ParseResult {
       }
       return { ok: false, reason: 'malformed' }
     case 'TURN_PASS':
-      if (isSeat(m.activeSeat) && (m.turn === undefined || typeof m.turn === 'number')) {
+      if (isSeat(m.activeSeat) && (m.turn === undefined || typeof m.turn === 'number') && (m.firstSeat === undefined || isSeat(m.firstSeat))) {
         return { ok: true, msg: obj as TurnPassMessage }
       }
       return { ok: false, reason: 'malformed' }
@@ -818,7 +830,9 @@ function isGivenCard(v: unknown): v is GivenCard {
     isPtCounterPileArray(c.ptCounters) &&
     (c.showBackFace === undefined || typeof c.showBackFace === 'boolean') &&
     (c.isToken === undefined || typeof c.isToken === 'boolean') &&
-    (c.faceDown === undefined || typeof c.faceDown === 'boolean')
+    (c.faceDown === undefined || typeof c.faceDown === 'boolean') &&
+    (c.isCommander === undefined || typeof c.isCommander === 'boolean') &&
+    (c.commanderTax === undefined || typeof c.commanderTax === 'number')
   )
 }
 

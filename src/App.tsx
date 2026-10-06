@@ -30,6 +30,7 @@ import { hasSeenTutorial, TutorialProvider, useTutorialContext } from './compone
 import TutorialOverlay from './components/shared/TutorialOverlay'
 import { isDraftModeEnabled } from './config/featureFlags'
 import { useCardSize } from './hooks/useCardSize'
+import { isDismissableLayerOpen } from './hooks/useEscapeToClose'
 import { usePanelWidth } from './hooks/usePanelWidth'
 import { getPlaytestWindowMode } from './hooks/usePlaytestWindowMode'
 import { useProfileSettings } from './hooks/useProfileSettings'
@@ -93,6 +94,9 @@ function AppShell() {
       const target = event.target as HTMLElement | null
       const tag = target?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable) return
+      // Not behind a modal: an undo there changes the deck out of sight, under whatever the
+      // modal is showing.
+      if (isDismissableLayerOpen()) return
       const key = event.key.toLowerCase()
       if (key === 'z' && !event.shiftKey) {
         event.preventDefault()
@@ -140,7 +144,13 @@ function AppShell() {
   // cards should ever get applied.
   const preconLoadAttemptRef = useRef(0)
   useEffect(() => {
-    if (!tutorial.currentStep || tutorial.stepIndex !== 0 || deck.cards.length > 0 || isPlaytestWindow) return
+    // The tour ending (finished or skipped) cancels a seed still being fetched — otherwise the
+    // precon landed in whatever deck was open when the request finally came back.
+    if (!tutorial.currentStep) {
+      preconLoadAttemptRef.current += 1
+      return
+    }
+    if (tutorial.stepIndex !== 0 || deck.cards.length > 0 || isPlaytestWindow) return
     const attempt = ++preconLoadAttemptRef.current
     resolveTutorialPreconDeck().then((resolved) => {
       if (preconLoadAttemptRef.current !== attempt) return

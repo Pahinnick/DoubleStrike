@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 import { useHoverPreview } from '../../hooks/useHoverPreview'
 import { getSnapshotImage, type CardSnapshot } from '../../storage/cardCache'
 import type { GameCard, GameZone } from '../../state/gameReducer'
@@ -55,6 +56,7 @@ function ZoneViewerRow({ entry, onMove }: { entry: Entry; onMove?: Props['onMove
 }
 
 function ZoneViewerModal({ label, entries, onMove, onClose, note, searchable, readOnly }: Props) {
+  useEscapeToClose(onClose)
   const [query, setQuery] = useState('')
   const filtered = searchable ? entries.filter((entry) => matchesQuery(entry, query)) : entries
   const rowMove = readOnly ? undefined : onMove

@@ -229,3 +229,30 @@ describe('computeCastabilityIndex performance', () => {
     expect(durationMs).toBeLessThan(500)
   })
 })
+
+describe('probCastableByTurn — one land pays for one pip', () => {
+  it('does not let a single dual land pay both colours of {W}{U}', () => {
+    // Two lands, the whole deck drawn: one W/U dual and one colourless land can make W or U,
+    // never both.
+    const manaBase = deriveManaBase([
+      { quantity: 1, producedMana: ['W', 'U'] },
+      { quantity: 1, producedMana: [] },
+    ])
+    expect(probCastableByTurn(parseManaCost('{W}{U}'), manaBase, 2, 1, true)).toBe(0)
+  })
+
+  it('still casts {W}{U} off two duals', () => {
+    const manaBase = deriveManaBase([{ quantity: 2, producedMana: ['W', 'U'] }])
+    expect(probCastableByTurn(parseManaCost('{W}{U}'), manaBase, 2, 1, true)).toBeCloseTo(1)
+  })
+
+  it('needs a source of either colour for a hybrid pip', () => {
+    const mountains = deriveManaBase([{ quantity: 37, producedMana: ['R'] }])
+    expect(probCastableByTurn(parseManaCost('{1}{G/W}{G/W}'), mountains, 99, 4, true)).toBe(0)
+
+    const forests = deriveManaBase([{ quantity: 37, producedMana: ['G'] }])
+    expect(probCastableByTurn(parseManaCost('{1}{G/W}{G/W}'), forests, 99, 4, true)).toBeCloseTo(
+      probCastableByTurn(parseManaCost('{1}{G}{G}'), forests, 99, 4, true),
+    )
+  })
+})

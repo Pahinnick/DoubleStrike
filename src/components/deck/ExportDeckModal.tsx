@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import { getCardsByIdentifiers } from '../../api/scryfall'
+import { resolveCardsByIdentifiers } from '../../api/scryfall'
 import type { ScryfallCard } from '../../api/scryfallTypes'
 import { EXPORT_FORMATS, formatDeckExport, type ExportFormat } from '../../engine/deckExport'
 import { useDeck } from '../../state/DeckContext'
+import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 import './exportDeck.css'
 
 type Props = {
@@ -26,15 +27,14 @@ function ExportDeckModal({ onClose }: Props) {
     // Fetched fresh (rather than read from the CardSnapshot cache) so the export always has
     // set/collector number even for cards cached before those fields were tracked here —
     // already-cached cards are served locally by getCardsByIdentifiers without a network call.
-    getCardsByIdentifiers(uniqueIds.map((id) => ({ id })))
-      .then((cards) => {
-        if (cancelled) return
-        setCardsById(new Map(cards.map((card) => [card.id, card])))
-        setStatus('ready')
-      })
-      .catch(() => {
-        if (!cancelled) setStatus('error')
-      })
+    // resolveCardsByIdentifiers never rejects — a failed request comes back as `failed`. Any
+    // card missing from the result is left out of the text below, so a failure has to be an
+    // error here, not a quietly shorter list that looks complete.
+    void resolveCardsByIdentifiers(uniqueIds.map((id) => ({ id }))).then(({ cards, failed }) => {
+      if (cancelled) return
+      setCardsById(new Map(cards.map((card) => [card.id, card])))
+      setStatus(failed.length > 0 ? 'error' : 'ready')
+    })
     return () => {
       cancelled = true
     }
@@ -43,6 +43,10 @@ function ExportDeckModal({ onClose }: Props) {
   }, [])
 
   const text = useMemo(() => formatDeckExport(format, deck.cards, cardsById), [format, deck.cards, cardsById])
+  // Cards Scryfall answered for but didn't return (a printing it has since removed) can't be
+  // written out either. Rare, but the list is then knowingly incomplete, so say so.
+  const unresolvedCount = status === 'ready' ? deck.cards.filter((c) => !c.isToken && !cardsById.has(c.scryfallId)).length : 0
+  useEscapeToClose(onClose)
 
   async function handleCopy() {
     try {
@@ -76,7 +80,16 @@ function ExportDeckModal({ onClose }: Props) {
             : 'Mainboard only — sideboard/maybeboard cards are left out since this format has no way to mark them excluded.'}
         </p>
         {status === 'loading' && <p className="search-status">Resolving cards…</p>}
-        {status === 'error' && <p className="search-status search-status--error">Couldn't resolve cards — check your connection.</p>}
+        {status === 'error' && (
+          <p className="search-status search-status--error">
+            Couldn't look up every card on Scryfall, so this list is incomplete — check your connection and reopen Export.
+          </p>
+        )}
+        {unresolvedCount > 0 && (
+          <p className="search-status search-status--error">
+            {unresolvedCount} card{unresolvedCount > 1 ? 's' : ''} couldn't be found on Scryfall and {unresolvedCount > 1 ? 'are' : 'is'} left out of this list.
+          </p>
+        )}
         {copyState === 'failed' && (
           <p className="search-status search-status--error">Couldn't access the clipboard — select the text above and copy it manually.</p>
         )}

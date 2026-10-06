@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { getCardsByIdentifiers } from '../../api/scryfall'
+import { resolveCardsByIdentifiers } from '../../api/scryfall'
 import { useDeck } from '../../state/DeckContext'
 import { useDeckList } from '../../state/DeckListContext'
 import { saveSnapshots } from '../../storage/cardCache'
@@ -26,7 +26,12 @@ function DraftDeckBuildingView({ cubeName, myPool, onDone }: Props) {
     setBuilding(true)
     setError(null)
     try {
-      const cards = await getCardsByIdentifiers(myPool.map((id) => ({ id })))
+      // A lookup that failed comes back as `failed`, not as a rejection. Building anyway made an
+      // empty or partial deck, and finishing then cleared the pool — the draft's picks were
+      // gone with nothing to show for it. Stop here instead; the pool is untouched and Build
+      // Deck can simply be pressed again.
+      const { cards, failed } = await resolveCardsByIdentifiers([...new Set(myPool)].map((id) => ({ id })))
+      if (failed.length > 0) throw new Error('lookup failed')
       const quantities = new Map<string, number>()
       for (const id of myPool) quantities.set(id, (quantities.get(id) ?? 0) + 1)
 

@@ -15,8 +15,11 @@ export function getCardLegalityStatus(card: CardSnapshot, format: Format): strin
   return card.legalities[format] ?? 'not_legal'
 }
 
+// Matches the words separately rather than the phrase "Basic Land": snow basics read
+// "Basic Snow Land — Island", which the phrase misses.
 function isBasicLand(snapshot: CardSnapshot): boolean {
-  return snapshot.type_line.includes('Basic Land')
+  const frontFace = snapshot.type_line.split(' // ')[0]
+  return /\bBasic\b/.test(frontFace) && /\bLand\b/.test(frontFace)
 }
 
 /**
@@ -43,10 +46,26 @@ function computeCommanderIssues(cards: DeckCardRef[], snapshots: Map<string, Car
   }
 
   const commanderIdentity = new Set<string>()
+  // False while any commander's card data is still loading: its colours aren't known yet, and
+  // checking against a partial identity would flag every card of the missing colours.
+  let commanderIdentityKnown = commanderCards.length > 0
   for (const deckCard of commanderCards) {
     const snapshot = snapshots.get(deckCard.scryfallId)
-    if (!snapshot) continue
+    if (!snapshot) {
+      commanderIdentityKnown = false
+      continue
+    }
     for (const color of snapshot.color_identity) commanderIdentity.add(color)
+  }
+
+  // Singleton is a rule about the card, not the printing: two different printings of Sol Ring
+  // at one copy each are still two Sol Rings. Counted per oracle card across all its entries.
+  const copiesByOracleId = new Map<string, number>()
+  for (const deckCard of deckCards) {
+    const snapshot = snapshots.get(deckCard.scryfallId)
+    if (!snapshot) continue
+    const key = snapshot.oracle_id || snapshot.name
+    copiesByOracleId.set(key, (copiesByOracleId.get(key) ?? 0) + deckCard.quantity)
   }
 
   const totalCards = deckCards.reduce((sum, c) => sum + c.quantity, 0)
@@ -62,7 +81,7 @@ function computeCommanderIssues(cards: DeckCardRef[], snapshots: Map<string, Car
     const snapshot = snapshots.get(deckCard.scryfallId)
     if (!snapshot) continue
 
-    if (deckCard.quantity > 1 && !isBasicLand(snapshot)) {
+    if ((copiesByOracleId.get(snapshot.oracle_id || snapshot.name) ?? 0) > 1 && !isBasicLand(snapshot)) {
       issues.push({
         scryfallId: deckCard.scryfallId,
         name: snapshot.name,
@@ -71,7 +90,7 @@ function computeCommanderIssues(cards: DeckCardRef[], snapshots: Map<string, Car
       })
     }
 
-    if (commanderCards.length > 0 && snapshot.color_identity.some((color) => !commanderIdentity.has(color))) {
+    if (commanderIdentityKnown && snapshot.color_identity.some((color) => !commanderIdentity.has(color))) {
       issues.push({
         scryfallId: deckCard.scryfallId,
         name: snapshot.name,

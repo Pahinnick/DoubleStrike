@@ -3,6 +3,7 @@ import { deleteCube, listCubes } from '../../storage/cubeRepository'
 import type { CubeSummary } from '../../draft/types'
 import ConfirmModal from '../shared/ConfirmModal'
 import CubeEditorModal from './CubeEditorModal'
+import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 import './draft.css'
 
 type Props = {
@@ -11,6 +12,7 @@ type Props = {
 }
 
 function CubeManagerModal({ profileId, onClose }: Props) {
+  useEscapeToClose(onClose)
   const [cubes, setCubes] = useState<CubeSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [editingCubeId, setEditingCubeId] = useState<string | null | 'new'>(null)

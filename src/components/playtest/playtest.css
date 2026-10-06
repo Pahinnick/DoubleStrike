@@ -646,6 +646,43 @@
   transform: scale(0.88);
 }
 
+/* Flip control for a double-faced card — see FlipFaceButton. Top-left, inside the card: in the
+   hand fan each card's right side is covered by the next one, and the counter stacks hang off
+   the left and right edges, so this corner is the one that is always free. Faint until the card
+   is hovered so it doesn't clutter a full board. */
+.playtest-card__flip-button {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  z-index: 3;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--accent);
+  background-color: var(--bg-panel-raised);
+  color: var(--accent);
+  font-size: 0.85rem;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  pointer-events: auto;
+  opacity: 0.45;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.playtest__battlefield-card:hover > .playtest-card__flip-button,
+.playtest__hand-card:hover > .playtest-card__flip-button,
+.playtest-card__flip-button:focus-visible {
+  opacity: 1;
+}
+
+.playtest-card__flip-button:hover {
+  transform: scale(1.12);
+}
+
 .playtest-card__token-badge {
   position: absolute;
   bottom: -4px;

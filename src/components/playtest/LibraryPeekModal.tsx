@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 import { useHoverPreview } from '../../hooks/useHoverPreview'
 import { getSnapshotImage, type CardSnapshot } from '../../storage/cardCache'
 import type { GameCard } from '../../state/gameReducer'
@@ -108,6 +109,7 @@ function PeekRow({
 }
 
 function LibraryPeekModal({ title, note, entries, shuffleBottom = false, onConfirm, onClose }: Props) {
+  useEscapeToClose(onClose)
   const [destinations, setDestinations] = useState<Map<string, PeekDestination>>(
     () => new Map(entries.map((entry) => [entry.gameCard.instanceId, entry.options[0]])),
   )

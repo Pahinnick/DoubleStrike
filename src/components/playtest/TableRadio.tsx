@@ -63,10 +63,18 @@ const VOLUME_KEY = 'mtgdb:radioVolume'
 const DEFAULT_VOLUME = 0.15
 const MAX_PLAY_RETRIES = 3
 const RETRY_DELAY_MS = 1500
+// How long a stream may sit stalled before it is reloaded. 'stalled' also fires for ordinary
+// short buffering pauses, which clear up on their own.
+const STALL_GRACE_MS = 5000
 
 function getStoredVolume(): number {
-  const stored = Number(localStorage.getItem(VOLUME_KEY))
-  return Number.isFinite(stored) && stored > 0 && stored <= 1 ? stored : DEFAULT_VOLUME
+  const raw = localStorage.getItem(VOLUME_KEY)
+  // Nothing stored is checked first because Number(null) is 0 — and 0 is a real choice. In a
+  // pod the station is shared, so turning your own volume to 0 is the only personal mute, and
+  // it used to come back at the default every time Playtest reopened.
+  if (raw === null) return DEFAULT_VOLUME
+  const stored = Number(raw)
+  return Number.isFinite(stored) && stored >= 0 && stored <= 1 ? stored : DEFAULT_VOLUME
 }
 
 type Props = {
@@ -95,6 +103,10 @@ function TableRadio({ station, onChangeStation }: Props) {
   // change (a fresh pick deserves a fresh set of attempts) and again on every successful resume
   // (so occasional drops over a long session don't eventually exhaust a fixed lifetime budget).
   const retryCountRef = useRef(0)
+  const retryTimerRef = useRef<number | null>(null)
+  // True once the retries for the current station have run out — the radio is selected but
+  // silent, and the button says so instead of still showing it as playing.
+  const [gaveUp, setGaveUp] = useState(false)
 
   useEffect(() => {
     localStorage.setItem(VOLUME_KEY, String(volume))
@@ -110,24 +122,63 @@ function TableRadio({ station, onChangeStation }: Props) {
   // to notice or recover short of manually toggling the station off and back on. Retries a bounded
   // number of times with a short, increasing backoff, then gives up rather than hammering a
   // station that's genuinely down.
-  const attemptPlay = useCallback((audio: HTMLAudioElement) => {
-    audio.play().catch(() => {
-      if (retryCountRef.current >= MAX_PLAY_RETRIES) return
-      const attemptNumber = retryCountRef.current
-      retryCountRef.current += 1
-      window.setTimeout(() => {
-        audio.load()
-        attemptPlay(audio)
-      }, RETRY_DELAY_MS * (attemptNumber + 1))
-    })
+  //
+  // Every step checks that `audio` is still the element on the page. Each station gets its own
+  // <audio> (keyed by station id), and switching away while one is still connecting rejects its
+  // play() — which used to schedule a retry on the element React had just removed. That retry
+  // then started the OLD station playing from a detached element: audible over the new one (or
+  // after Off), out of reach of the volume slider, and silenced only by reloading.
+  const clearRetryTimer = useCallback(() => {
+    if (retryTimerRef.current !== null) {
+      window.clearTimeout(retryTimerRef.current)
+      retryTimerRef.current = null
+    }
   }, [])
+  const attemptPlay = useCallback(
+    (audio: HTMLAudioElement, reload = false) => {
+      if (audioRef.current !== audio) return
+      if (reload) audio.load()
+      audio.play().catch(() => {
+        if (audioRef.current !== audio) return
+        if (retryCountRef.current >= MAX_PLAY_RETRIES) {
+          setGaveUp(true)
+          return
+        }
+        const attemptNumber = retryCountRef.current
+        retryCountRef.current += 1
+        clearRetryTimer()
+        retryTimerRef.current = window.setTimeout(() => {
+          retryTimerRef.current = null
+          attemptPlay(audio, true)
+        }, RETRY_DELAY_MS * (attemptNumber + 1))
+      })
+    },
+    [clearRetryTimer],
+  )
+  /** A fresh set of attempts for the current station — after giving up, or when the network returns. */
+  const retryNow = useCallback(() => {
+    clearRetryTimer()
+    retryCountRef.current = 0
+    setGaveUp(false)
+    if (audioRef.current) attemptPlay(audioRef.current, true)
+  }, [attemptPlay, clearRetryTimer])
 
   // Drives playback explicitly (no `autoplay` attribute) so a failed attempt is actually visible
   // to attemptPlay's retry logic instead of silently rejecting a promise nobody's listening to.
   useEffect(() => {
     retryCountRef.current = 0
+    setGaveUp(false)
     if (audioRef.current) attemptPlay(audioRef.current)
-  }, [station, attemptPlay])
+    // Also runs on unmount: nothing may fire for a station that is no longer selected.
+    return clearRetryTimer
+  }, [station, attemptPlay, clearRetryTimer])
+
+  // Having given up on a dead connection, try again by itself once there is one.
+  useEffect(() => {
+    if (!gaveUp) return
+    window.addEventListener('online', retryNow)
+    return () => window.removeEventListener('online', retryNow)
+  }, [gaveUp, retryNow])
 
   // Dismiss on any outside click, same pattern as CardContextMenu — skip the tick that opened
   // it so the same click doesn't immediately close it again.
@@ -159,14 +210,20 @@ function TableRadio({ station, onChangeStation }: Props) {
     >
       <button
         type="button"
-        className={`table-radio__body ${current ? 'is-playing' : ''}`}
+        className={`table-radio__body ${current && !gaveUp ? 'is-playing' : ''}`}
         onClick={() => setOpen((prev) => !prev)}
         aria-expanded={open}
         aria-label="Table radio"
-        title={current ? `Radio: ${current.label} (click to change)` : 'Radio — off (click to pick a station)'}
+        title={
+          !current
+            ? 'Radio — off (click to pick a station)'
+            : gaveUp
+              ? `Radio: couldn't reach ${current.label} — pick it again to retry`
+              : `Radio: ${current.label} (click to change)`
+        }
       >
         <span aria-hidden="true">📻</span>
-        {current && <span className="table-radio__wave" aria-hidden="true" />}
+        {current && !gaveUp && <span className="table-radio__wave" aria-hidden="true" />}
       </button>
       {open && (
         <div className="table-radio__panel" role="menu" aria-label="Pick a radio station">
@@ -190,6 +247,9 @@ function TableRadio({ station, onChangeStation }: Props) {
                 type="button"
                 className={`table-radio__option ${station === s.id ? 'is-active' : ''}`}
                 onClick={() => {
+                  // Re-picking the station that is already selected changes nothing upstream,
+                  // so it is the manual retry for a stream that gave up.
+                  if (s.id === station && gaveUp) retryNow()
                   onChangeStation(s.id)
                   setOpen(false)
                 }}
@@ -216,10 +276,21 @@ function TableRadio({ station, onChangeStation }: Props) {
           key={current.id}
           ref={audioRef}
           src={current.streamUrl}
-          onError={(event) => attemptPlay(event.currentTarget)}
-          onStalled={(event) => attemptPlay(event.currentTarget)}
+          onError={(event) => attemptPlay(event.currentTarget, true)}
+          onStalled={(event) => {
+            // play() on an element that is merely stalled resolves without doing anything, so
+            // this used to recover nothing. Give it a moment to resume by itself, then reload.
+            const audio = event.currentTarget
+            clearRetryTimer()
+            retryTimerRef.current = window.setTimeout(() => {
+              retryTimerRef.current = null
+              if (audioRef.current === audio && audio.readyState < HTMLMediaElement.HAVE_FUTURE_DATA) attemptPlay(audio, true)
+            }, STALL_GRACE_MS)
+          }}
           onPlaying={() => {
             retryCountRef.current = 0
+            clearRetryTimer()
+            setGaveUp(false)
           }}
         />
       )}

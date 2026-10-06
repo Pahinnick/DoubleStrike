@@ -1,6 +1,9 @@
 export type ParsedDeckCard = {
   quantity: number
   name: string
+  /** Empty when the line named no printing (a bare "1 Counterspell") — the card is then looked up
+   *  by name and Scryfall picks the printing. `collectorNumber` can be empty on its own too, for a
+   *  line that gives a set but no number. */
   set: string
   collectorNumber: string
   /** First non-special tag on the line (e.g. "Ramp", "Burn") — used as this app's card category. */
@@ -23,7 +26,36 @@ export type ParsedDeckCard = {
 // and the trailing color-tag label (`^...^`, on whenever a card has an Archidekt color tag set) are
 // both optional and ignored — this app has no foil/color-tag concept, but a line carrying either
 // has to still match or the whole card silently disappears from the import (see deckImport.test.ts).
-const LINE_PATTERN = /^(\d+)x\s+(.+?)\s+\(([a-zA-Z0-9]+)\)\s+(\S+)(?:\s+\*F\*)?(?:\s+\[(.+)\])?(?:\s+\^[^^]*\^)?$/
+//
+// Everything but the name is optional, so the plainer list formats other tools export parse too:
+// "1 Command Tower (cmm) 380" (no `x`), "1x Counterspell" (no printing), a bare "Counterspell"
+// (one copy), and any finish marker in the `*F*` position (`*E*` for etched). A line that names
+// no printing is looked up by name instead — see cardIdentifierFor below. This matters because a
+// line that fails to match here used to be dropped without a word: it never reached the import's
+// "couldn't find" list, so the deck just came out short.
+const LINE_PATTERN =
+  /^(?:(\d+)\s*x?\s+)?(.+?)(?:\s+\(([a-zA-Z0-9]+)\)(?:\s+((?![*[^])\S+))?)?(?:\s+\*[A-Za-z]+\*)*(?:\s+\[(.+)\])?(?:\s+\^[^^]*\^)?$/
+
+// Section headers the plain list formats use in place of per-line tags ("Sideboard", "Commander:",
+// Arena's "Deck"). A header applies to every line after it until the next one.
+type Section = 'main' | 'commander' | 'sideboard' | 'ignored'
+const SECTION_HEADERS: Record<string, Section> = {
+  deck: 'main',
+  main: 'main',
+  mainboard: 'main',
+  maindeck: 'main',
+  commander: 'commander',
+  commanders: 'commander',
+  sideboard: 'sideboard',
+  maybeboard: 'sideboard',
+  companion: 'sideboard',
+  // Arena/Moxfield exports open with "About" then "Name <deck name>" — not cards.
+  about: 'ignored',
+}
+
+function parseSectionHeader(line: string): Section | undefined {
+  return SECTION_HEADERS[line.replace(/:$/, '').trim().toLowerCase()]
+}
 
 type ParsedTag = { name: string; excludedFromDeck: boolean }
 
@@ -125,28 +157,49 @@ export function parseArchidektDeckJson(data: ArchidektDeckResponse): { name?: st
   return { name: data.name, cards }
 }
 
-/** Parses Archidekt's plain-text decklist export format. Unparseable lines are skipped rather than throwing. */
+/**
+ * Parses a plain-text decklist: Archidekt's export format, plus the simpler "1 Card Name" and
+ * "1 Card Name (SET) 123" lists other tools produce. Every non-blank line that isn't a section
+ * header or a comment becomes an entry — one that can't be resolved shows up in the import's
+ * "couldn't find" list rather than vanishing.
+ */
 export function parseArchidektExport(text: string): ParsedDeckCard[] {
   const results: ParsedDeckCard[] = []
+  let section: Section = 'main'
 
-  for (const rawLine of text.split(/\r?\n/)) {
+  // A pasted file can start with a byte-order mark, which would otherwise glue itself to the
+  // first card's quantity and stop that line matching.
+  for (const rawLine of text.replace(/^\uFEFF/, '').split(/\r?\n/)) {
     const line = rawLine.trim()
-    if (!line) continue
+    if (!line) {
+      // "About" covers only the header block at the top of the file; the blank line after it
+      // is where the cards start.
+      if (section === 'ignored') section = 'main'
+      continue
+    }
+    if (line.startsWith('//') || line.startsWith('#')) continue
+
+    const header = parseSectionHeader(line)
+    if (header) {
+      section = header
+      continue
+    }
+    if (section === 'ignored') continue
 
     const match = line.match(LINE_PATTERN)
     if (!match) continue
 
     const [, quantity, name, set, collectorNumber, tagsRaw] = match
     const tags = parseTags(tagsRaw)
-    const isCommander = tags.some((tag) => tag.name === 'Commander')
-    const isMaybeboard = tags.some((tag) => tag.excludedFromDeck || isExcludedCategoryName(tag.name))
+    const isCommander = section === 'commander' || tags.some((tag) => tag.name === 'Commander')
+    const isMaybeboard = section === 'sideboard' || tags.some((tag) => tag.excludedFromDeck || isExcludedCategoryName(tag.name))
     const category = tags.find((tag) => tag.name !== 'Commander' && !isExcludedCategoryName(tag.name))?.name
 
     results.push({
-      quantity: Number(quantity),
+      quantity: quantity ? Math.max(1, Number(quantity)) : 1,
       name,
-      set: set.toLowerCase(),
-      collectorNumber,
+      set: (set ?? '').toLowerCase(),
+      collectorNumber: collectorNumber ?? '',
       category,
       isCommander,
       isMaybeboard,
@@ -157,13 +210,30 @@ export function parseArchidektExport(text: string): ParsedDeckCard[] {
   return results
 }
 
+/** The Scryfall `/cards/collection` identifier for a parsed entry: the exact printing when the
+ *  line gave one, otherwise the card's name (optionally narrowed to a set). */
+export function cardIdentifierFor(entry: ParsedDeckCard): { set: string; collector_number: string } | { name: string; set?: string } {
+  if (entry.set && entry.collectorNumber) return { set: entry.set, collector_number: entry.collectorNumber }
+  return entry.set ? { name: entry.name, set: entry.set } : { name: entry.name }
+}
+
 /** Minimal shape needed to correlate a resolved Scryfall card back to the ParsedDeckCard entry
  *  that requested it — just the printing identity, not the full ScryfallCard type (which lives in
  *  api/scryfallTypes.ts; this module stays free of any actual API dependency). */
-export type ResolvedPrinting = { set?: string; collector_number?: string }
+export type ResolvedPrinting = { set?: string; collector_number?: string; name?: string }
 
 function printingKey(set: string, collectorNumber: string): string {
   return `${set.toLowerCase()}::${collectorNumber}`
+}
+
+/** Case- and accent-insensitive, so a list typed without diacritics ("Lim-Dul's Vault") still
+ *  matches the card Scryfall returned for it. */
+function nameKey(name: string): string {
+  return name
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase()
 }
 
 /**
@@ -175,16 +245,35 @@ function printingKey(set: string, collectorNumber: string): string {
  * ParsedDeckCard entries onto whichever one Scryfall's card object happened to occupy in a
  * name-keyed lookup, silently dropping the other printing's copies entirely (see the "Total lands"-
  * adjacent report: a 12-Plains deck split across two prints imported as just 6).
+ *
+ * An entry that named no printing (see cardIdentifierFor) has nothing but its name to go on, so
+ * those — and only those — are matched by name, against either the full name or the front face
+ * (a double-faced card listed as "Delver of Secrets" comes back as "Delver of Secrets // Insectile
+ * Aberration").
  */
 export function matchParsedCards<T extends ResolvedPrinting>(
   parsed: ParsedDeckCard[],
   resolved: T[],
 ): { matches: { parsed: ParsedDeckCard; card: T }[]; missing: ParsedDeckCard[] } {
   const byIdentifier = new Map(resolved.map((card) => [printingKey(card.set ?? '', card.collector_number ?? ''), card]))
+  const byName = new Map<string, T[]>()
+  for (const card of resolved) {
+    if (!card.name) continue
+    for (const key of new Set([nameKey(card.name), nameKey(card.name.split(' // ')[0])])) {
+      byName.set(key, [...(byName.get(key) ?? []), card])
+    }
+  }
+
   const missing: ParsedDeckCard[] = []
   const matches: { parsed: ParsedDeckCard; card: T }[] = []
   for (const entry of parsed) {
-    const card = byIdentifier.get(printingKey(entry.set, entry.collectorNumber))
+    let card: T | undefined
+    if (entry.set && entry.collectorNumber) {
+      card = byIdentifier.get(printingKey(entry.set, entry.collectorNumber))
+    } else {
+      const candidates = byName.get(nameKey(entry.name)) ?? []
+      card = (entry.set ? candidates.find((c) => c.set?.toLowerCase() === entry.set) : undefined) ?? candidates[0]
+    }
     if (card) matches.push({ parsed: entry, card })
     else missing.push(entry)
   }

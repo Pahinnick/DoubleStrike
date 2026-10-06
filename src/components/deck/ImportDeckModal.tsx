@@ -1,15 +1,23 @@
 import { useState } from 'react'
 import { fetchArchidektDeckJson } from '../../api/archidekt'
-import { getCardsByIdentifiers, getDisplayImage, searchCards } from '../../api/scryfall'
-import type { CardIdentifier, ScryfallCard } from '../../api/scryfallTypes'
+import { getCardsByIdentifiers, getDisplayImage, resolveCardsByIdentifiers, ScryfallApiError, searchCards } from '../../api/scryfall'
+import type { ScryfallCard } from '../../api/scryfallTypes'
 import { TOKEN_CARDS_LABEL } from '../../engine/deckGrouping'
-import { matchParsedCards, parseArchidektDeckId, parseArchidektDeckJson, parseArchidektExport, type ParsedDeckCard } from '../../engine/deckImport'
+import {
+  cardIdentifierFor,
+  matchParsedCards,
+  parseArchidektDeckId,
+  parseArchidektDeckJson,
+  parseArchidektExport,
+  type ParsedDeckCard,
+} from '../../engine/deckImport'
 import { collectDeckTokens } from '../../engine/deckTokens'
 import { useDeck } from '../../state/DeckContext'
 import { useDeckList } from '../../state/DeckListContext'
 import { saveSnapshots, toSnapshot } from '../../storage/cardCache'
 import { getCardImageUrl } from '../../utils/cardSize'
 import { FORMATS, type Format } from '../../utils/scryfallQuery'
+import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 import './importDeck.css'
 
 type Props = {
@@ -46,8 +54,11 @@ function ImportDeckModal({ onClose }: Props) {
     try {
       const result = await searchCards(name)
       setSuggestionsByName((prev) => ({ ...prev, [key]: result.data.slice(0, SUGGESTION_LIMIT) }))
-    } catch {
-      setSuggestionsByName((prev) => ({ ...prev, [key]: 'error' }))
+    } catch (err) {
+      // Scryfall answers a search with no results as a 404 "not_found" — an answer, not a
+      // failure. It used to read "Couldn't search Scryfall right now" for any name with no match.
+      const noMatches = err instanceof ScryfallApiError && err.code === 'not_found'
+      setSuggestionsByName((prev) => ({ ...prev, [key]: noMatches ? [] : 'error' }))
     }
   }
 
@@ -55,6 +66,10 @@ function ImportDeckModal({ onClose }: Props) {
     setActiveIndex(index)
     void loadSuggestions(unresolved[index].name)
   }
+
+  // Escape closes, like every other modal — but not mid-import, where closing would leave the
+  // half-built deck behind with no way to see what failed.
+  useEscapeToClose(onClose, status !== 'importing')
 
   /** User picked a suggested printing for a card that failed to resolve on its own — applies the
    *  exact same dispatch sequence a normally-matched import card gets (quantity/category/board/
@@ -87,11 +102,13 @@ function ImportDeckModal({ onClose }: Props) {
     setActiveIndex(null)
     setSuggestionsByName({})
 
-    let resolved: ScryfallCard[]
-    try {
-      const identifiers: CardIdentifier[] = parsed.map((p) => ({ set: p.set, collector_number: p.collectorNumber }))
-      resolved = await getCardsByIdentifiers(identifiers)
-    } catch {
+    // A lookup that failed is not the same as a card that doesn't exist: resolveCardsByIdentifiers
+    // never rejects, it reports the identifiers whose request failed. Carrying on with those
+    // counted as "couldn't find" used to create an empty or partial deck while offline and call
+    // it a success. Stop instead — nothing has been created yet, and whatever did resolve is
+    // cached, so trying again is cheap.
+    const { cards: resolved, failed } = await resolveCardsByIdentifiers(parsed.map(cardIdentifierFor))
+    if (failed.length > 0) {
       setError("Couldn't reach Scryfall to look up the cards — check your connection and try again.")
       setStatus('error')
       return
@@ -174,7 +191,10 @@ function ImportDeckModal({ onClose }: Props) {
     if (missing.length === 0) {
       onClose()
     } else {
-      selectUnresolved(0)
+      // Not selectUnresolved(0): that reads `unresolved` from this render's closure, which is
+      // still the empty list from before the setUnresolved call above.
+      setActiveIndex(0)
+      void loadSuggestions(missing[0].name)
     }
   }
 

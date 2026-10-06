@@ -4,6 +4,7 @@ import ConfirmModal from '../shared/ConfirmModal'
 import DeckManagerCommanders from './DeckManagerCommanders'
 import { getSnapshots, type CardSnapshot } from '../../storage/cardCache'
 import { colorStripeBackground, WUBRG, type Color } from '../../utils/colors'
+import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 import './deckManager.css'
 
 /** Union of every commander's color identity for one deck, in WUBRG order — feeds the row's color
@@ -24,6 +25,7 @@ type Props = {
 }
 
 function DeckManagerModal({ onClose }: Props) {
+  useEscapeToClose(onClose)
   const { decks, activeDeckId, switchDeck, createDeck, deleteDeck, renameDeck } = useDeckList()
   const [newDeckName, setNewDeckName] = useState('')
   const [deletingId, setDeletingId] = useState<string | null>(null)
@@ -93,7 +95,10 @@ function DeckManagerModal({ onClose }: Props) {
                   onBlur={commitRename}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') commitRename()
-                    if (event.key === 'Escape') setEditingId(null)
+                    if (event.key === 'Escape') {
+                      event.stopPropagation()
+                      setEditingId(null)
+                    }
                   }}
                 />
               ) : (

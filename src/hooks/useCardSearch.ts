@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ScryfallApiError, searchCards } from '../api/scryfall'
 import type { ScryfallCard } from '../api/scryfallTypes'
+import { notifyWarning } from '../notifications'
 import { buildScryfallQuery, type SearchFilters, type SortOrder } from '../utils/scryfallQuery'
 import { useDebouncedValue } from './useDebouncedValue'
 
@@ -51,6 +52,9 @@ export function useCardSearch(text: string, filters: SearchFilters, options?: Ca
   const queryRef = useRef('')
   const pageRef = useRef(1)
   const orderRef = useRef<SortOrder | undefined>(undefined)
+  // Bumped whenever the query changes, so a "load more" still in flight for the previous query
+  // can tell its page no longer belongs in the list.
+  const searchGenerationRef = useRef(0)
 
   useEffect(() => {
     const query = enabled ? buildScryfallQuery(debouncedText, filters) : ''
@@ -58,6 +62,8 @@ export function useCardSearch(text: string, filters: SearchFilters, options?: Ca
     queryRef.current = query
     orderRef.current = order
     pageRef.current = 1
+    searchGenerationRef.current += 1
+    setLoadingMore(false)
     if (query.length === 0) {
       setRawResults([])
       setStatus('idle')
@@ -100,17 +106,24 @@ export function useCardSearch(text: string, filters: SearchFilters, options?: Ca
     if (!hasMore || loadingMore) return
     const query = queryRef.current
     const nextPage = pageRef.current + 1
+    const generation = searchGenerationRef.current
     setLoadingMore(true)
     searchCards(query, nextPage, orderRef.current)
       .then((response) => {
+        if (searchGenerationRef.current !== generation) return
         pageRef.current = nextPage
         setRawResults((prev) => [...prev, ...response.data])
         setHasMore(response.has_more)
       })
-      .catch((err: unknown) => {
-        setError(err instanceof Error ? err.message : 'Failed to load more cards')
+      .catch(() => {
+        if (searchGenerationRef.current !== generation) return
+        // `error` is only rendered for a failed search, and this search succeeded — the results
+        // already on screen stay, so the failure is reported on its own.
+        notifyWarning("Couldn't load more cards — check your connection and try again.")
       })
-      .finally(() => setLoadingMore(false))
+      .finally(() => {
+        if (searchGenerationRef.current === generation) setLoadingMore(false)
+      })
   }
 
   const results = useMemo(

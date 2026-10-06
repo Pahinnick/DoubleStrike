@@ -1,4 +1,5 @@
 import type { MouseEvent } from 'react'
+import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 import './confirmModal.css'
 
 type Props = {
@@ -10,6 +11,7 @@ type Props = {
 }
 
 function ConfirmModal({ title, message, confirmLabel = 'Delete', onConfirm, onCancel }: Props) {
+  useEscapeToClose(onCancel)
   // Nested inside the modal it's confirming a delete from — stop the click here so it
   // doesn't also bubble up and dismiss that parent overlay.
   function handleBackdropClick(event: MouseEvent) {

@@ -9,6 +9,7 @@ import { useState } from 'react'
 import type { ConnectionStatus } from '../../net/peerConnection'
 import { MAX_PLAYERS, isValidRoomCode, type PublicBoard, type Seat } from '../../net/protocol'
 import type { MultiplayerRole } from '../../net/useMultiplayer'
+import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 
 type Props = {
   status: ConnectionStatus
@@ -50,6 +51,7 @@ function MultiplayerModal({
   onLeave,
   onClose,
 }: Props) {
+  useEscapeToClose(onClose)
   const [code, setCode] = useState('')
   const [copied, setCopied] = useState(false)
 

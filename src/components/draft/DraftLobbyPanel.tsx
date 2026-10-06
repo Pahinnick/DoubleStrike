@@ -16,6 +16,14 @@ type Props = {
 const DEFAULT_PACK_SIZE = 15
 const DEFAULT_PACKS_PER_PLAYER = 3
 
+/** A pack size or pack count typed into a number box. Always a whole number of at least 1: the
+ *  draft engine counts rounds and slices packs with these, and a value like 2.5 made the "last
+ *  round" test never come true, so the draft could not finish. */
+function toWholeCount(raw: string): number {
+  const value = Math.floor(Number(raw))
+  return Number.isFinite(value) && value >= 1 ? value : 1
+}
+
 function DraftLobbyPanel({ profileId, session, cubesVersion }: Props) {
   const [code, setCode] = useState('')
   const [cubes, setCubes] = useState<CubeSummary[]>([])
@@ -144,7 +152,7 @@ function DraftLobbyPanel({ profileId, session, cubesVersion }: Props) {
           </label>
           <label>
             <span>Pack size</span>
-            <input type="number" min={1} value={packSize} onChange={(event) => setPackSize(Math.max(1, Number(event.target.value)))} />
+            <input type="number" min={1} value={packSize} onChange={(event) => setPackSize(toWholeCount(event.target.value))} />
           </label>
           <label>
             <span>Packs per player</span>
@@ -152,7 +160,7 @@ function DraftLobbyPanel({ profileId, session, cubesVersion }: Props) {
               type="number"
               min={1}
               value={packsPerPlayer}
-              onChange={(event) => setPacksPerPlayer(Math.max(1, Number(event.target.value)))}
+              onChange={(event) => setPacksPerPlayer(toWholeCount(event.target.value))}
             />
           </label>
           {startError && <p className="search-status search-status--error">{startError}</p>}

@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import { useProfiles } from '../../state/ProfileContext'
 import ConfirmModal from '../shared/ConfirmModal'
+import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 
 type Props = {
   onClose: () => void
 }
 
 function ProfileManagerModal({ onClose }: Props) {
+  useEscapeToClose(onClose)
   const { profiles, activeProfileId, defaultProfileId, switchProfile, createProfile, renameProfile, deleteProfile, setDefaultProfile } =
     useProfiles()
   const [newProfileName, setNewProfileName] = useState('')
@@ -61,7 +63,10 @@ function ProfileManagerModal({ onClose }: Props) {
                   onBlur={commitRename}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') commitRename()
-                    if (event.key === 'Escape') setEditingId(null)
+                    if (event.key === 'Escape') {
+                      event.stopPropagation()
+                      setEditingId(null)
+                    }
                   }}
                 />
               ) : (

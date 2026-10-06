@@ -42,8 +42,9 @@ export type MultiplayerSession = {
   leave: () => void
   /** Publish this client's public board to the pod. No-op when not connected. */
   broadcast: (board: PublicBoard) => void
-  /** Hand control of a card to another player. No-op when not connected. */
-  giveCard: (toPlayerId: string, card: GivenCard) => void
+  /** Hand control of a card to another player. False when it could not be sent (not connected,
+   *  or mid-reconnect) — the caller must then keep the card. */
+  giveCard: (toPlayerId: string, card: GivenCard) => boolean
   /** Reposition a card on another player's board, without taking control of it. No-op when not connected. */
   relocateCard: (toPlayerId: string, instanceId: string, x: number, y: number, atSeat?: Seat) => void
   /** Ask a card's owner to tap/untap it (a taken card sitting on our board). No-op when not connected. */
@@ -70,7 +71,10 @@ export type MultiplayerSession = {
   /** Publish a one-click emoji reaction to the pod. No-op when not connected. */
   broadcastReaction: (emoji: string) => void
   /** Publish whose turn it is now. No-op when not connected. */
-  broadcastTurnPass: (activeSeat: Seat, turn?: number) => void
+  broadcastTurnPass: (activeSeat: Seat, turn?: number, firstSeat?: Seat) => void
+  /** The seat that took the game's first turn (see TurnPassMessage.firstSeat), or null if nobody
+   *  has said. */
+  podFirstSeat: Seat | null
   /** The shared table radio's current station id (see RADIO_STATIONS), or null when it's off —
    *  like `activeSeat`, a late joiner gets whatever's already cached on the host. */
   radioStation: string | null
@@ -132,6 +136,7 @@ export function useMultiplayer(
   const [boards, setBoards] = useState<Map<string, PublicBoard>>(new Map())
   const [activeSeat, setActiveSeat] = useState<Seat | null>(null)
   const [podTurn, setPodTurn] = useState<number | null>(null)
+  const [podFirstSeat, setPodFirstSeat] = useState<Seat | null>(null)
   const [radioStation, setRadioStation] = useState<string | null>(null)
 
   const reset = useCallback(() => {
@@ -143,6 +148,7 @@ export function useMultiplayer(
     setBoards(new Map())
     setActiveSeat(null)
     setPodTurn(null)
+    setPodFirstSeat(null)
     setRadioStation(null)
   }, [])
 
@@ -187,11 +193,15 @@ export function useMultiplayer(
     conn.on('ping', (playerId, name, x, y) => onPingReceivedRef.current?.(playerId, name, x, y))
     conn.on('highlight', (instanceId) => onHighlightReceivedRef.current?.(instanceId))
     conn.on('reaction', (playerId, name, emoji) => onReactionReceivedRef.current?.(playerId, name, emoji))
-    conn.on('turnPass', (activeSeat, turn) => {
+    conn.on('turnPass', (activeSeat, turn, firstSeat) => {
       setActiveSeat(activeSeat)
       // Omitted by an older peer — leave the shared counter as-is rather than clearing it.
       if (turn !== undefined) setPodTurn(turn)
+      if (firstSeat !== undefined) setPodFirstSeat(firstSeat)
     })
+    // The host is about to replay every board it has. Start from nothing so anyone who left
+    // while this client was reconnecting doesn't linger as a ghost board.
+    conn.on('welcomed', () => setBoards(new Map()))
     conn.on('radio', (station) => setRadioStation(station))
     // Reuses the app's existing banner system rather than a second one (see src/notifications.ts).
     // Fired at most once per connection, so this can't stack up.
@@ -228,7 +238,7 @@ export function useMultiplayer(
   }, [])
 
   const giveCard = useCallback((toPlayerId: string, card: GivenCard) => {
-    connRef.current?.giveCard(toPlayerId, card)
+    return connRef.current?.giveCard(toPlayerId, card) ?? false
   }, [])
 
   const relocateCard = useCallback((toPlayerId: string, instanceId: string, x: number, y: number, atSeat?: Seat) => {
@@ -275,8 +285,8 @@ export function useMultiplayer(
     connRef.current?.broadcastReaction(emoji)
   }, [])
 
-  const broadcastTurnPass = useCallback((next: Seat, turn?: number) => {
-    connRef.current?.broadcastTurnPass(next, turn)
+  const broadcastTurnPass = useCallback((next: Seat, turn?: number, firstSeat?: Seat) => {
+    connRef.current?.broadcastTurnPass(next, turn, firstSeat)
   }, [])
 
   const broadcastRadio = useCallback((station: string | null) => {
@@ -303,6 +313,7 @@ export function useMultiplayer(
     boards,
     activeSeat,
     podTurn,
+    podFirstSeat,
     isActive,
     host,
     join,

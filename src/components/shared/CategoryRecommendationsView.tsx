@@ -6,6 +6,7 @@ import { findCardsForCategory } from '../../engine/similarCards'
 import { SIMILAR_SORT_OPTIONS, sortSimilarMatches, type SimilarSort } from '../../engine/similarCardSort'
 import { useCardSnapshots } from '../../hooks/useCardSnapshots'
 import { useCommanderColorIdentity } from '../../hooks/useCommanderColorIdentity'
+import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 import { useDeck } from '../../state/DeckContext'
 import { loadOrBuildTagIndex, type TagIndexData } from '../../storage/tagIndex'
 import type { Color } from '../../utils/colors'
@@ -106,6 +107,8 @@ function CategoryRecommendationsView() {
   useEffect(() => {
     setSort('match')
   }, [openCategory])
+
+  useEscapeToClose(() => setOpenCategory(null), Boolean(openCategory))
 
   if (!openCategory) return null
 

@@ -71,32 +71,94 @@ async function ensureDir(dir) {
   await fs.mkdir(dir, { recursive: true })
 }
 
+// Every read and write of one file runs through its own promise chain, so a read can never land
+// in the middle of a write to the same file. Both windows (main and Playtest) share this one main
+// process, so this also covers the two-window case. Without it, readJson could catch a file that
+// a concurrent write had already truncated, fail to parse it, and quarantine a perfectly good file
+// as "corrupted" — which, for app-data.json, reads as every profile being lost.
+const fileQueues = new Map()
+function withFileLock(key, fn) {
+  const previous = fileQueues.get(key) ?? Promise.resolve()
+  const run = previous.then(fn, fn)
+  const tail = run.then(
+    () => undefined,
+    () => undefined,
+  )
+  fileQueues.set(key, tail)
+  void tail.then(() => {
+    if (fileQueues.get(key) === tail) fileQueues.delete(key)
+  })
+  return run
+}
+
+// app-data.json is read-modify-written by several handlers (rename a profile, change a setting,
+// ...). The per-file lock above only keeps a single read or write whole; this one keeps a whole
+// handler's read-then-write together, so two overlapping handlers can't each read the same
+// starting state and have the second write silently undo the first.
+const APP_DATA_LOCK = Symbol('app-data')
+function withAppDataLock(fn) {
+  return withFileLock(APP_DATA_LOCK, fn)
+}
+
 async function readJson(file, fallback) {
-  try {
-    const raw = await fs.readFile(file, 'utf-8')
-    return JSON.parse(raw)
-  } catch (err) {
-    if (err.code === 'ENOENT') return fallback
-    if (err instanceof SyntaxError) {
-      // A crash or power loss mid-write can leave a truncated/corrupted file. Previously this
-      // rejected forever and the renderer had no error handling either, so the app was stuck on
-      // an infinite "Loading profiles…" screen with no way to recover. Quarantine (never delete —
-      // it may still be hand-recoverable) and fall back so the caller can reseed instead.
-      console.error('[storage] corrupted JSON, quarantining and falling back to defaults:', file, err)
-      try {
-        await fs.rename(file, `${file}.corrupted-${Date.now()}`)
-      } catch (renameErr) {
-        console.error('[storage] failed to quarantine corrupted file', file, renameErr)
+  return withFileLock(file, async () => {
+    try {
+      const raw = await fs.readFile(file, 'utf-8')
+      return JSON.parse(raw)
+    } catch (err) {
+      if (err.code === 'ENOENT') return fallback
+      if (err instanceof SyntaxError) {
+        // A crash or power loss mid-write can leave a truncated/corrupted file. Previously this
+        // rejected forever and the renderer had no error handling either, so the app was stuck on
+        // an infinite "Loading profiles…" screen with no way to recover. Quarantine (never delete —
+        // it may still be hand-recoverable) and fall back so the caller can reseed instead.
+        console.error('[storage] corrupted JSON, quarantining and falling back to defaults:', file, err)
+        try {
+          await fs.rename(file, `${file}.corrupted-${Date.now()}`)
+        } catch (renameErr) {
+          console.error('[storage] failed to quarantine corrupted file', file, renameErr)
+        }
+        return fallback
       }
-      return fallback
+      throw err
     }
-    throw err
+  })
+}
+
+const RENAME_RETRY_DELAYS_MS = [20, 60, 150, 400]
+
+// Windows refuses to rename over a file another process has open (antivirus, a backup tool, the
+// search indexer) with EPERM/EBUSY/EACCES; those holds last milliseconds, so a few short retries
+// get through where a single attempt would fail the save.
+async function renameWithRetry(from, to) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await fs.rename(from, to)
+      return
+    } catch (err) {
+      const retryable = err.code === 'EPERM' || err.code === 'EBUSY' || err.code === 'EACCES'
+      if (!retryable || attempt >= RENAME_RETRY_DELAYS_MS.length) throw err
+      await new Promise((resolve) => setTimeout(resolve, RENAME_RETRY_DELAYS_MS[attempt]))
+    }
   }
 }
 
+// Written to a temp file and renamed into place, never written in place: a plain writeFile
+// truncates the target first, so a crash, kill or full disk partway through used to leave a
+// truncated file that the next launch then quarantined as corrupted. A rename either lands the
+// whole new file or leaves the old one untouched.
 async function writeJson(file, data) {
-  await ensureDir(path.dirname(file))
-  await fs.writeFile(file, JSON.stringify(data, null, 2), 'utf-8')
+  return withFileLock(file, async () => {
+    await ensureDir(path.dirname(file))
+    const tempFile = `${file}.${process.pid}-${crypto.randomUUID()}.tmp`
+    try {
+      await fs.writeFile(tempFile, JSON.stringify(data, null, 2), 'utf-8')
+      await renameWithRetry(tempFile, file)
+    } catch (err) {
+      await fs.rm(tempFile, { force: true }).catch(() => undefined)
+      throw err
+    }
+  })
 }
 
 // Best-effort mirror to the backup folder — a failure here (e.g. Documents unavailable)
@@ -223,55 +285,67 @@ async function saveAppData(data) {
 }
 
 function registerStorageIpc() {
-  ipcMain.handle('storage:loadAppData', () => loadAppData())
+  ipcMain.handle('storage:loadAppData', () => withAppDataLock(() => loadAppData()))
 
-  ipcMain.handle('storage:createProfile', async (_event, name) => {
-    const data = await loadAppData()
-    const profile = { id: crypto.randomUUID(), name, createdAt: new Date().toISOString() }
-    data.profiles.push(profile)
-    await saveAppData(data)
-    return profile
-  })
+  ipcMain.handle('storage:createProfile', (_event, name) =>
+    withAppDataLock(async () => {
+      const data = await loadAppData()
+      const profile = { id: crypto.randomUUID(), name, createdAt: new Date().toISOString() }
+      data.profiles.push(profile)
+      await saveAppData(data)
+      return profile
+    }),
+  )
 
-  ipcMain.handle('storage:renameProfile', async (_event, id, name) => {
-    const data = await loadAppData()
-    const profile = data.profiles.find((p) => p.id === id)
-    if (profile) profile.name = name
-    await saveAppData(data)
-  })
+  ipcMain.handle('storage:renameProfile', (_event, id, name) =>
+    withAppDataLock(async () => {
+      const data = await loadAppData()
+      const profile = data.profiles.find((p) => p.id === id)
+      if (profile) profile.name = name
+      await saveAppData(data)
+    }),
+  )
 
-  ipcMain.handle('storage:deleteProfile', async (_event, id) => {
-    const data = await loadAppData()
-    data.profiles = data.profiles.filter((p) => p.id !== id)
-    if (data.defaultProfileId === id) data.defaultProfileId = data.profiles[0]?.id ?? null
-    if (data.lastActiveProfileId === id) data.lastActiveProfileId = data.defaultProfileId
-    // Recorded so the next loadAppData()'s orphan-recovery scan doesn't resurrect this profile —
-    // its folder is left on disk on purpose (below), which would otherwise look identical to an
-    // accidentally-orphaned one.
-    data.deletedProfileIds = [...new Set([...(data.deletedProfileIds ?? []), id])]
-    await saveAppData(data)
-    // Deck files themselves (and their backups) are left on disk — deleting a profile
-    // hides its decks from the picker, it doesn't destroy the data.
-  })
+  ipcMain.handle('storage:deleteProfile', (_event, id) =>
+    withAppDataLock(async () => {
+      const data = await loadAppData()
+      data.profiles = data.profiles.filter((p) => p.id !== id)
+      if (data.defaultProfileId === id) data.defaultProfileId = data.profiles[0]?.id ?? null
+      if (data.lastActiveProfileId === id) data.lastActiveProfileId = data.defaultProfileId
+      // Recorded so the next loadAppData()'s orphan-recovery scan doesn't resurrect this profile —
+      // its folder is left on disk on purpose (below), which would otherwise look identical to an
+      // accidentally-orphaned one.
+      data.deletedProfileIds = [...new Set([...(data.deletedProfileIds ?? []), id])]
+      await saveAppData(data)
+      // Deck files themselves (and their backups) are left on disk — deleting a profile
+      // hides its decks from the picker, it doesn't destroy the data.
+    }),
+  )
 
-  ipcMain.handle('storage:setDefaultProfile', async (_event, id) => {
-    const data = await loadAppData()
-    data.defaultProfileId = id
-    await saveAppData(data)
-  })
+  ipcMain.handle('storage:setDefaultProfile', (_event, id) =>
+    withAppDataLock(async () => {
+      const data = await loadAppData()
+      data.defaultProfileId = id
+      await saveAppData(data)
+    }),
+  )
 
-  ipcMain.handle('storage:setActiveProfile', async (_event, id) => {
-    const data = await loadAppData()
-    data.lastActiveProfileId = id
-    await saveAppData(data)
-  })
+  ipcMain.handle('storage:setActiveProfile', (_event, id) =>
+    withAppDataLock(async () => {
+      const data = await loadAppData()
+      data.lastActiveProfileId = id
+      await saveAppData(data)
+    }),
+  )
 
-  ipcMain.handle('storage:updateProfileSettings', async (_event, id, settings) => {
-    const data = await loadAppData()
-    const profile = data.profiles.find((p) => p.id === id)
-    if (profile) profile.settings = settings
-    await saveAppData(data)
-  })
+  ipcMain.handle('storage:updateProfileSettings', (_event, id, settings) =>
+    withAppDataLock(async () => {
+      const data = await loadAppData()
+      const profile = data.profiles.find((p) => p.id === id)
+      if (profile) profile.settings = settings
+      await saveAppData(data)
+    }),
+  )
 
   ipcMain.handle('storage:getProfileMeta', async (_event, profileId) => {
     return readJson(profileMetaFile(profileId), { lastOpenedDeckId: null })
@@ -309,7 +383,8 @@ function registerStorageIpc() {
 
   ipcMain.handle('storage:deleteDeck', async (_event, profileId, deckId) => {
     assertSafePathSegment(deckId, 'deckId')
-    await fs.rm(path.join(profileDecksDir(profileId), `${deckId}.json`), { force: true })
+    const file = path.join(profileDecksDir(profileId), `${deckId}.json`)
+    await withFileLock(file, () => fs.rm(file, { force: true }))
     // Backup copy is intentionally left in place — it's the recovery path for an
     // accidental delete, not a mirror that should track deletions too.
   })

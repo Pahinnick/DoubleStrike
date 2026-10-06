@@ -197,3 +197,42 @@ describe('computeDeckLegality', () => {
     })
   })
 })
+
+describe('computeDeckLegality — commander singleton and identity edge cases', () => {
+  const legal = { commander: 'legal' }
+  function singletonIssues(cards: DeckCardRef[], snapshots: Map<string, CardSnapshot>) {
+    return computeDeckLegality(cards, snapshots, 'commander').issues.filter((i) => i.reason.startsWith('Singleton'))
+  }
+
+  it('allows any number of snow basics', () => {
+    const snapshots = new Map([['snow', makeSnapshot('snow', 'Snow-Covered Island', legal, { type_line: 'Basic Snow Land — Island' })]])
+    expect(singletonIssues([{ scryfallId: 'snow', quantity: 30, board: 'mainboard' }], snapshots)).toEqual([])
+  })
+
+  it('counts two printings of the same card as two copies', () => {
+    const a = makeSnapshot('ring-a', 'Sol Ring', legal, { type_line: 'Artifact' })
+    const b = { ...makeSnapshot('ring-b', 'Sol Ring', legal, { type_line: 'Artifact' }), oracle_id: a.oracle_id }
+    const snapshots = new Map([
+      ['ring-a', a],
+      ['ring-b', b],
+    ])
+    const issues = singletonIssues(
+      [
+        { scryfallId: 'ring-a', quantity: 1, board: 'mainboard' },
+        { scryfallId: 'ring-b', quantity: 1, board: 'mainboard' },
+      ],
+      snapshots,
+    )
+    expect(issues.map((i) => i.scryfallId).sort()).toEqual(['ring-a', 'ring-b'])
+  })
+
+  it('holds off on identity checks until the commander has loaded', () => {
+    const snapshots = new Map([['bolt', makeSnapshot('bolt', 'Lightning Bolt', legal, { color_identity: ['R'] })]])
+    const cards: DeckCardRef[] = [
+      { scryfallId: 'cmdr', quantity: 1, board: 'mainboard', isCommander: true },
+      { scryfallId: 'bolt', quantity: 1, board: 'mainboard' },
+    ]
+    const identityIssues = computeDeckLegality(cards, snapshots, 'commander').issues.filter((i) => i.reason.includes('identity'))
+    expect(identityIssues).toEqual([])
+  })
+})

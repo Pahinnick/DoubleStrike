@@ -45,6 +45,17 @@ function DraftView({ onClose }: Props) {
 
         {session.phase === 'drafting' && (
           <div className="draft-view__drafting">
+            {/* The lobby panel is the only other place the connection's state is shown, and it
+                isn't on screen any more. Without this a dropped connection looked exactly like
+                waiting on a slow neighbour, indefinitely. */}
+            {session.status === 'connecting' && (
+              <p className="search-status">{session.statusDetail ?? 'Reconnecting to the draft…'}</p>
+            )}
+            {(session.status === 'closed' || session.status === 'error') && (
+              <p className="search-status search-status--error">
+                Lost the connection to this draft{session.statusDetail ? ` — ${session.statusDetail}` : '.'} Your picks so far are still below.
+              </p>
+            )}
             <DraftProgressBar roster={session.roster} picksBySeat={session.picksBySeat} mySeat={session.seat} />
             {session.pickError && <p className="search-status search-status--error">{session.pickError}</p>}
             <PackView pack={session.currentPack} myPool={session.myPool} onPick={session.pickCard} />

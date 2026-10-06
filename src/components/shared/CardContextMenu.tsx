@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 import './cardContextMenu.css'
 
 export type ContextMenuAction = {
@@ -22,6 +23,7 @@ type Props = {
  *  rounded-corner card art) — used both for the Playtest battlefield's right-click menu and the
  *  deck editor's per-card action menu. */
 function CardContextMenu({ x, y, actions, onClose }: Props) {
+  useEscapeToClose(onClose)
   const menuRef = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState({ x, y })
   const [openSubmenu, setOpenSubmenu] = useState<string | null>(null)
@@ -53,15 +55,10 @@ function CardContextMenu({ x, y, actions, onClose }: Props) {
       window.addEventListener('pointerdown', dismissIfOutside)
       window.addEventListener('contextmenu', dismissIfOutside)
     })
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', handleKeyDown)
     return () => {
       cancelAnimationFrame(id)
       window.removeEventListener('pointerdown', dismissIfOutside)
       window.removeEventListener('contextmenu', dismissIfOutside)
-      window.removeEventListener('keydown', handleKeyDown)
     }
   }, [onClose])
 

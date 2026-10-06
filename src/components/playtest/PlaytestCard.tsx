@@ -125,7 +125,42 @@ function PlaytestCard({ gameCard, snapshot, onClick, onContextMenu, readOnly, re
   // A hidden card has nothing this client could preview (its identity was never sent to us —
   // see the `hidden` prop doc) — hooks still run unconditionally, the handlers just never get
   // spread onto the element below. Same reasoning for `hidden` gating foil: no identity, no art, no shine.
-  const [hoverHandlers, foilPoint] = useHoverPreview(fallbackCard, face, { generic: gameCard.counters, pt: gameCard.ptCounters }, hidden ? undefined : foil)
+  const [previewHandlers, foilPoint] = useHoverPreview(fallbackCard, face, { generic: gameCard.counters, pt: gameCard.ptCounters }, hidden ? undefined : foil)
+  // Where the cursor last was over this card, while it is over it. The shared preview is only
+  // ever written from mouse events, and no mouse event follows a card changing under a cursor
+  // that isn't moving — so the preview kept showing what the card USED to be: the old face
+  // after pressing F, and, worse, an opponent's real card after they turned it face down.
+  const hoverPointRef = useRef<{ clientX: number; clientY: number; currentTarget: Element } | null>(null)
+  const hoverHandlers: typeof previewHandlers = {
+    ...previewHandlers,
+    onMouseEnter: (event) => {
+      hoverPointRef.current = { clientX: event.clientX, clientY: event.clientY, currentTarget: event.currentTarget }
+      previewHandlers.onMouseEnter(event)
+    },
+    onMouseMove: (event) => {
+      hoverPointRef.current = { clientX: event.clientX, clientY: event.clientY, currentTarget: event.currentTarget }
+      previewHandlers.onMouseMove(event)
+    },
+    onMouseLeave: () => {
+      hoverPointRef.current = null
+      previewHandlers.onMouseLeave()
+    },
+  }
+  const hasSnapshot = snapshot !== undefined
+  useEffect(() => {
+    const at = hoverPointRef.current
+    if (!at) return
+    if (hidden || !hasSnapshot) {
+      // Nothing this client is allowed to show any more — take the preview down.
+      hoverPointRef.current = null
+      previewHandlers.onMouseLeave()
+      return
+    }
+    previewHandlers.onMouseMove(at)
+    // Re-run only when what the preview shows has changed; previewHandlers is rebuilt on every
+    // one of these changes anyway, and listing it would re-fire on unrelated renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hidden, hasSnapshot, face, gameCard.counters, gameCard.ptCounters])
   // Chromium suppresses the click that follows a completed drag, but not
   // reliably when the drop is cancelled (Esc / dropped outside a target) —
   // guard so a failed drag never registers as a tap.

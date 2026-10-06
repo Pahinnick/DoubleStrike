@@ -3,6 +3,7 @@ import { storage } from '../../storage/storage'
 import type { StoragePaths } from '../../storage/storageAdapter'
 import { useProfiles } from '../../state/ProfileContext'
 import { useTutorialContext } from '../shared/TutorialContext'
+import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 import './help.css'
 
 type Props = {
@@ -10,6 +11,7 @@ type Props = {
 }
 
 function HelpModal({ onClose }: Props) {
+  useEscapeToClose(onClose)
   const { activeProfileId } = useProfiles()
   const tutorial = useTutorialContext()
   const [paths, setPaths] = useState<StoragePaths | null>(null)

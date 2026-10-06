@@ -91,7 +91,7 @@ export type ScryfallCatalog = {
   data: string[]
 }
 
-export type CardIdentifier = { id: string } | { oracle_id: string } | { name: string } | { set: string; collector_number: string }
+export type CardIdentifier = { id: string } | { oracle_id: string } | { name: string; set?: string } | { set: string; collector_number: string }
 
 /** Minimal shape needed to open the Similar Cards view — satisfied by both ScryfallCard and CardSnapshot. */
 export type TaggableCard = {
