@@ -18,8 +18,10 @@ import { parseDraftMessage, type DraftMessage } from './draftProtocol'
 /** Bump when the wire shape changes incompatibly. Receivers reject other versions.
  *  v2: PublicBoard.commanderDamage changed from a single number (worst single source) to a
  *  per-source record keyed by seat — an incompatible shape change, unlike every other field
- *  added to PublicBoard so far (those were purely additive/optional). */
-export const PROTOCOL_VERSION = 2
+ *  added to PublicBoard so far (those were purely additive/optional).
+ *  v3: HELLO requires a `key` (seat takeover fix), and every message has size limits — an older
+ *  client would be refused at join anyway, so it is told it's on an incompatible version instead. */
+export const PROTOCOL_VERSION = 3
 
 /** 4-player Commander pod. Seats are 0..3; the host always takes seat 0. */
 export const MAX_PLAYERS = 4
@@ -193,6 +195,11 @@ export type HelloMessage = {
   type: 'HELLO'
   v: number
   playerId: string
+  /** A secret this connection makes up once and never shows anyone but the host. playerIds are
+   *  public (every STATE carries one), so on its own a playerId proved nothing: anyone in the pod
+   *  could join claiming another player's id, and the host dropped the real player to seat them.
+   *  The host now ties each playerId to the key it first arrived with and refuses a mismatch. */
+  key: string
   name: string
   deckFormat: string
 }
@@ -538,6 +545,7 @@ export type ParseResult =
 export function parseMessage(raw: unknown): ParseResult {
   let obj: unknown = raw
   if (typeof raw === 'string') {
+    if (raw.length > MAX_FRAME_CHARS) return { ok: false, reason: 'malformed' }
     try {
       obj = JSON.parse(raw)
     } catch {
@@ -552,7 +560,7 @@ export function parseMessage(raw: unknown): ParseResult {
 
   switch (m.type) {
     case 'HELLO':
-      if (isNonEmptyString(m.playerId) && isString(m.name) && isString(m.deckFormat)) {
+      if (isNonEmptyString(m.playerId) && isNonEmptyString(m.key) && isString(m.name) && isString(m.deckFormat)) {
         return { ok: true, msg: obj as HelloMessage }
       }
       return { ok: false, reason: 'malformed' }
@@ -574,8 +582,8 @@ export function parseMessage(raw: unknown): ParseResult {
       if (
         isNonEmptyString(m.toPlayerId) &&
         isNonEmptyString(m.instanceId) &&
-        typeof m.x === 'number' &&
-        typeof m.y === 'number' &&
+        isFiniteNumber(m.x) &&
+        isFiniteNumber(m.y) &&
         (m.atSeat === undefined || isSeat(m.atSeat))
       ) {
         return { ok: true, msg: obj as RelocateCardMessage }
@@ -620,12 +628,12 @@ export function parseMessage(raw: unknown): ParseResult {
       if (isNonEmptyString(m.id)) return { ok: true, msg: obj as RollDismissMessage }
       return { ok: false, reason: 'malformed' }
     case 'PING':
-      if (isNonEmptyString(m.playerId) && isString(m.name) && typeof m.x === 'number' && typeof m.y === 'number') {
+      if (isNonEmptyString(m.playerId) && isString(m.name) && isFiniteNumber(m.x) && isFiniteNumber(m.y)) {
         return { ok: true, msg: obj as PingMessage }
       }
       return { ok: false, reason: 'malformed' }
     case 'TURN_PASS':
-      if (isSeat(m.activeSeat) && (m.turn === undefined || typeof m.turn === 'number') && (m.firstSeat === undefined || isSeat(m.firstSeat))) {
+      if (isSeat(m.activeSeat) && (m.turn === undefined || isFiniteNumber(m.turn)) && (m.firstSeat === undefined || isSeat(m.firstSeat))) {
         return { ok: true, msg: obj as TurnPassMessage }
       }
       return { ok: false, reason: 'malformed' }
@@ -728,13 +736,41 @@ export function isValidRoomCode(code: string): boolean {
 
 // --- internal validators -----------------------------------------------------
 
+// Size limits on everything a peer can send. Anyone holding the room code can join, so a peer is
+// not trusted to be well-behaved: without these, one oversized board (a million cards, a
+// megabyte-long name, a card with ten thousand counters) froze every client it reached, and a
+// given card carrying it was autosaved and froze Playtest again on the next open. Each limit is
+// far above anything real play produces.
+/** Longest frame accepted at all, checked before JSON.parse does any work on it. */
+export const MAX_FRAME_CHARS = 512_000
+/** Ids (player, card instance, Scryfall, counter pile, pack), emoji, station and skin ids. */
+export const MAX_ID_CHARS = 128
+/** Free text: names, deck format, cube name, reasons. */
+export const MAX_TEXT_CHARS = 256
+/** Cards in any one zone or pile on a public board. */
+export const MAX_ZONE_CARDS = 500
+/** Counter piles on one card, and dice in one roll. */
+export const MAX_SMALL_LIST = 100
+/** Largest magnitude any number may have (life, positions, counters, dice). */
+export const MAX_ABS_NUMBER = 1_000_000_000
+
 // Exported for draftProtocol.ts's own validators to reuse rather than duplicate.
 export function isString(v: unknown): v is string {
-  return typeof v === 'string'
+  return typeof v === 'string' && v.length <= MAX_TEXT_CHARS
 }
 
 export function isNonEmptyString(v: unknown): v is string {
-  return typeof v === 'string' && v.length > 0
+  return typeof v === 'string' && v.length > 0 && v.length <= MAX_ID_CHARS
+}
+
+/** A real, bounded number — JSON can't carry NaN/Infinity, but it can carry 1e308. */
+export function isFiniteNumber(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= MAX_ABS_NUMBER
+}
+
+/** An array of at most `max` items, each passing `item`. */
+export function isBoundedArray<T>(v: unknown, max: number, item: (x: unknown) => x is T): v is T[] {
+  return Array.isArray(v) && v.length <= max && v.every(item)
 }
 
 export function isSeat(v: unknown): v is Seat {
@@ -769,21 +805,21 @@ function isCounterColor(v: unknown): v is CounterColor {
 function isCounterPile(v: unknown): v is CounterPile {
   if (typeof v !== 'object' || v === null) return false
   const p = v as Record<string, unknown>
-  return isNonEmptyString(p.id) && isCounterColor(p.color) && typeof p.value === 'number'
+  return isNonEmptyString(p.id) && isCounterColor(p.color) && isFiniteNumber(p.value)
 }
 
 function isCounterPileArray(v: unknown): v is CounterPile[] | undefined {
-  return v === undefined || (Array.isArray(v) && v.every(isCounterPile))
+  return v === undefined || isBoundedArray(v, MAX_SMALL_LIST, isCounterPile)
 }
 
 function isPtCounterPile(v: unknown): v is PtCounterPile {
   if (typeof v !== 'object' || v === null) return false
   const p = v as Record<string, unknown>
-  return isNonEmptyString(p.id) && isCounterColor(p.color) && typeof p.power === 'number' && typeof p.toughness === 'number'
+  return isNonEmptyString(p.id) && isCounterColor(p.color) && isFiniteNumber(p.power) && isFiniteNumber(p.toughness)
 }
 
 function isPtCounterPileArray(v: unknown): v is PtCounterPile[] | undefined {
-  return v === undefined || (Array.isArray(v) && v.every(isPtCounterPile))
+  return v === undefined || isBoundedArray(v, MAX_SMALL_LIST, isPtCounterPile)
 }
 
 function isRollResult(v: unknown): v is RollResult {
@@ -791,7 +827,7 @@ function isRollResult(v: unknown): v is RollResult {
   const r = v as Record<string, unknown>
   if (r.kind === 'die') {
     if (typeof r.sides !== 'number' || typeof r.value !== 'number') return false
-    return r.values === undefined || (Array.isArray(r.values) && r.values.every((n) => typeof n === 'number'))
+    return r.values === undefined || isBoundedArray(r.values, MAX_SMALL_LIST, isFiniteNumber)
   }
   if (r.kind === 'coin') return r.value === 'heads' || r.value === 'tails'
   return false
@@ -803,8 +839,8 @@ function isPublicCard(v: unknown): v is PublicCard {
   return (
     isNonEmptyString(c.instanceId) &&
     isNonEmptyString(c.scryfallId) &&
-    typeof c.x === 'number' &&
-    typeof c.y === 'number' &&
+    isFiniteNumber(c.x) &&
+    isFiniteNumber(c.y) &&
     typeof c.tapped === 'boolean' &&
     isCounterPileArray(c.counters) &&
     isPtCounterPileArray(c.ptCounters) &&
@@ -823,8 +859,8 @@ function isGivenCard(v: unknown): v is GivenCard {
     isNonEmptyString(c.instanceId) &&
     isNonEmptyString(c.scryfallId) &&
     isSeat(c.ownerSeat) &&
-    typeof c.x === 'number' &&
-    typeof c.y === 'number' &&
+    isFiniteNumber(c.x) &&
+    isFiniteNumber(c.y) &&
     typeof c.tapped === 'boolean' &&
     isCounterPileArray(c.counters) &&
     isPtCounterPileArray(c.ptCounters) &&
@@ -832,7 +868,7 @@ function isGivenCard(v: unknown): v is GivenCard {
     (c.isToken === undefined || typeof c.isToken === 'boolean') &&
     (c.faceDown === undefined || typeof c.faceDown === 'boolean') &&
     (c.isCommander === undefined || typeof c.isCommander === 'boolean') &&
-    (c.commanderTax === undefined || typeof c.commanderTax === 'number')
+    (c.commanderTax === undefined || isFiniteNumber(c.commanderTax))
   )
 }
 
@@ -847,20 +883,20 @@ function isPublicPileCard(v: unknown): v is PublicPileCard {
 }
 
 function isOptionalPile(v: unknown): v is PublicPileCard[] | undefined {
-  return v === undefined || (Array.isArray(v) && v.every(isPublicPileCard))
+  return v === undefined || isBoundedArray(v, MAX_ZONE_CARDS, isPublicPileCard)
 }
 
 function isFloatingMana(v: unknown): v is Partial<Record<ManaColorKey, number>> | undefined {
   if (v === undefined) return true
   if (typeof v !== 'object' || v === null) return false
   const m = v as Record<string, unknown>
-  return Object.keys(m).every((key) => (MANA_COLOR_KEYS as readonly string[]).includes(key) && typeof m[key] === 'number')
+  return Object.keys(m).every((key) => (MANA_COLOR_KEYS as readonly string[]).includes(key) && isFiniteNumber(m[key]))
 }
 
 function isCommanderDamage(v: unknown): v is Partial<Record<Seat, number>> {
   if (typeof v !== 'object' || v === null) return false
   const m = v as Record<string, unknown>
-  return Object.keys(m).every((key) => isSeat(Number(key)) && typeof m[key] === 'number')
+  return Object.keys(m).every((key) => isSeat(Number(key)) && isFiniteNumber(m[key]))
 }
 
 function isPublicBoard(v: unknown): v is PublicBoard {
@@ -870,20 +906,19 @@ function isPublicBoard(v: unknown): v is PublicBoard {
     isNonEmptyString(b.playerId) &&
     isString(b.name) &&
     isSeat(b.seat) &&
-    typeof b.life === 'number' &&
-    (b.startingLife === undefined || typeof b.startingLife === 'number') &&
+    isFiniteNumber(b.life) &&
+    (b.startingLife === undefined || isFiniteNumber(b.startingLife)) &&
     isCommanderDamage(b.commanderDamage) &&
-    typeof b.poison === 'number' &&
-    typeof b.handCount === 'number' &&
-    Array.isArray(b.battlefield) &&
-    b.battlefield.every(isPublicCard) &&
+    isFiniteNumber(b.poison) &&
+    isFiniteNumber(b.handCount) &&
+    isBoundedArray(b.battlefield, MAX_ZONE_CARDS, isPublicCard) &&
     isOptionalPile(b.graveyard) &&
     isOptionalPile(b.exile) &&
     isOptionalPile(b.command) &&
     isOptionalPile(b.commanders) &&
     isOptionalPile(b.hand) &&
     (b.topOfLibrary === undefined || isPublicPileCard(b.topOfLibrary)) &&
-    (b.battlefieldSkin === undefined || typeof b.battlefieldSkin === 'string') &&
+    (b.battlefieldSkin === undefined || isString(b.battlefieldSkin)) &&
     (b.scooped === undefined || typeof b.scooped === 'boolean') &&
     isFloatingMana(b.floatingMana)
   )

@@ -10,7 +10,7 @@
  * ready, no lockstep), which maps directly onto this app's existing directed-message convention
  * (GIVE_CARD/RELOCATE_CARD/etc., guest->host->target).
  */
-import { isNonEmptyString, isSeat, isString, type Seat } from './protocol'
+import { MAX_ZONE_CARDS, isBoundedArray, isFiniteNumber, isNonEmptyString, isSeat, isString, type Seat } from './protocol'
 
 export type DraftConfigPayload = { cubeId: string; cubeName: string; packSize: number; packsPerPlayer: number }
 
@@ -63,7 +63,7 @@ export type DraftParseResult = { ok: true; msg: DraftMessage } | { ok: false; re
 function isDraftConfigPayload(v: unknown): v is DraftConfigPayload {
   if (typeof v !== 'object' || v === null) return false
   const c = v as Record<string, unknown>
-  return isNonEmptyString(c.cubeId) && isString(c.cubeName) && typeof c.packSize === 'number' && typeof c.packsPerPlayer === 'number'
+  return isNonEmptyString(c.cubeId) && isString(c.cubeName) && isFiniteNumber(c.packSize) && isFiniteNumber(c.packsPerPlayer)
 }
 
 function isSeatKeyedMap(v: unknown, isValue: (value: unknown) => boolean): boolean {
@@ -86,9 +86,8 @@ export function parseDraftMessage(m: Record<string, unknown>): DraftParseResult 
       if (
         isNonEmptyString(m.toPlayerId) &&
         isNonEmptyString(m.packId) &&
-        typeof m.round === 'number' &&
-        Array.isArray(m.cards) &&
-        m.cards.every(isString)
+        isFiniteNumber(m.round) &&
+        isBoundedArray(m.cards, MAX_ZONE_CARDS, isNonEmptyString)
       ) {
         return { ok: true, msg: m as DraftPackMessage }
       }
@@ -102,12 +101,12 @@ export function parseDraftMessage(m: Record<string, unknown>): DraftParseResult 
       }
       return { ok: false, reason: 'malformed' }
     case 'DRAFT_ROUND_COMPLETE':
-      if (typeof m.round === 'number') return { ok: true, msg: m as DraftRoundCompleteMessage }
+      if (isFiniteNumber(m.round)) return { ok: true, msg: m as DraftRoundCompleteMessage }
       return { ok: false, reason: 'malformed' }
     case 'DRAFT_COMPLETE':
       return { ok: true, msg: m as DraftCompleteMessage }
     case 'DRAFT_PROGRESS':
-      if (isSeatKeyedMap(m.picksBySeat, (v) => typeof v === 'number')) return { ok: true, msg: m as DraftProgressMessage }
+      if (isSeatKeyedMap(m.picksBySeat, (v) => isFiniteNumber(v))) return { ok: true, msg: m as DraftProgressMessage }
       return { ok: false, reason: 'malformed' }
     default:
       return { ok: false, reason: 'malformed' }
