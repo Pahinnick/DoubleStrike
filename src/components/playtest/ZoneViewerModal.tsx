@@ -18,6 +18,8 @@ type Props = {
   searchable?: boolean
   /** Display only (no move buttons) — used for viewing an opponent's graveyard/exile in a pod. */
   readOnly?: boolean
+  /** The zone being shown, so its rows don't offer moving a card to where it already is. */
+  zone?: GameZone
 }
 
 function matchesQuery(entry: Entry, query: string): boolean {
@@ -28,7 +30,17 @@ function matchesQuery(entry: Entry, query: string): boolean {
   return name.toLowerCase().includes(q) || typeLine.toLowerCase().includes(q)
 }
 
-function ZoneViewerRow({ entry, onMove }: { entry: Entry; onMove?: Props['onMove'] }) {
+/** Where a card in the viewer can be sent: every zone but the one it's already in. "Library"
+ *  puts it on top; "Field" plays it to a free spot. */
+const MOVE_TARGETS: { zone: GameZone; label: string; title?: string }[] = [
+  { zone: 'hand', label: 'Hand' },
+  { zone: 'battlefield', label: 'Field' },
+  { zone: 'graveyard', label: 'Graveyard' },
+  { zone: 'exile', label: 'Exile' },
+  { zone: 'library', label: 'Library', title: 'Put on top of library' },
+]
+
+function ZoneViewerRow({ entry, onMove, zone }: { entry: Entry; onMove?: Props['onMove']; zone?: GameZone }) {
   const { gameCard, snapshot, foil } = entry
   const name = snapshot?.name ?? gameCard.scryfallId
   const image = snapshot ? getSnapshotImage(snapshot) : undefined
@@ -38,24 +50,17 @@ function ZoneViewerRow({ entry, onMove }: { entry: Entry; onMove?: Props['onMove
     <li className="zone-viewer__row" {...(snapshot ? hoverHandlers : {})}>
       {image ? <img src={image.small} alt="" /> : <span className="zone-viewer__img-placeholder" />}
       <span className="zone-viewer__name">{name}</span>
-      {onMove && (
-        <>
-          <button type="button" onClick={() => onMove(gameCard.instanceId, 'hand')}>
-            Hand
+      {onMove &&
+        MOVE_TARGETS.filter((t) => t.zone !== zone).map((t) => (
+          <button key={t.zone} type="button" title={t.title} onClick={() => onMove(gameCard.instanceId, t.zone)}>
+            {t.label}
           </button>
-          <button type="button" onClick={() => onMove(gameCard.instanceId, 'battlefield')}>
-            Field
-          </button>
-          <button type="button" onClick={() => onMove(gameCard.instanceId, 'library')} title="Put on top of library">
-            Library
-          </button>
-        </>
-      )}
+        ))}
     </li>
   )
 }
 
-function ZoneViewerModal({ label, entries, onMove, onClose, note, searchable, readOnly }: Props) {
+function ZoneViewerModal({ label, entries, onMove, onClose, note, searchable, readOnly, zone }: Props) {
   useEscapeToClose(onClose)
   const [query, setQuery] = useState('')
   const filtered = searchable ? entries.filter((entry) => matchesQuery(entry, query)) : entries
@@ -82,7 +87,7 @@ function ZoneViewerModal({ label, entries, onMove, onClose, note, searchable, re
         {entries.length > 0 && filtered.length === 0 && <p className="search-status">No matches.</p>}
         <ul className="zone-viewer__list">
           {filtered.map((entry) => (
-            <ZoneViewerRow key={entry.gameCard.instanceId} entry={entry} onMove={rowMove} />
+            <ZoneViewerRow key={entry.gameCard.instanceId} entry={entry} onMove={rowMove} zone={zone} />
           ))}
         </ul>
         <button type="button" onClick={onClose}>

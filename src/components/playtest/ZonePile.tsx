@@ -1,11 +1,12 @@
-import type { DragEvent, ReactNode } from 'react'
+import type { DragEvent, MouseEvent, ReactNode } from 'react'
 import { getGameDragData, type DraggedGameCard } from './dragGameCard'
 
 type Props = {
   label: string
   count: number
   onClick?: () => void
-  onContextMenu?: () => void
+  /** Right-click: the zone's own action menu (see PlaytestView's zoneActions), opened at the click. */
+  onContextMenu?: (event: MouseEvent) => void
   onDropCard?: (data: DraggedGameCard) => void
   /** Currently only wired up for the library pile — see PlaytestView's libraryHovered, which the
    *  F-key "flip top of library" shortcut targets the same way Delete targets hoveredInstanceId. */
@@ -42,7 +43,7 @@ function ZonePile({ label, count, onClick, onContextMenu, onDropCard, onMouseEnt
           onContextMenu
             ? (event) => {
                 event.preventDefault()
-                onContextMenu()
+                onContextMenu(event)
               }
             : undefined
         }

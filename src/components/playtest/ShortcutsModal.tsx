@@ -30,7 +30,9 @@ const MOUSE_SHORTCUTS: Shortcut[] = [
   { keys: 'Alt + click a card', description: 'Flash-highlight that card for everyone in the pod' },
   { keys: 'Shift + click a card', description: 'Add/remove it from the multi-select group' },
   { keys: 'Click a card in the current multi-selection', description: 'Tap/untap the whole selection together (same as the T shortcut)' },
-  { keys: 'Shift + drag empty battlefield', description: 'Marquee-select every card in the box' },
+  { keys: 'Shift + drag empty battlefield', description: 'Box-select every card in the box, hand cards included' },
+  { keys: 'Shift + click a card', description: 'Add it to (or take it out of) the selection, on the battlefield or in hand' },
+  { keys: 'Right-click your library, graveyard or exile', description: "That zone's actions: draw, scry, mill, exile X, dredge, shuffle in, search, and more" },
   { keys: 'Right-click empty battlefield', description: 'Create a token at that point' },
   { keys: 'Right-click a card', description: 'Open its actions menu (tap, counters, flip, etc.)' },
   {

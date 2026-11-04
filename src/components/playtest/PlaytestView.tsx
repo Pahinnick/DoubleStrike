@@ -92,7 +92,8 @@ import './playtest.css'
 // ever more than two (e.g. a Background pairing, though 2 is the realistic max today).
 const COMMANDER_TAX_COLORS = ['var(--color-w)', 'var(--color-u)', 'var(--color-r)', 'var(--color-g)']
 
-const SCRY_SURVEIL_COUNTS = [1, 2, 3, 4, 5]
+/** The piles with a right-click action menu (see zoneActions). */
+type PileZone = 'library' | 'graveyard' | 'exile'
 const DIE_SIZES = [4, 6, 8, 10, 12, 20, 100]
 // Newest-first cap on the shared roll log so it doesn't grow unbounded over a long session.
 const ROLL_LOG_LIMIT = 8
@@ -897,7 +898,15 @@ function PlaytestView({ onClose }: Props) {
   // Separate from `contextMenu` above (which looks its card up in `battlefield`) since this one
   // looks its card up in `hand` instead — see handCardActions.
   const [handContextMenu, setHandContextMenu] = useState<{ instanceId: string; x: number; y: number } | null>(null)
-  const [countPrompt, setCountPrompt] = useState<{ mode: 'scry' | 'surveil' | 'cascade' | 'dice' | 'bottom' | 'reveal' | 'mill' | 'exile-top'; x: number; y: number } | null>(null)
+  // The Roll Die prompt; every count-asking zone action uses zoneCountAsk instead.
+  const [countPrompt, setCountPrompt] = useState<{ mode: 'dice'; x: number; y: number } | null>(null)
+  /** A zone pile's right-click menu (see zoneActions), open at the click. */
+  const [zoneMenu, setZoneMenu] = useState<{ zone: PileZone; x: number; y: number } | null>(null)
+  /** The "how many?" box an X action from a zone menu opens; `run` gets the number typed. */
+  const [zoneCountAsk, setZoneCountAsk] = useState<{ label: string; x: number; y: number; run: (count: number) => void } | null>(null)
+  /** Set while the graveyard viewer is open for Dredge N: sending a card to hand from it also
+   *  mills the top N of the library (see moveFromViewer). */
+  const [dredgeCount, setDredgeCount] = useState<number | null>(null)
   // Snapshot of instanceIds captured the moment "Look at top N" is confirmed — deliberately NOT a
   // live count, so dragging one of them away doesn't pull a new card into view to replace it (an
   // "exile the top 5" effect means exactly those 5, not "keep 5 visible as you remove them"). A
@@ -1957,6 +1966,14 @@ function PlaytestView({ onClose }: Props) {
   }
 
   function moveFromViewer(instanceId: string, toZone: GameZone) {
+    // Dredge: the card picked goes back to hand in place of a draw, and the top N are milled.
+    if (dredgeCount !== null && viewerZone === 'graveyard' && toZone === 'hand') {
+      dispatch({ type: 'MOVE_CARD', instanceId, toZone: 'hand' })
+      moveTopCards('library', 'graveyard', dredgeCount)
+      setDredgeCount(null)
+      setViewerZone(null)
+      return
+    }
     if (toZone === 'battlefield') {
       playToBattlefield(instanceId)
       return
@@ -1971,6 +1988,7 @@ function PlaytestView({ onClose }: Props) {
    *  table. The viewer's note text reminds them. */
   function closeViewer() {
     setViewerZone(null)
+    setDredgeCount(null)
   }
 
   /** Shuffles the library, with the cue — shared by the R shortcut and anything else that wants
@@ -1991,13 +2009,88 @@ function PlaytestView({ onClose }: Props) {
     setCountPrompt(null)
   }
 
-  /** Mill X / Exile Top X: the top `count` cards of the library go straight to the graveyard or
-   *  exile, face up, in library order (so the old top card ends up deepest in the pile). Asking for
-   *  more than the library holds just moves all of it. One undo step, like any other burst. */
-  function moveTopOfLibrary(toZone: 'graveyard' | 'exile', count: number) {
-    const moving = library.slice(0, Math.max(0, count))
-    for (const card of moving) dispatch({ type: 'MOVE_CARD', instanceId: card.instanceId, toZone })
-    setCountPrompt(null)
+  /** The top `count` cards of a pile, top first: the front of the library, and the newest end of
+   *  the graveyard and exile (the card shown on the pile). */
+  function topCardsOf(zone: PileZone, count: number) {
+    const cards = zoneCards(state, zone)
+    return (zone === 'library' ? cards : [...cards].reverse()).slice(0, Math.max(0, count))
+  }
+
+  /** The one step behind Mill X, Exile top X, Return top X to hand and the rest: the top `count`
+   *  cards of `from` go to `to`, top card first. Asking for more than the zone holds moves all of
+   *  it. One undo step, like any other burst. */
+  function moveTopCards(from: PileZone, to: GameZone, count: number, libraryPosition?: 'top' | 'bottom') {
+    for (const card of topCardsOf(from, count)) {
+      dispatch({ type: 'MOVE_CARD', instanceId: card.instanceId, toZone: to, libraryPosition })
+    }
+  }
+
+  /** Shuffles every card in `from` into the library (graveyard or exile, e.g. Elixir of Immortality). */
+  function shuffleZoneIntoLibrary(from: 'graveyard' | 'exile') {
+    const ids = zoneCards(state, from).map((c) => c.instanceId)
+    if (ids.length === 0) return
+    for (const instanceId of ids) dispatch({ type: 'MOVE_CARD', instanceId, toZone: 'library', libraryPosition: 'bottom' })
+    dispatch({ type: 'SHUFFLE_LIBRARY', shuffledOrder: shuffle([...library.map((c) => c.instanceId), ...ids]) })
+    playCue('shuffle')
+  }
+
+  /** A zone's right-click menu. Named the way the game names them (mill, exile X, dredge...),
+   *  though most are the same "move the top X somewhere" step underneath. X actions ask for the
+   *  number first, in a box opened where the menu was. The library's own cards stay hidden until
+   *  the player picks "Search library". */
+  function zoneActions(zone: PileZone, x: number, y: number): ContextMenuAction[] {
+    const ask = (label: string, run: (count: number) => void) => () => setZoneCountAsk({ label, x, y, run })
+    if (zone === 'library') {
+      return [
+        { label: 'Draw X…', onSelect: ask('Draw how many?', (n) => { dispatch({ type: 'DRAW', count: n, toSide: handDrawSide }); playCue('draw') }) },
+        { label: 'Scry X…', onSelect: ask('Scry how many?', (n) => startScryOrSurveil('scry', n)) },
+        { label: 'Surveil X…', onSelect: ask('Surveil how many?', (n) => startScryOrSurveil('surveil', n)) },
+        { label: 'Mill X…', onSelect: ask('Mill how many?', (n) => moveTopCards('library', 'graveyard', n)) },
+        { label: 'Exile top X…', onSelect: ask('Exile how many?', (n) => moveTopCards('library', 'exile', n)) },
+        { label: 'Look at top X…', onSelect: ask('Look at how many?', (n) => startRevealTop(n)) },
+        { label: 'Put top X on the bottom…', onSelect: ask('Bottom how many?', (n) => moveTopCards('library', 'library', n, 'bottom')) },
+        { label: 'View bottom X…', onSelect: ask('View how many?', (n) => openBottomViewer(n)) },
+        { label: 'Cascade…', onSelect: ask('Mana value', (n) => startCascade(n)) },
+        {
+          label: state.revealTopOfLibrary ? 'Stop looking at top card' : 'Look at top card',
+          onSelect: () => dispatch({ type: 'TOGGLE_REVEAL_TOP' }),
+        },
+        {
+          label: state.revealTopToPod ? 'Hide top card from table' : 'Reveal top card to table',
+          onSelect: () => dispatch({ type: 'TOGGLE_REVEAL_TOP_TO_POD' }),
+        },
+        {
+          label: 'Shuffle',
+          onSelect: () => {
+            dispatch({ type: 'SHUFFLE_LIBRARY', shuffledOrder: shuffle(library.map((c) => c.instanceId)) })
+            playCue('shuffle')
+          },
+        },
+        { label: 'Search library (show cards)', onSelect: () => setViewerZone('library') },
+      ]
+    }
+    if (zone === 'graveyard') {
+      return [
+        { label: 'View graveyard', onSelect: () => setViewerZone('graveyard') },
+        { label: 'Exile top X…', onSelect: ask('Exile how many?', (n) => moveTopCards('graveyard', 'exile', n)) },
+        { label: 'Exile graveyard', onSelect: () => moveTopCards('graveyard', 'exile', graveyard.length) },
+        { label: 'Return top X to hand…', onSelect: ask('Return how many?', (n) => moveTopCards('graveyard', 'hand', n)) },
+        {
+          label: 'Dredge X…',
+          onSelect: ask('Dredge how many?', (n) => {
+            setDredgeCount(n)
+            setViewerZone('graveyard')
+          }),
+        },
+        { label: 'Shuffle graveyard into library', onSelect: () => shuffleZoneIntoLibrary('graveyard') },
+      ]
+    }
+    return [
+      { label: 'View exile', onSelect: () => setViewerZone('exile') },
+      { label: 'Return top X to hand…', onSelect: ask('Return how many?', (n) => moveTopCards('exile', 'hand', n)) },
+      { label: 'Put top X into graveyard…', onSelect: ask('How many?', (n) => moveTopCards('exile', 'graveyard', n)) },
+      { label: 'Shuffle exile into library', onSelect: () => shuffleZoneIntoLibrary('exile') },
+    ]
   }
 
   function startScryOrSurveil(mode: 'scry' | 'surveil', count: number) {
@@ -2919,58 +3012,17 @@ function PlaytestView({ onClose }: Props) {
   const exileTop = topOf(exile)
   const commandTop = topOf(command)
 
+  // Only what isn't about a zone's cards: everything that works on the library, graveyard or
+  // exile is on that pile's right-click menu instead (see zoneActions).
   const trayActions: TrayAction[] = [
-    { key: 'scry', label: 'Scry', icon: '🔮', onClick: (event) => setCountPrompt({ mode: 'scry', x: event.clientX, y: event.clientY }) },
-    { key: 'surveil', label: 'Surveil', icon: '👀', onClick: (event) => setCountPrompt({ mode: 'surveil', x: event.clientX, y: event.clientY }) },
-    { key: 'cascade', label: 'Cascade', icon: '🌊', onClick: (event) => setCountPrompt({ mode: 'cascade', x: event.clientX, y: event.clientY }) },
-    {
-      key: 'peek-top',
-      label: 'Look at Top N',
-      icon: '🔎',
-      onClick: (event) => setCountPrompt({ mode: 'reveal', x: event.clientX, y: event.clientY }),
-    },
-    { key: 'mill', label: 'Mill X', icon: '🪦', onClick: (event) => setCountPrompt({ mode: 'mill', x: event.clientX, y: event.clientY }) },
-    { key: 'exile-top', label: 'Exile Top X', icon: '🌀', onClick: (event) => setCountPrompt({ mode: 'exile-top', x: event.clientX, y: event.clientY }) },
-    { key: 'tutor', label: 'Tutor', icon: '🔍', onClick: () => setViewerZone('library') },
     { key: 'tokens', label: 'Create Token', icon: '⭐', onClick: () => setTokenPickerOpen(true) },
     { key: 'dice', label: 'Roll Die', icon: '🎲', onClick: (event) => setCountPrompt({ mode: 'dice', x: event.clientX, y: event.clientY }) },
     { key: 'coin', label: 'Flip Coin', icon: '🪙', onClick: () => flipCoin() },
-    // Magic's two top-of-library effects are separate, so these are two separate toggles, named
-    // with the game's own vocabulary: "look at" is private to you, "reveal" is open information
-    // for the whole table. See GameState.revealTopOfLibrary / revealTopToPod.
-    {
-      key: 'look-at-top',
-      label: state.revealTopOfLibrary ? 'Stop Looking at Top Card' : 'Look at Top Card',
-      icon: state.revealTopOfLibrary ? '🙈' : '👁',
-      onClick: () => dispatch({ type: 'TOGGLE_REVEAL_TOP' }),
-    },
-    {
-      key: 'reveal-top',
-      label: state.revealTopToPod ? 'Hide Top Card from Table' : 'Reveal Top Card to Table',
-      icon: state.revealTopToPod ? '🔒' : '🔎',
-      onClick: () => dispatch({ type: 'TOGGLE_REVEAL_TOP_TO_POD' }),
-    },
     {
       key: 'reveal-hand',
       label: state.revealHand ? 'Hide Hand' : 'Reveal Hand',
       icon: state.revealHand ? '🤜' : '🖐️',
       onClick: () => dispatch({ type: 'TOGGLE_REVEAL_HAND' }),
-    },
-    {
-      key: 'bottom',
-      label: 'View Bottom',
-      icon: '📚',
-      onClick: (event) => setCountPrompt({ mode: 'bottom', x: event.clientX, y: event.clientY }),
-    },
-    {
-      key: 'shuffle',
-      label: 'Shuffle Library',
-      icon: '🔀',
-      tutorialId: 'action-shuffle-library',
-      onClick: () => {
-        dispatch({ type: 'SHUFFLE_LIBRARY', shuffledOrder: shuffle(library.map((c) => c.instanceId)) })
-        playCue('shuffle')
-      },
     },
   ]
 
@@ -3785,7 +3837,7 @@ function PlaytestView({ onClose }: Props) {
             tutorialId="library-pile"
             count={library.length}
             onClick={library.length > 0 ? handleDraw : undefined}
-            onContextMenu={library.length > 0 ? () => setViewerZone('library') : undefined}
+            onContextMenu={(event) => setZoneMenu({ zone: 'library', x: event.clientX, y: event.clientY })}
             // Cards dragged in from hand (e.g. putting back mulligan discards) go to the bottom —
             // dropping them on top would hand the player free knowledge of their next draw.
             // Battlefield cards returned to the library (an explicit "put on top" effect) keep
@@ -3820,6 +3872,7 @@ function PlaytestView({ onClose }: Props) {
             label="Graveyard"
             count={graveyard.length}
             onClick={() => setViewerZone('graveyard')}
+            onContextMenu={(event) => setZoneMenu({ zone: 'graveyard', x: event.clientX, y: event.clientY })}
             onDropCard={dropToZone('graveyard')}
           >
             {graveyardTop && (
@@ -3831,7 +3884,13 @@ function PlaytestView({ onClose }: Props) {
               />
             )}
           </ZonePile>
-          <ZonePile label="Exile" count={exile.length} onClick={() => setViewerZone('exile')} onDropCard={dropToZone('exile')}>
+          <ZonePile
+            label="Exile"
+            count={exile.length}
+            onClick={() => setViewerZone('exile')}
+            onContextMenu={(event) => setZoneMenu({ zone: 'exile', x: event.clientX, y: event.clientY })}
+            onDropCard={dropToZone('exile')}
+          >
             {exileTop && (
               <PlaytestCard
                 gameCard={exileTop}
@@ -3998,8 +4057,29 @@ function PlaytestView({ onClose }: Props) {
           }))}
           onMove={moveFromViewer}
           onClose={closeViewer}
-          note={viewerZone === 'library' ? 'Searching your library means shuffling afterward — hover the library pile and press R.' : undefined}
+          zone={viewerZone}
+          note={
+            viewerZone === 'library'
+              ? 'Searching your library means shuffling afterward — hover the library pile and press R.'
+              : dredgeCount !== null && viewerZone === 'graveyard'
+                ? `Dredge ${dredgeCount}: press Hand on the card you're dredging. The top ${dredgeCount} of your library are milled when you do.`
+                : undefined
+          }
           searchable={viewerZone === 'library'}
+        />
+      )}
+
+      {zoneMenu && (
+        <CardContextMenu x={zoneMenu.x} y={zoneMenu.y} actions={zoneActions(zoneMenu.zone, zoneMenu.x, zoneMenu.y)} onClose={() => setZoneMenu(null)} />
+      )}
+
+      {zoneCountAsk && (
+        <NumberInputPrompt
+          x={zoneCountAsk.x}
+          y={zoneCountAsk.y}
+          label={zoneCountAsk.label}
+          onSubmit={zoneCountAsk.run}
+          onClose={() => setZoneCountAsk(null)}
         />
       )}
 
@@ -4095,77 +4175,18 @@ function PlaytestView({ onClose }: Props) {
         />
       )}
 
-      {countPrompt &&
-        (() => {
-          const mode = countPrompt.mode
-          if (mode === 'cascade') {
-            return (
-              <NumberInputPrompt
-                x={countPrompt.x}
-                y={countPrompt.y}
-                label="Mana value"
-                onSubmit={startCascade}
-                onClose={() => setCountPrompt(null)}
-              />
-            )
-          }
-          if (mode === 'mill' || mode === 'exile-top') {
-            return (
-              <NumberInputPrompt
-                x={countPrompt.x}
-                y={countPrompt.y}
-                label={mode === 'mill' ? 'Mill how many?' : 'Exile how many?'}
-                onSubmit={(count) => moveTopOfLibrary(mode === 'mill' ? 'graveyard' : 'exile', count)}
-                onClose={() => setCountPrompt(null)}
-              />
-            )
-          }
-          if (mode === 'dice') {
-            return (
-              <DiceRollPrompt
-                x={countPrompt.x}
-                y={countPrompt.y}
-                sizes={DIE_SIZES}
-                // d20 if the deck's dice are the usual ones, else whatever's listed first — the
-                // single most-reached-for die, so the common roll stays one click plus Roll.
-                defaultSides={DIE_SIZES.includes(20) ? 20 : DIE_SIZES[0]}
-                onRoll={(sides, count) => rollDie(sides, count)}
-                onClose={() => setCountPrompt(null)}
-              />
-            )
-          }
-          if (mode === 'bottom') {
-            return (
-              <CardContextMenu
-                x={countPrompt.x}
-                y={countPrompt.y}
-                actions={SCRY_SURVEIL_COUNTS.map((count) => ({ label: `Bottom ${count}`, onSelect: () => openBottomViewer(count) }))}
-                onClose={() => setCountPrompt(null)}
-              />
-            )
-          }
-          if (mode === 'reveal') {
-            return (
-              <CardContextMenu
-                x={countPrompt.x}
-                y={countPrompt.y}
-                actions={SCRY_SURVEIL_COUNTS.map((count) => ({ label: `Look at top ${count}`, onSelect: () => startRevealTop(count) }))}
-                onClose={() => setCountPrompt(null)}
-              />
-            )
-          }
-          return (
-            <CardContextMenu
-              x={countPrompt.x}
-              y={countPrompt.y}
-              actions={SCRY_SURVEIL_COUNTS.map((count) => ({
-                label: `${mode === 'scry' ? 'Scry' : 'Surveil'} ${count}`,
-                onSelect: () => startScryOrSurveil(mode, count),
-              }))}
-              onClose={() => setCountPrompt(null)}
-            />
-          )
-        })()}
+      {countPrompt && (
+        <DiceRollPrompt
+          x={countPrompt.x}
+          y={countPrompt.y}
+          sizes={DIE_SIZES}
+          // d20 if the deck's dice are the usual ones, else whatever's listed first — the
+          // single most-reached-for die, so the common roll stays one click plus Roll.
+          defaultSides={DIE_SIZES.includes(20) ? 20 : DIE_SIZES[0]}
+          onRoll={(sides, count) => rollDie(sides, count)}
+          onClose={() => setCountPrompt(null)}
+        />
+      )}
 
       {peek && (
         <LibraryPeekModal
