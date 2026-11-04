@@ -2983,6 +2983,18 @@
   transform: translateX(280px);
 }
 
+/* An open drawer's tab is lit in the accent colour (same fill as the Actions button), so it's
+   obvious at a glance which drawer is out and which tab closes it again. */
+.playtest__turn-order-tray.is-open .playtest__turn-order-tray-tab,
+.playtest__deck-tray.is-open .playtest__deck-tray-tab {
+  background-color: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg-app);
+  box-shadow:
+    2px 0 8px rgba(0, 0, 0, 0.35),
+    0 0 12px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
 .playtest__turn-order-tray-header {
   padding: 0.75rem 0.9rem 0.5rem;
   border-bottom: 1px solid var(--border-subtle);

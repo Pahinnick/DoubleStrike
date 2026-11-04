@@ -1593,7 +1593,9 @@ function PlaytestView({ onClose }: Props) {
   /** Staggered fill for cards played without an explicit drop point, with the
    *  row block centered horizontally on the canvas so early cards land near the
    *  middle of the view rather than off toward an edge. */
-  function autoPosition(): { x: number; y: number } {
+  /** `taken`: spots already handed out in this same batch (playing several cards at once), which
+   *  the battlefield doesn't show yet because nothing has re-rendered between the dispatches. */
+  function autoPosition(taken: { x: number; y: number }[] = []): { x: number; y: number } {
     const cols = 6
     const stepX = CARD_W_PX + 14
     const blockW = cols * stepX
@@ -1604,7 +1606,8 @@ function PlaytestView({ onClose }: Props) {
     // on top of the one already there, hiding it completely.
     const inOwnQuadrant = battlefield.filter((c) => c.atSeat === undefined)
     const isFree = (p: { x: number; y: number }) =>
-      !inOwnQuadrant.some((c) => Math.abs((c.x ?? 0) - p.x) < 12 && Math.abs((c.y ?? 0) - p.y) < 12)
+      !inOwnQuadrant.some((c) => Math.abs((c.x ?? 0) - p.x) < 12 && Math.abs((c.y ?? 0) - p.y) < 12) &&
+      !taken.some((t) => Math.abs(t.x - p.x) < 12 && Math.abs(t.y - p.y) < 12)
     const slotCount = cols * 6
     for (let n = 0; n < slotCount; n++) {
       const candidate = slot(n)
@@ -1620,6 +1623,44 @@ function PlaytestView({ onClose }: Props) {
     const { x, y } = autoPosition()
     dispatch({ type: 'MOVE_CARD', instanceId, toZone: 'battlefield', x, y })
     playCue('play-card')
+  }
+
+  /** Plays several hand cards at once, each to its own free spot, and drops the selection. */
+  function playManyToBattlefield(instanceIds: string[]) {
+    const taken: { x: number; y: number }[] = []
+    for (const instanceId of instanceIds) {
+      const spot = autoPosition(taken)
+      taken.push(spot)
+      dispatch({ type: 'MOVE_CARD', instanceId, toZone: 'battlefield', x: spot.x, y: spot.y })
+    }
+    setSelectedIds(new Set())
+    playCue('play-card')
+  }
+
+  /** Shift+click on a card (battlefield or hand): add it to, or take it out of, the selection. */
+  function toggleSelected(instanceId: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(instanceId)) next.delete(instanceId)
+      else next.add(instanceId)
+      return next
+    })
+  }
+
+  /** Clicking a hand card plays it. Shift+click selects it instead, and clicking any card of a
+   *  multi-card hand selection plays the whole selection, the hand's version of clicking a
+   *  selected battlefield card tapping the group. */
+  function handleHandCardClick(instanceId: string, event: ReactMouseEvent) {
+    if (event.shiftKey) {
+      toggleSelected(instanceId)
+      return
+    }
+    const selectedInHand = hand.filter((c) => selectedIds.has(c.instanceId)).map((c) => c.instanceId)
+    if (selectedInHand.length > 1 && selectedIds.has(instanceId)) {
+      playManyToBattlefield(selectedInHand)
+      return
+    }
+    playToBattlefield(instanceId)
   }
 
   /** Like playToBattlefield, but hides the card's identity from opponents from the moment it
@@ -1674,12 +1715,7 @@ function PlaytestView({ onClose }: Props) {
       particlesRef.current?.burst(burstPoint.x, burstPoint.y, 9)
     }
     if (event.shiftKey) {
-      setSelectedIds((prev) => {
-        const next = new Set(prev)
-        if (next.has(gameCard.instanceId)) next.delete(gameCard.instanceId)
-        else next.add(gameCard.instanceId)
-        return next
-      })
+      toggleSelected(gameCard.instanceId)
       return
     }
     if (selectedIds.size > 1 && selectedIds.has(gameCard.instanceId)) {
@@ -2220,6 +2256,12 @@ function PlaytestView({ onClose }: Props) {
         } else {
           // Playing straight from hand onto someone else's quadrant — same "still ours" rule.
           dispatch({ type: 'MOVE_CARD', instanceId: card.instanceId, toZone: 'battlefield', x: local.x, y: local.y, atSeat })
+          for (const g of data.groupOffsets ?? []) {
+            if (!hand.some((c) => c.instanceId === g.instanceId)) continue
+            const memberLocal = clampToCanvas(surfaceX - targetOrigin.x + g.dx, surfaceY - targetOrigin.y + g.dy)
+            dispatch({ type: 'MOVE_CARD', instanceId: g.instanceId, toZone: 'battlefield', x: memberLocal.x, y: memberLocal.y, atSeat })
+          }
+          if (data.groupOffsets?.length) setSelectedIds(new Set())
           playCue('play-card')
         }
         return
@@ -2238,6 +2280,12 @@ function PlaytestView({ onClose }: Props) {
       }
     } else {
       dispatch({ type: 'MOVE_CARD', instanceId: data.instanceId, toZone: 'battlefield', x, y })
+      // A multi-card hand selection lands as a row, keeping the layout the preview showed.
+      for (const g of data.groupOffsets ?? []) {
+        const member = clampToCanvas(surfaceX - myOrigin.x + g.dx, surfaceY - myOrigin.y + g.dy)
+        dispatch({ type: 'MOVE_CARD', instanceId: g.instanceId, toZone: 'battlefield', x: member.x, y: member.y })
+      }
+      if (data.groupOffsets?.length) setSelectedIds(new Set())
       playCue('play-card')
     }
   }
@@ -2329,6 +2377,9 @@ function PlaytestView({ onClose }: Props) {
       const start = surfacePointAt(event.clientX, event.clientY)
       if (!start) return
       setMarquee({ x1: start.x, y1: start.y, x2: start.x, y2: start.y })
+      // The hand floats over the table in screen space, so its cards are tested against the
+      // box's screen rectangle rather than the table-space one.
+      const startClient = { x: event.clientX, y: event.clientY }
 
       function onMove(moveEvent: globalThis.MouseEvent) {
         const point = surfacePointAt(moveEvent.clientX, moveEvent.clientY)
@@ -2337,6 +2388,19 @@ function PlaytestView({ onClose }: Props) {
       function onUp(upEvent: globalThis.MouseEvent) {
         window.removeEventListener('mousemove', onMove)
         window.removeEventListener('mouseup', onUp)
+        const box = {
+          left: Math.min(startClient.x, upEvent.clientX),
+          right: Math.max(startClient.x, upEvent.clientX),
+          top: Math.min(startClient.y, upEvent.clientY),
+          bottom: Math.max(startClient.y, upEvent.clientY),
+        }
+        const handHits = [...document.querySelectorAll<HTMLElement>('.playtest__hand-card[data-instance-id]')]
+          .filter((el) => {
+            const r = el.getBoundingClientRect()
+            return r.left < box.right && r.right > box.left && r.top < box.bottom && r.bottom > box.top
+          })
+          .map((el) => el.dataset.instanceId!)
+        if (handHits.length > 0) setSelectedIds((prevSel) => new Set([...prevSel, ...handHits]))
         const end = surfacePointAt(upEvent.clientX, upEvent.clientY)
         setMarquee((prev) => {
           if (!prev) return null
@@ -2419,8 +2483,16 @@ function PlaytestView({ onClose }: Props) {
         }
         return
       }
-      dispatch({ type: 'MOVE_CARD', instanceId: data.instanceId, toZone, libraryPosition })
+      // The whole selection goes, not just the card that was grabbed.
+      const ids = draggedIds(data)
+      for (const instanceId of ids) dispatch({ type: 'MOVE_CARD', instanceId, toZone, libraryPosition })
+      if (ids.length > 1) setSelectedIds(new Set())
     }
+  }
+
+  /** The grabbed card plus every selected card riding along with it (see groupOffsets). */
+  function draggedIds(data: DraggedGameCard): string[] {
+    return [data.instanceId, ...(data.groupOffsets ?? []).map((g) => g.instanceId)]
   }
 
   /** Right-clicking ANOTHER player's battlefield card — a one-item menu offering to make your
@@ -3827,18 +3899,22 @@ function PlaytestView({ onClose }: Props) {
             if (mpActive) returnRemoteCard(data.fromPlayerId, data.instanceId, 'hand')
             return
           }
+          // Every selected card riding along with the grabbed one comes too.
+          const moving = new Set(draggedIds(data))
           if (data.fromZone !== 'hand') {
-            dispatch({ type: 'MOVE_CARD', instanceId: data.instanceId, toZone: 'hand' })
+            for (const instanceId of moving) dispatch({ type: 'MOVE_CARD', instanceId, toZone: 'hand' })
+            if (moving.size > 1) setSelectedIds(new Set())
             return
           }
           // Reordering within the hand itself (distinct from playing a card in from elsewhere,
           // handled above) — insertion index comes from where the cursor sits relative to the
-          // OTHER hand cards' midpoints (the dragged card's own element is excluded from that
-          // comparison so its rect, mid-drag, can't skew where it lands).
-          const draggedCard = hand.find((c) => c.instanceId === data.instanceId)
-          if (!draggedCard) return
+          // OTHER hand cards' midpoints (the dragged cards' own elements are excluded from that
+          // comparison so their rects, mid-drag, can't skew where they land). A multi-card
+          // selection moves as one block, in hand order.
+          const block = hand.filter((c) => moving.has(c.instanceId))
+          if (block.length === 0) return
           const otherEls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('.playtest__hand-card')).filter(
-            (el) => el.dataset.instanceId !== data.instanceId,
+            (el) => !moving.has(el.dataset.instanceId ?? ''),
           )
           let insertIndex = otherEls.length
           for (let i = 0; i < otherEls.length; i++) {
@@ -3848,8 +3924,8 @@ function PlaytestView({ onClose }: Props) {
               break
             }
           }
-          const withoutDragged = hand.filter((c) => c.instanceId !== data.instanceId)
-          const reordered = [...withoutDragged.slice(0, insertIndex), draggedCard, ...withoutDragged.slice(insertIndex)]
+          const withoutDragged = hand.filter((c) => !moving.has(c.instanceId))
+          const reordered = [...withoutDragged.slice(0, insertIndex), ...block, ...withoutDragged.slice(insertIndex)]
           dispatch({ type: 'REORDER_HAND', orderedInstanceIds: reordered.map((c) => c.instanceId) })
         }}
       >
@@ -3869,6 +3945,17 @@ function PlaytestView({ onClose }: Props) {
               '--fan-lift': `${lift}px`,
               zIndex: i,
             } as CSSProperties
+            // Dragging one card of a multi-card hand selection brings the rest along, laid out
+            // in a row in hand order around the grabbed card (see handleBattlefieldDrop).
+            const isSelected = selectedIds.has(gameCard.instanceId)
+            const selectedInHand = isSelected ? hand.filter((c) => selectedIds.has(c.instanceId)) : []
+            const anchorIndex = selectedInHand.findIndex((c) => c.instanceId === gameCard.instanceId)
+            const handGroupOffsets =
+              selectedInHand.length > 1
+                ? selectedInHand
+                    .map((c, k) => ({ instanceId: c.instanceId, dx: (k - anchorIndex) * (CARD_W_PX + 10), dy: 0 }))
+                    .filter((g) => g.instanceId !== gameCard.instanceId)
+                : undefined
             return (
               <div
                 key={gameCard.instanceId}
@@ -3881,9 +3968,11 @@ function PlaytestView({ onClose }: Props) {
                 <PlaytestCard
                   gameCard={gameCard}
                   snapshot={snapshotFor(gameCard.scryfallId)}
-                  onClick={() => playToBattlefield(gameCard.instanceId)}
+                  onClick={(event) => handleHandCardClick(gameCard.instanceId, event)}
                   onContextMenu={(event) => setHandContextMenu({ instanceId: gameCard.instanceId, x: event.clientX, y: event.clientY })}
                   foil={foilFor(gameCard.scryfallId)}
+                  selected={isSelected}
+                  groupOffsets={handGroupOffsets}
                 />
                 {isFlippable(gameCard.scryfallId) && (
                   <FlipFaceButton showingBack={!!gameCard.showBackFace} onFlip={() => dispatch({ type: 'FLIP_CARD', instanceId: gameCard.instanceId })} />

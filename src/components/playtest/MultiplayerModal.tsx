@@ -38,6 +38,19 @@ function buildRoster(mySeat: Seat | null, myName: string, boards: PublicBoard[])
   return entries
 }
 
+/** Players connect straight to each other (WebRTC), so everyone in a pod — and the free public
+ *  PeerJS server that introduces them — can see each player's internet (IP) address. Nothing in
+ *  the app can hide that short of relaying all traffic, so it's said plainly before anyone hosts
+ *  or joins. Shared with the draft lobby, which connects the same way. */
+export function PrivacyNotice() {
+  return (
+    <p className="mp-privacy-notice">
+      <strong>Heads up:</strong> players connect directly to each other, so everyone in a game can see your internet (IP)
+      address, which shows roughly where you are. Only play with people you trust, or use a VPN to hide it.
+    </p>
+  )
+}
+
 function MultiplayerModal({
   status,
   statusDetail,
@@ -118,6 +131,7 @@ function MultiplayerModal({
                 Join Game
               </button>
             </form>
+            <PrivacyNotice />
           </div>
         )}
 

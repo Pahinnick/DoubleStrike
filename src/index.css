@@ -274,3 +274,16 @@ input[type='range'] {
   background: none;
   accent-color: var(--accent);
 }
+
+/* Multiplayer/draft privacy notice (see PrivacyNotice in MultiplayerModal.tsx). Global because
+   it shows in both the Playtest pod dialog and the draft lobby. */
+.mp-privacy-notice {
+  margin: 0.25rem 0 0;
+  padding: 0.5rem 0.65rem;
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  background-color: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--text-dim);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}

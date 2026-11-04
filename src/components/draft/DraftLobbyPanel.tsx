@@ -3,6 +3,7 @@ import { MAX_PLAYERS, isValidRoomCode, type Seat } from '../../net/protocol'
 import type { DraftSession } from '../../draft/useDraftSession'
 import { listCubes, loadCube } from '../../storage/cubeRepository'
 import type { CubeSummary } from '../../draft/types'
+import { PrivacyNotice } from '../playtest/MultiplayerModal'
 import './draft.css'
 
 type Props = {
@@ -89,6 +90,7 @@ function DraftLobbyPanel({ profileId, session, cubesVersion }: Props) {
             Join Draft
           </button>
         </form>
+        <PrivacyNotice />
       </div>
     )
   }
