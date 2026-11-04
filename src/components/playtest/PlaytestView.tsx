@@ -897,7 +897,7 @@ function PlaytestView({ onClose }: Props) {
   // Separate from `contextMenu` above (which looks its card up in `battlefield`) since this one
   // looks its card up in `hand` instead — see handCardActions.
   const [handContextMenu, setHandContextMenu] = useState<{ instanceId: string; x: number; y: number } | null>(null)
-  const [countPrompt, setCountPrompt] = useState<{ mode: 'scry' | 'surveil' | 'cascade' | 'dice' | 'bottom' | 'reveal'; x: number; y: number } | null>(null)
+  const [countPrompt, setCountPrompt] = useState<{ mode: 'scry' | 'surveil' | 'cascade' | 'dice' | 'bottom' | 'reveal' | 'mill' | 'exile-top'; x: number; y: number } | null>(null)
   // Snapshot of instanceIds captured the moment "Look at top N" is confirmed — deliberately NOT a
   // live count, so dragging one of them away doesn't pull a new card into view to replace it (an
   // "exile the top 5" effect means exactly those 5, not "keep 5 visible as you remove them"). A
@@ -1955,6 +1955,15 @@ function PlaytestView({ onClose }: Props) {
     setCountPrompt(null)
   }
 
+  /** Mill X / Exile Top X: the top `count` cards of the library go straight to the graveyard or
+   *  exile, face up, in library order (so the old top card ends up deepest in the pile). Asking for
+   *  more than the library holds just moves all of it. One undo step, like any other burst. */
+  function moveTopOfLibrary(toZone: 'graveyard' | 'exile', count: number) {
+    const moving = library.slice(0, Math.max(0, count))
+    for (const card of moving) dispatch({ type: 'MOVE_CARD', instanceId: card.instanceId, toZone })
+    setCountPrompt(null)
+  }
+
   function startScryOrSurveil(mode: 'scry' | 'surveil', count: number) {
     const entries: PeekEntry[] = library.slice(0, count).map((gameCard) => ({
       gameCard,
@@ -2848,6 +2857,8 @@ function PlaytestView({ onClose }: Props) {
       icon: '🔎',
       onClick: (event) => setCountPrompt({ mode: 'reveal', x: event.clientX, y: event.clientY }),
     },
+    { key: 'mill', label: 'Mill X', icon: '🪦', onClick: (event) => setCountPrompt({ mode: 'mill', x: event.clientX, y: event.clientY }) },
+    { key: 'exile-top', label: 'Exile Top X', icon: '🌀', onClick: (event) => setCountPrompt({ mode: 'exile-top', x: event.clientX, y: event.clientY }) },
     { key: 'tutor', label: 'Tutor', icon: '🔍', onClick: () => setViewerZone('library') },
     { key: 'tokens', label: 'Create Token', icon: '⭐', onClick: () => setTokenPickerOpen(true) },
     { key: 'dice', label: 'Roll Die', icon: '🎲', onClick: (event) => setCountPrompt({ mode: 'dice', x: event.clientX, y: event.clientY }) },
@@ -4005,6 +4016,17 @@ function PlaytestView({ onClose }: Props) {
                 y={countPrompt.y}
                 label="Mana value"
                 onSubmit={startCascade}
+                onClose={() => setCountPrompt(null)}
+              />
+            )
+          }
+          if (mode === 'mill' || mode === 'exile-top') {
+            return (
+              <NumberInputPrompt
+                x={countPrompt.x}
+                y={countPrompt.y}
+                label={mode === 'mill' ? 'Mill how many?' : 'Exile how many?'}
+                onSubmit={(count) => moveTopOfLibrary(mode === 'mill' ? 'graveyard' : 'exile', count)}
                 onClose={() => setCountPrompt(null)}
               />
             )
