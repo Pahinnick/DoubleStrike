@@ -297,6 +297,26 @@ What that establishes:
 - Scripted events exercise the app's handlers but not the browser's real drag-and-drop engine, and
   this test was two players, not four. Both remain untested.
 
+### Update: caught live, and fixed (2026-11-03)
+
+Reported again from a 4-player pod on 1.9.0: a guest played 41 cards and moved a large
+marquee-selected group; afterwards that guest, and then the host, could click but not drag (hand
+and battlefield alike), while the other two guests were fine. The stuck window was inspected live
+(the main process's Node inspector, then a read-only event recorder in the page):
+
+- dragstart on the card set `application/x-game-card` as usual;
+- dragenter, dragover and drop on the battlefield all arrived with an **empty DataTransfer**
+  (`types: []`); dragend back on the source still had the data;
+- so `getGameDragData` returned null and every drop was silently ignored. The landing outline still
+  showed because it reads the in-memory mirror, and the custom drag image no longer appeared.
+
+So it is Chromium's drag session, not game state or the network: drags still start, but their data
+never reaches the drop target for the rest of the window's life. Fix: `src/utils/inPageDrag.ts`
+keeps an in-page copy of every drag payload (cleared on the next dragstart and on dragend), and all
+three drag kinds (game cards, counter piles, deck-builder cards) fall back to it when a drop
+arrives with no types at all. Outside drops (files, links) always carry types, so they are never
+mistaken for it. What exactly puts Chromium into this state is still unknown.
+
 ### F9 debug snapshot (added to catch the freeze)
 
 Pressing **F9** anywhere in Playtest copies a JSON snapshot to the clipboard; if the clipboard

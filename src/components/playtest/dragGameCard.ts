@@ -1,5 +1,6 @@
 import type { DragEvent } from 'react'
 import type { GameZone } from '../../state/gameReducer'
+import { clearInPageDragData, getInPageDragData, peekInPageDragData, setInPageDragData } from '../../utils/inPageDrag'
 
 const GAME_DRAG_TYPE = 'application/x-game-card'
 
@@ -23,32 +24,23 @@ export type DraggedGameCard = {
   fromPlayerId?: string
 }
 
-// Browsers block reading dataTransfer.getData() during dragover (only drop/dragend can),
-// so a live landing-position preview can't use it. This in-memory mirror — fine since drags
-// never cross windows here — lets dragover handlers read the same payload synchronously.
-let currentDrag: DraggedGameCard | null = null
+// The payload also lives in an in-page copy (see utils/inPageDrag): dragover handlers read it for
+// the live landing preview, and a drop that Chromium delivers with an empty DataTransfer falls
+// back to it instead of being silently ignored.
 
 export function setGameDragData(event: DragEvent, data: DraggedGameCard): void {
-  event.dataTransfer.setData(GAME_DRAG_TYPE, JSON.stringify(data))
-  event.dataTransfer.effectAllowed = 'move'
-  currentDrag = data
+  setInPageDragData(event, GAME_DRAG_TYPE, data)
 }
 
 export function getGameDragData(event: DragEvent): DraggedGameCard | null {
-  const raw = event.dataTransfer.getData(GAME_DRAG_TYPE)
-  if (!raw) return null
-  try {
-    return JSON.parse(raw) as DraggedGameCard
-  } catch {
-    return null
-  }
+  return getInPageDragData<DraggedGameCard>(event, GAME_DRAG_TYPE)
 }
 
-/** For dragover-time previews only — see the comment above `currentDrag`. */
+/** For dragover-time previews only — getData() can't be read before the drop. */
 export function getCurrentDragData(): DraggedGameCard | null {
-  return currentDrag
+  return peekInPageDragData<DraggedGameCard>(GAME_DRAG_TYPE)
 }
 
 export function clearCurrentDragData(): void {
-  currentDrag = null
+  clearInPageDragData()
 }
