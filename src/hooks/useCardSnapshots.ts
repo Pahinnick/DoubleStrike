@@ -8,6 +8,14 @@ import { useProfileSettings } from './useProfileSettings'
 // though multiple components (DeckPanel, DeckStatsPanel, PlaytestView) call this hook.
 const refreshedIds = new Set<string>()
 
+// Every snapshot fetched this session, kept in memory regardless of the "cache card data" setting.
+// With that setting off nothing reaches IndexedDB, so without this fallback the effect below
+// re-running for any reason (the deck's id list changing — adding a card, switching decks) read
+// an empty disk cache, skipped every id already in `refreshedIds` as "fetched this session", and
+// replaced its state with a map missing all of them: cards went art-less for the rest of the
+// session. The in-memory copy is what "fetched this session" should have meant all along.
+const sessionSnapshots = new Map<string, CardSnapshot>()
+
 // A handful of bounded, increasingly spaced-out retry attempts for ids whose fetch didn't come
 // back — covers the "app launched before the network/Wi-Fi was actually ready" and "one
 // transient Scryfall blip" cases. Without this, nothing ever retried a failed id unless the
@@ -37,9 +45,11 @@ export function useCardSnapshots(ids: string[]): [Map<string, CardSnapshot>, () 
       const apply = async () => {
         if (cardCacheEnabled) await saveSnapshots(cards)
         if (cancelled) return
+        const fresh = cards.map(toSnapshot)
+        for (const snapshot of fresh) sessionSnapshots.set(snapshot.id, snapshot)
         setSnapshots((prev) => {
           const next = new Map(prev)
-          for (const card of cards) next.set(card.id, toSnapshot(card))
+          for (const snapshot of fresh) next.set(snapshot.id, snapshot)
           return next
         })
       }
@@ -85,8 +95,9 @@ export function useCardSnapshots(ids: string[]): [Map<string, CardSnapshot>, () 
       if (cancelled) return
       const map = new Map<string, CardSnapshot>()
       const idsToFetch: string[] = []
-      results.forEach((snapshot, index) => {
+      results.forEach((stored, index) => {
         const id = ids[index]
+        const snapshot = stored ?? sessionSnapshots.get(id)
         if (snapshot) {
           map.set(id, snapshot)
           if (isSnapshotStale(snapshot) && !refreshedIds.has(id)) idsToFetch.push(id)
@@ -126,9 +137,11 @@ export function useCardSnapshots(ids: string[]): [Map<string, CardSnapshot>, () 
     )
     if (cards.length === 0) return
     if (cardCacheEnabled) await saveSnapshots(cards)
+    const fresh = cards.map(toSnapshot)
+    for (const snapshot of fresh) sessionSnapshots.set(snapshot.id, snapshot)
     setSnapshots((prev) => {
       const next = new Map(prev)
-      for (const card of cards) next.set(card.id, toSnapshot(card))
+      for (const snapshot of fresh) next.set(snapshot.id, snapshot)
       return next
     })
   }

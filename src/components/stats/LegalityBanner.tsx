@@ -1,12 +1,12 @@
 import { computeDeckLegality, type DeckCardRef } from '../../engine/legality'
 import type { CardSnapshot } from '../../storage/cardCache'
 import { useJumpToCardContext } from '../../state/JumpToCardContext'
-import type { Format } from '../../utils/scryfallQuery'
+import type { DeckFormat } from '../../utils/scryfallQuery'
 
 type Props = {
   cards: DeckCardRef[]
   snapshots: Map<string, CardSnapshot>
-  format: Format | undefined
+  format: DeckFormat | undefined
 }
 
 function LegalityBanner({ cards, snapshots, format }: Props) {

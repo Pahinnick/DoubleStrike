@@ -440,3 +440,551 @@
   background-color: var(--bg-panel);
   flex-shrink: 0;
 }
+
+/* ---- Draft card tile (pack, pool, builder) -------------------------------------------- */
+
+.draft-card {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  overflow: hidden;
+  background: none;
+  line-height: 0;
+  transition: transform 0.1s ease;
+}
+
+.draft-card:not(:disabled):hover {
+  transform: translateY(-3px);
+}
+
+.draft-card img {
+  width: 100%;
+  display: block;
+  border-radius: 6px;
+}
+
+.draft-card__noimage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 5 / 7;
+  padding: 0.5rem;
+  background-color: var(--bg-panel-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  font-size: 0.75rem;
+  line-height: 1.25;
+  text-align: center;
+  color: var(--text);
+}
+
+.draft-card--foil {
+  box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.6);
+}
+
+.draft-card__badge {
+  position: absolute;
+  top: 6%;
+  right: 6%;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  background-color: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.pack-view__loading {
+  color: var(--text-dim);
+}
+
+.pack-view__pool-card .draft-card__noimage {
+  font-size: 0.6rem;
+  padding: 0.2rem;
+}
+
+/* ---- Lobby: tables of two -------------------------------------------------------------- */
+
+.draft-lobby--room {
+  max-width: 760px;
+}
+
+.draft-lobby__muted {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.draft-tables {
+  width: 100%;
+}
+
+.draft-tables__hint {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  margin: 0 0 0.6rem;
+}
+
+.draft-tables__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.75rem;
+}
+
+.draft-table {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.6rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background-color: var(--bg-panel);
+}
+
+.draft-table h3 {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.draft-seat {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.2rem;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background-color: var(--bg-panel-raised);
+  font-size: 0.85rem;
+}
+
+.draft-seat.is-self {
+  border-color: var(--accent);
+}
+
+.draft-seat.is-open {
+  border-style: dashed;
+  background-color: transparent;
+}
+
+.draft-seat__dot {
+  flex-shrink: 0;
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  border: 1px solid var(--border-subtle);
+}
+
+.draft-seat__label {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.draft-seat__name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.draft-seat__you {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
+.draft-seat__sit {
+  margin-left: auto;
+  padding: 0.2em 0.7em;
+  font-size: 0.8rem;
+}
+
+/* ---- Lobby: pack source --------------------------------------------------------------- */
+
+.draft-source-toggle {
+  display: inline-flex;
+  align-self: flex-start;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.draft-source-toggle button {
+  border: none;
+  border-radius: 0;
+  background-color: transparent;
+}
+
+.draft-source-toggle button.is-active {
+  background-color: var(--accent);
+  color: #fff;
+}
+
+.draft-set-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.draft-set-picker select {
+  width: 100%;
+  min-height: 12rem;
+}
+
+/* ---- Drafting progress ---------------------------------------------------------------- */
+
+.draft-progress-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.draft-progress li {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.draft-progress__table {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
+.draft-progress__direction {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}
+
+/* ---- Post-draft deck builder ---------------------------------------------------------- */
+
+.draft-builder {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.draft-builder__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+}
+
+.draft-builder__title {
+  flex: 1;
+  min-width: 240px;
+}
+
+.draft-builder__title h2 {
+  margin: 0 0 0.2rem;
+  font-size: 1.1rem;
+}
+
+.draft-builder__count {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0.35rem 0.9rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background-color: var(--bg-panel-raised);
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.draft-builder__count strong {
+  font-size: 1.2rem;
+  color: var(--color-r);
+}
+
+.draft-builder__count.is-ready strong {
+  color: var(--color-g);
+}
+
+.draft-builder__actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.25rem;
+  max-width: 22rem;
+}
+
+.draft-builder__go {
+  font-size: 1rem;
+  padding: 0.6rem 1.1rem;
+}
+
+.draft-builder__go-hint {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  text-align: right;
+}
+
+.draft-builder__section-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.draft-builder__lands {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 1rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background-color: var(--bg-panel);
+}
+
+.draft-basic {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+}
+
+.draft-basic button {
+  padding: 0.05em 0.55em;
+}
+
+.draft-basic__count {
+  min-width: 1.4em;
+  text-align: center;
+  font-weight: 700;
+}
+
+.draft-basic__pip {
+  width: 0.8rem;
+  height: 0.8rem;
+  border-radius: 50%;
+  border: 1px solid var(--border-subtle);
+}
+
+.draft-basic__pip--w { background-color: var(--color-w); }
+.draft-basic__pip--u { background-color: var(--color-u); }
+.draft-basic__pip--b { background-color: var(--color-b); }
+.draft-basic__pip--r { background-color: var(--color-r); }
+.draft-basic__pip--g { background-color: var(--color-g); }
+
+.draft-builder__deck,
+.draft-builder__pool {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.draft-curve {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(96px, 1fr));
+  gap: 0.6rem;
+  overflow-x: auto;
+  padding: 0.6rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background-color: var(--bg-panel);
+  min-height: 9rem;
+}
+
+.draft-curve__column {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.draft-curve__head {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  text-align: center;
+}
+
+/* Cards stack with only their title bar showing, like a pile on the table; hover lifts one. */
+.draft-curve__stack {
+  display: flex;
+  flex-direction: column;
+}
+
+.draft-curve__stack > .draft-card + .draft-card {
+  margin-top: -110%;
+}
+
+.draft-curve__stack > .draft-card:hover {
+  z-index: 1;
+}
+
+.draft-builder__pool-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+
+.draft-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.draft-filter__chip {
+  padding: 0.15em 0.6em;
+  font-size: 0.78rem;
+}
+
+.draft-filter__chip.is-active {
+  background-color: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.draft-builder__pool-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 0.6rem;
+}
+
+/* ---- Disconnects and rejoining -------------------------------------------------------- */
+
+.draft-progress li.is-away {
+  border-style: dashed;
+  opacity: 0.85;
+}
+
+.draft-progress__away {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.draft-progress__pick-for {
+  padding: 0.15rem 0.5rem;
+  font-size: 0.75rem;
+}
+
+.draft-connection-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background-color: rgba(var(--accent-rgb), 0.12);
+  font-size: 0.85rem;
+}
+
+.draft-connection-banner p {
+  margin: 0;
+  flex: 1 1 16rem;
+}
+
+.draft-rejoin {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background-color: rgba(var(--accent-rgb), 0.12);
+}
+
+.draft-rejoin p {
+  margin: 0;
+}
+
+.draft-rejoin__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+/* ---- Post-draft Matches panel ----------------------------------------------------------- */
+
+.draft-matches {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background-color: var(--bg-panel-raised);
+}
+
+.draft-matches__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.draft-matches__row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background-color: var(--bg-panel);
+  font-size: 0.85rem;
+}
+
+.draft-matches__row.is-waiting {
+  border-color: var(--accent);
+}
+
+/* Back from a match: the panel is the main choice — bigger seat cards, accent frame. */
+.draft-matches.is-choosing {
+  border-color: var(--accent);
+}
+
+.draft-matches.is-choosing .draft-matches__row {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.3rem;
+  min-width: 11rem;
+  padding: 0.6rem 0.75rem;
+}
+
+.draft-matches__played {
+  margin-left: 0.4rem;
+  padding: 0 0.35rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+.draft-matches__row.is-away {
+  opacity: 0.6;
+}
+
+.draft-matches__name {
+  font-weight: 600;
+}
+
+.draft-matches__seat,
+.draft-matches__activity {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
+.draft-view[hidden] {
+  display: none;
+}

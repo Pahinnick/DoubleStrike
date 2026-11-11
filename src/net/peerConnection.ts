@@ -16,7 +16,7 @@
  * of this lives in the renderer, so Electron needs no main-process changes.
  */
 import Peer, { type DataConnection } from 'peerjs'
-import type { DraftConfigPayload } from './draftProtocol'
+import type { DraftConfigPayload, DraftMatchStatus, DraftResumeMessage } from './draftProtocol'
 import {
   HOST_SEAT,
   MAX_PLAYERS,
@@ -26,6 +26,7 @@ import {
   type PublicBoard,
   type RollResult,
   type Seat,
+  SEAT_JOIN_ORDER,
   generateRoomCode,
   nextFreeSeat,
   parseMessage,
@@ -51,7 +52,8 @@ export type PeerConnectionEvents = {
   /** Host only: the room code to share, emitted once the peer registers. */
   code: (roomCode: string) => void
   /** This client's own seat (host: immediately; guest: on WELCOME). */
-  seat: (seat: Seat) => void
+  /** Our seat — null while in a room without one (see `maxSpectators`). */
+  seat: (seat: Seat | null) => void
   /** A public board received from another player — mirror it. */
   board: (board: PublicBoard) => void
   /** A player disconnected; drop their mirror. */
@@ -113,7 +115,21 @@ export type PeerConnectionEvents = {
   draftComplete: () => void
   /** Sparse seat->pick-count map, for a "waiting on…" readout. */
   draftProgress: (picksBySeat: Partial<Record<Seat, number>>) => void
+  /** Guest: the host's full catch-up after we (re)joined a draft already underway. */
+  draftResume: (resume: DraftResumePayload) => void
+  /** Which drafting seats are disconnected, and which of those the host is picking for. */
+  draftPresence: (presence: { away: Seat[]; autoPicking: Seat[] }) => void
+  /** Host only: a drafter (including ourselves) reported their post-draft match status. */
+  draftMatchStatusReceived: (report: { seat: Seat; status: DraftMatchStatus }) => void
+  /** Everyone's latest post-draft match status, by seat. */
+  draftMatches: (statuses: Partial<Record<Seat, DraftMatchStatus>>) => void
+  /** Host only: a player was (re)admitted to a seat — fired after their WELCOME, for every HELLO
+   *  including a reconnect the host never saw drop. Draft mode uses it to send a DRAFT_RESUME. */
+  playerJoined: (player: { playerId: string; seat: Seat }) => void
 }
+
+/** DRAFT_RESUME's content, minus the wire envelope. */
+export type DraftResumePayload = Omit<DraftResumeMessage, 'type' | 'v' | 'toPlayerId'>
 
 type EventKey = keyof PeerConnectionEvents
 
@@ -162,6 +178,8 @@ const rejoinDelayMs = (attempt: number) => REJOIN_BASE_DELAY_MS * 2 ** (attempt 
 // advanced the retry chain or ended it. Only failures that announce themselves were being
 // handled.
 const ATTEMPT_TIMEOUT_MS = 10_000
+
+export type PeerConnectionOptions = { maxPlayers?: number; maxSpectators?: number; seatOrder?: readonly Seat[] }
 
 export class PeerConnection {
   private readonly local: LocalPlayer
@@ -232,11 +250,34 @@ export class PeerConnection {
     draftRoundComplete: new Set(),
     draftComplete: new Set(),
     draftProgress: new Set(),
+    draftResume: new Set(),
+    draftPresence: new Set(),
+    draftMatchStatusReceived: new Set(),
+    draftMatches: new Set(),
+    playerJoined: new Set(),
     versionMismatch: new Set(),
   }
 
-  constructor(local: LocalPlayer) {
+  /** Room capacity, host included — the VTT pod's 4 by default; draft rooms pass
+   *  DRAFT_MAX_PLAYERS (6). Only the host enforces it (connection cap + seat assignment). */
+  private readonly maxPlayers: number
+  /** Extra connections the room accepts beyond its seats: people who joined while every seat was
+   *  taken. They see the table and take a seat once one opens (DRAFT_SEAT_REQUEST). 0 (the
+   *  default) refuses anyone who can't be seated. Used by draft match rooms, so a drafter can
+   *  head to an opponent's table while it's still mid-match. */
+  private readonly maxSpectators: number
+  /** Order the host hands out free seats in (see nextFreeSeat). */
+  private readonly seatOrder: readonly Seat[]
+  /** Draft rooms: once the draft starts, packs are dealt to specific seats, so nobody may move. */
+  private seatsLocked = false
+  /** Host only: seats filled by a stand-in with no connection (see addVirtualSeat), with its name. */
+  private readonly virtualSeats = new Map<Seat, string>()
+
+  constructor(local: LocalPlayer, options: PeerConnectionOptions = {}) {
     this.local = local
+    this.maxPlayers = options.maxPlayers ?? MAX_PLAYERS
+    this.maxSpectators = options.maxSpectators ?? 0
+    this.seatOrder = options.seatOrder ?? SEAT_JOIN_ORDER
   }
 
   get seat(): Seat | null {
@@ -304,13 +345,13 @@ export class PeerConnection {
    * Register as the host and resolve with the room code once the broker
    * accepts our id. Retries a few times on the rare id collision.
    */
-  hostGame(): Promise<string> {
+  hostGame(preferredCode?: string): Promise<string> {
     this.role = 'host'
     this.ownSeat = HOST_SEAT
     this.emit('status', 'connecting')
     return new Promise<string>((resolve, reject) => {
       const attempt = (retriesLeft: number) => {
-        const code = generateRoomCode()
+        const code = preferredCode ?? generateRoomCode()
         const peer = new Peer(roomCodeToPeerId(code))
         this.peer = peer
 
@@ -327,6 +368,14 @@ export class PeerConnection {
         peer.on('connection', (conn) => this.acceptGuest(conn))
         peer.on('error', (err) => {
           const type = (err as unknown as { type?: string }).type
+          // A chosen code that's taken means that room already exists — the caller decides what
+          // to do (useMultiplayer's hostOrJoin joins it), so no error status here.
+          if (type === 'unavailable-id' && preferredCode) {
+            peer.destroy()
+            this.peer = null
+            reject(err)
+            return
+          }
           if (type === 'unavailable-id' && retriesLeft > 0) {
             // Code collided with an existing room — throw it away and try another.
             peer.destroy()
@@ -377,7 +426,7 @@ export class PeerConnection {
       this.pruneDeadGuests()
       // Seat isn't assigned yet (that happens on HELLO, once we know playerId — see
       // onHostData), so this is just a raw-connection-slot cap.
-      if (this.guests.size >= MAX_PLAYERS - 1) {
+      if (this.guests.size >= this.maxPlayers - 1 + this.maxSpectators) {
         conn.close()
         return
       }
@@ -426,17 +475,21 @@ export class PeerConnection {
         // Prefer this player's own last seat (from a previous session on this same
         // host) if it's not currently held by someone else; otherwise the usual
         // lowest-free-seat-in-join-preference-order assignment.
-        const occupied = [HOST_SEAT, ...[...this.guests.values()].map((g) => g.seat).filter((s): s is Seat => s !== null)]
+        const occupied = this.occupiedSeats()
         const preferred = this.lastSeatByPlayerId.get(msg.playerId)
-        const seat = preferred !== undefined && !occupied.includes(preferred) ? preferred : nextFreeSeat(occupied)
-        if (seat === null) {
+        const reclaimable = preferred !== undefined && !occupied.includes(preferred) ? preferred : null
+        // Once a draft has started, packs belong to specific seats: only someone returning to
+        // their own seat gets in — a newcomer would just take an empty seat nobody dealt to.
+        const seat = reclaimable ?? (this.seatsLocked ? null : nextFreeSeat(occupied, this.seatOrder))
+        // Every seat taken: a room that allows it keeps them in, seatless, until one opens.
+        if (seat === null && (this.seatsLocked || this.maxSpectators === 0)) {
           conn.close()
           return
         }
         record.playerId = msg.playerId
         record.seat = seat
         record.name = msg.name
-        this.lastSeatByPlayerId.set(msg.playerId, seat)
+        if (seat !== null) this.lastSeatByPlayerId.set(msg.playerId, seat)
         // Tell the guest its seat, then replay every board we already know so it
         // sees a populated table immediately instead of empty quadrants.
         this.sendTo(conn, { type: 'WELCOME', v: PROTOCOL_VERSION, playerId: msg.playerId, seat })
@@ -459,6 +512,7 @@ export class PeerConnection {
         // else already sees them correctly — a roster change like this one is a natural resync
         // point, so use it to push every board we know about to the whole pod.
         this.resyncAll()
+        if (seat !== null) this.emit('playerJoined', { playerId: msg.playerId, seat })
         break
       }
       case 'STATE': {
@@ -575,6 +629,31 @@ export class PeerConnection {
         }
         break
       }
+      case 'DRAFT_SEAT_REQUEST': {
+        // Lobby-only seat swap (draft rooms are three 1v1 tables — players choose their table).
+        // Ignored rather than errored when invalid: the requester's UI just keeps showing the
+        // roster as it really is, which already tells them the seat was taken.
+        // Also how someone waiting without a seat (see maxSpectators) sits down once one opens.
+        if (this.seatsLocked || !this.seatOrder.includes(msg.seat)) break
+        const waiting = record.seat === null
+        if (waiting && (this.maxSpectators === 0 || !record.playerId)) break
+        if (this.occupiedSeats().includes(msg.seat)) break
+        record.seat = msg.seat
+        if (record.playerId) {
+          this.lastSeatByPlayerId.set(record.playerId, msg.seat)
+          this.sendTo(conn, { type: 'WELCOME', v: PROTOCOL_VERSION, playerId: record.playerId, seat: msg.seat })
+        }
+        this.broadcastRoster()
+        if (waiting && record.playerId) {
+          this.resyncAll()
+          this.emit('playerJoined', { playerId: record.playerId, seat: msg.seat })
+        }
+        break
+      }
+      case 'DRAFT_MATCH_STATUS':
+        // Attributed to the seat this connection holds — a guest can only speak for itself.
+        if (record.seat !== null) this.emit('draftMatchStatusReceived', { seat: record.seat, status: msg.status })
+        break
       case 'DRAFT_PICK':
         // Not relayed/fanned out like the cases above — the host is the sole recipient and
         // arbiter (see draftProtocol.ts's doc on DRAFT_PICK). Resolving it (round completion,
@@ -589,14 +668,57 @@ export class PeerConnection {
     }
   }
 
+  /** Every seat currently taken — the host's own plus each guest's. */
+  private occupiedSeats(): Seat[] {
+    const guestSeats = [...this.guests.values()].map((g) => g.seat).filter((s): s is Seat => s !== null)
+    return [this.ownSeat ?? HOST_SEAT, ...guestSeats, ...this.virtualSeats.keys()]
+  }
+
+  /** Host only: fill an open lobby seat with a stand-in player that has no connection of its own
+   *  (a dev-mode draft bot — the host's app makes its picks). It shows in the roster and counts as
+   *  seated like anyone else. Returns false if the seat isn't open. */
+  addVirtualSeat(seat: Seat, name: string): boolean {
+    if (this.role !== 'host' || this.seatsLocked || !this.seatOrder.includes(seat)) return false
+    if (this.occupiedSeats().includes(seat)) return false
+    this.virtualSeats.set(seat, name)
+    this.broadcastRoster()
+    return true
+  }
+
+  /** Host only: empty a seat filled by addVirtualSeat. */
+  removeVirtualSeat(seat: Seat): void {
+    if (this.seatsLocked || !this.virtualSeats.delete(seat)) return
+    this.broadcastRoster()
+  }
+
+  /** Draft lobby: move to an open seat. The host moves itself directly; a guest asks the host
+   *  (DRAFT_SEAT_REQUEST) and hears back via a fresh WELCOME. No-op once seats are locked. */
+  requestSeat(seat: Seat): void {
+    if (this.seatsLocked || !this.seatOrder.includes(seat)) return
+    if (this.role === 'host') {
+      if (this.occupiedSeats().includes(seat)) return
+      this.ownSeat = seat
+      this.emit('seat', seat)
+      this.broadcastRoster()
+    } else if (this.role === 'guest' && this.hostConn) {
+      this.sendTo(this.hostConn, { type: 'DRAFT_SEAT_REQUEST', v: PROTOCOL_VERSION, seat })
+    }
+  }
+
+  /** Host only: freeze seating — called as a draft starts (packs are dealt per seat). */
+  lockSeats(): void {
+    this.seatsLocked = true
+  }
+
   /** Who's seated where + their display name, for the pre-game draft lobby (see
    *  DraftRosterMessage's doc — the regular VTT derives this from PublicBoard broadcasts
    *  instead, which don't exist yet at this stage). */
   private getRoster(): Partial<Record<Seat, string>> {
-    const roster: Partial<Record<Seat, string>> = { [HOST_SEAT]: this.local.name }
+    const roster: Partial<Record<Seat, string>> = { [this.ownSeat ?? HOST_SEAT]: this.local.name }
     for (const guest of this.guests.values()) {
       if (guest.seat !== null && guest.name) roster[guest.seat] = guest.name
     }
+    for (const [seat, name] of this.virtualSeats) roster[seat] = name
     return roster
   }
 
@@ -984,6 +1106,18 @@ export class PeerConnection {
       case 'DRAFT_PROGRESS':
         this.emit('draftProgress', msg.picksBySeat)
         break
+      case 'DRAFT_RESUME':
+        if (msg.toPlayerId === this.local.playerId) {
+          const { config, phase, pool, packs, picksBySeat, roster } = msg
+          this.emit('draftResume', { config, phase, pool, packs, picksBySeat, roster })
+        }
+        break
+      case 'DRAFT_PRESENCE':
+        this.emit('draftPresence', { away: msg.away, autoPicking: msg.autoPicking })
+        break
+      case 'DRAFT_MATCHES':
+        this.emit('draftMatches', msg.statuses)
+        break
       default:
         break
     }
@@ -1288,6 +1422,43 @@ export class PeerConnection {
     }
   }
 
+  /** Host only: catch one returning player up on a draft already underway (see DraftResumeMessage). */
+  sendDraftResume(toPlayerId: string, resume: DraftResumePayload): void {
+    if (toPlayerId === this.local.playerId) return
+    const msg: NetMessage = { type: 'DRAFT_RESUME', v: PROTOCOL_VERSION, toPlayerId, ...resume }
+    const conn = this.findGuestConn(toPlayerId)
+    if (conn) this.sendTo(conn, msg)
+  }
+
+  /** Host only: who's disconnected mid-draft and who's being auto-picked for. */
+  broadcastDraftPresence(away: Seat[], autoPicking: Seat[]): void {
+    const msg: NetMessage = { type: 'DRAFT_PRESENCE', v: PROTOCOL_VERSION, away, autoPicking }
+    this.emit('draftPresence', { away, autoPicking })
+    if (this.role === 'host') {
+      for (const guest of this.guests.values()) this.sendTo(guest.conn, msg)
+    }
+  }
+
+  /** Report our own post-draft match status: a guest tells the host; the host records its own
+   *  directly (same self-routing as sendDraftPick). */
+  sendDraftMatchStatus(status: DraftMatchStatus): void {
+    if (this.role === 'host') {
+      const seat = this.ownSeat
+      if (seat !== null) queueMicrotask(() => this.emit('draftMatchStatusReceived', { seat, status }))
+    } else if (this.role === 'guest' && this.hostConn) {
+      this.sendTo(this.hostConn, { type: 'DRAFT_MATCH_STATUS', v: PROTOCOL_VERSION, status })
+    }
+  }
+
+  /** Host only: share everyone's match statuses with the room. */
+  broadcastDraftMatches(statuses: Partial<Record<Seat, DraftMatchStatus>>): void {
+    const msg: NetMessage = { type: 'DRAFT_MATCHES', v: PROTOCOL_VERSION, statuses }
+    this.emit('draftMatches', statuses)
+    if (this.role === 'host') {
+      for (const guest of this.guests.values()) this.sendTo(guest.conn, msg)
+    }
+  }
+
   /** Host only: current seat->playerId directory, so a higher layer (useDraftSession) can
    *  translate a draftEngine seat into the `toPlayerId` sendDraftPack/sendDraftPickRejected need. */
   getSeatPlayerIds(): Partial<Record<Seat, string>> {
@@ -1296,6 +1467,7 @@ export class PeerConnection {
     for (const guest of this.guests.values()) {
       if (guest.seat !== null && guest.playerId) map[guest.seat] = guest.playerId
     }
+    for (const seat of this.virtualSeats.keys()) map[seat] = virtualPlayerId(seat)
     return map
   }
 
@@ -1322,6 +1494,8 @@ export class PeerConnection {
     this.lastActiveSeat = null
     this.lastTurn = null
     this.lastRadioStation = null
+    this.seatsLocked = false
+    this.virtualSeats.clear()
     this.hostConn = null
     this.peer?.destroy()
     this.peer = null
@@ -1352,3 +1526,14 @@ function describePeerError(err: unknown): string {
 
 /** Re-exported so callers can validate/derive a code without importing protocol directly. */
 export { isValidRoomCode, peerIdToRoomCode } from './protocol'
+
+const VIRTUAL_PLAYER_PREFIX = 'virtual-seat-'
+
+/** The stand-in player id getSeatPlayerIds reports for a seat filled by addVirtualSeat. */
+export function virtualPlayerId(seat: Seat): string {
+  return `${VIRTUAL_PLAYER_PREFIX}${seat}`
+}
+
+export function isVirtualPlayerId(playerId: string): boolean {
+  return playerId.startsWith(VIRTUAL_PLAYER_PREFIX)
+}

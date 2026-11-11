@@ -10,9 +10,11 @@
  * ready, no lockstep), which maps directly onto this app's existing directed-message convention
  * (GIVE_CARD/RELOCATE_CARD/etc., guest->host->target).
  */
-import { isNonEmptyString, isSeat, isString, type Seat } from './protocol'
+import type { DraftConfig, DraftSource } from '../draft/types'
+import { isNonEmptyString, isSeat, isString, isValidRoomCode, type Seat } from './protocol'
 
-export type DraftConfigPayload = { cubeId: string; cubeName: string; packSize: number; packsPerPlayer: number }
+/** Same shape as the host's own DraftConfig — the pack source (cube or set) plus pack settings. */
+export type DraftConfigPayload = DraftConfig
 
 /** Host -> all, cached: cube/pack-size info for the lobby, replayed to a late joiner. */
 export type DraftConfigMessage = { type: 'DRAFT_CONFIG'; v: number; config: DraftConfigPayload }
@@ -20,6 +22,11 @@ export type DraftConfigMessage = { type: 'DRAFT_CONFIG'; v: number; config: Draf
 /** Host -> all, cached: who's seated where, for the pre-game lobby roster — the regular VTT
  *  derives this from PublicBoard broadcasts instead, but draft's lobby has no boards yet. */
 export type DraftRosterMessage = { type: 'DRAFT_ROSTER'; v: number; roster: Partial<Record<Seat, string>> }
+
+/** Guest -> host, lobby only: "move me to this open seat" — draft rooms are three 1v1 tables, so
+ *  players pick who they sit with. The host answers with a fresh WELCOME (the new seat) plus a
+ *  DRAFT_ROSTER, or ignores it if the seat is taken or the draft has started. */
+export type DraftSeatRequestMessage = { type: 'DRAFT_SEAT_REQUEST'; v: number; seat: Seat }
 
 /** Host -> all: lobby -> drafting transition; the host follows this with each seat's round-1 pack. */
 export type DraftStartMessage = { type: 'DRAFT_START'; v: number }
@@ -47,9 +54,47 @@ export type DraftCompleteMessage = { type: 'DRAFT_COMPLETE'; v: number }
  *  leaking anyone's pack/pool contents (same sparse convention as PublicBoard.commanderDamage). */
 export type DraftProgressMessage = { type: 'DRAFT_PROGRESS'; v: number; picksBySeat: Partial<Record<Seat, number>> }
 
+/** Host -> one returning player: everything they need to pick up where they left off after a
+ *  dropped connection, a refreshed tab or an app restart — the packs they now hold (including any
+ *  passed to them while they were away) and their whole pool so far (including anything the host
+ *  auto-picked for them). Replaces the guest's local draft state wholesale rather than patching
+ *  it, since a guest that was away can't know which of its own sends never arrived. `roster` is
+ *  everyone seated when the draft began, so players who are still away keep their place in it. */
+export type DraftResumeMessage = {
+  type: 'DRAFT_RESUME'
+  v: number
+  toPlayerId: string
+  config: DraftConfigPayload
+  phase: 'drafting' | 'complete'
+  pool: string[]
+  packs: { packId: string; round: number; cards: string[] }[]
+  picksBySeat: Partial<Record<Seat, number>>
+  roster: Partial<Record<Seat, string>>
+}
+
+/** Host -> all: which drafting seats have lost their connection (`away`), and which of those the
+ *  host is now picking for (`autoPicking`) so the other seats' packs keep moving. */
+export type DraftPresenceMessage = { type: 'DRAFT_PRESENCE'; v: number; away: Seat[]; autoPicking: Seat[] }
+
+/** Where a drafter is in the post-draft event: building/adjusting their deck, at the game table
+ *  waiting for `opponentSeat` (or for nobody yet), or playing `opponentSeat`. */
+export type DraftMatchState = 'building' | 'waiting' | 'playing'
+/** `room`: the game-table room code this player is in (waiting/playing), so anyone picking them
+ *  joins that same room — taking the open seat, or waiting in the room for one if both are taken
+ *  — instead of both having to move to a fresh room for the pair. Absent while building. */
+export type DraftMatchStatus = { state: DraftMatchState; opponentSeat: Seat | null; room?: string }
+
+/** Guest/host -> host: "this is what I'm doing now" — after the draft, so everyone can see who's
+ *  free, who's waiting for them at the table, and who's mid-match. */
+export type DraftMatchStatusMessage = { type: 'DRAFT_MATCH_STATUS'; v: number; status: DraftMatchStatus }
+
+/** Host -> all: everyone's latest match status, by seat. */
+export type DraftMatchesMessage = { type: 'DRAFT_MATCHES'; v: number; statuses: Partial<Record<Seat, DraftMatchStatus>> }
+
 export type DraftMessage =
   | DraftConfigMessage
   | DraftRosterMessage
+  | DraftSeatRequestMessage
   | DraftStartMessage
   | DraftPackMessage
   | DraftPickMessage
@@ -57,19 +102,56 @@ export type DraftMessage =
   | DraftRoundCompleteMessage
   | DraftCompleteMessage
   | DraftProgressMessage
+  | DraftResumeMessage
+  | DraftPresenceMessage
+  | DraftMatchStatusMessage
+  | DraftMatchesMessage
 
 export type DraftParseResult = { ok: true; msg: DraftMessage } | { ok: false; reason: 'malformed' }
+
+function isDraftSource(v: unknown): v is DraftSource {
+  if (typeof v !== 'object' || v === null) return false
+  const s = v as Record<string, unknown>
+  if (!isString(s.name)) return false
+  if (s.kind === 'cube') return isNonEmptyString(s.cubeId)
+  if (s.kind === 'set') return isNonEmptyString(s.setCode) && (s.boosterType === 'play' || s.boosterType === 'draft' || s.boosterType === 'classic')
+  return false
+}
 
 function isDraftConfigPayload(v: unknown): v is DraftConfigPayload {
   if (typeof v !== 'object' || v === null) return false
   const c = v as Record<string, unknown>
-  return isNonEmptyString(c.cubeId) && isString(c.cubeName) && typeof c.packSize === 'number' && typeof c.packsPerPlayer === 'number'
+  return isDraftSource(c.source) && typeof c.packSize === 'number' && typeof c.packsPerPlayer === 'number'
 }
 
 function isSeatKeyedMap(v: unknown, isValue: (value: unknown) => boolean): boolean {
   if (typeof v !== 'object' || v === null) return false
   const m = v as Record<string, unknown>
   return Object.keys(m).every((key) => isSeat(Number(key)) && isValue(m[key]))
+}
+
+function isStringArray(v: unknown): v is string[] {
+  return Array.isArray(v) && v.every(isString)
+}
+
+function isSeatArray(v: unknown): v is Seat[] {
+  return Array.isArray(v) && v.every(isSeat)
+}
+
+function isMatchStatus(v: unknown): boolean {
+  if (typeof v !== 'object' || v === null) return false
+  const s = v as Record<string, unknown>
+  return (
+    (s.state === 'building' || s.state === 'waiting' || s.state === 'playing') &&
+    (s.opponentSeat === null || isSeat(s.opponentSeat)) &&
+    (s.room === undefined || (isString(s.room) && isValidRoomCode(s.room)))
+  )
+}
+
+function isResumePack(v: unknown): boolean {
+  if (typeof v !== 'object' || v === null) return false
+  const p = v as Record<string, unknown>
+  return isNonEmptyString(p.packId) && typeof p.round === 'number' && isStringArray(p.cards)
 }
 
 export function parseDraftMessage(m: Record<string, unknown>): DraftParseResult {
@@ -79,6 +161,9 @@ export function parseDraftMessage(m: Record<string, unknown>): DraftParseResult 
       return { ok: false, reason: 'malformed' }
     case 'DRAFT_ROSTER':
       if (isSeatKeyedMap(m.roster, isString)) return { ok: true, msg: m as DraftRosterMessage }
+      return { ok: false, reason: 'malformed' }
+    case 'DRAFT_SEAT_REQUEST':
+      if (isSeat(m.seat)) return { ok: true, msg: m as DraftSeatRequestMessage }
       return { ok: false, reason: 'malformed' }
     case 'DRAFT_START':
       return { ok: true, msg: m as DraftStartMessage }
@@ -108,6 +193,29 @@ export function parseDraftMessage(m: Record<string, unknown>): DraftParseResult 
       return { ok: true, msg: m as DraftCompleteMessage }
     case 'DRAFT_PROGRESS':
       if (isSeatKeyedMap(m.picksBySeat, (v) => typeof v === 'number')) return { ok: true, msg: m as DraftProgressMessage }
+      return { ok: false, reason: 'malformed' }
+    case 'DRAFT_RESUME':
+      if (
+        isNonEmptyString(m.toPlayerId) &&
+        isDraftConfigPayload(m.config) &&
+        (m.phase === 'drafting' || m.phase === 'complete') &&
+        isStringArray(m.pool) &&
+        Array.isArray(m.packs) &&
+        m.packs.every(isResumePack) &&
+        isSeatKeyedMap(m.picksBySeat, (v) => typeof v === 'number') &&
+        isSeatKeyedMap(m.roster, isString)
+      ) {
+        return { ok: true, msg: m as DraftResumeMessage }
+      }
+      return { ok: false, reason: 'malformed' }
+    case 'DRAFT_PRESENCE':
+      if (isSeatArray(m.away) && isSeatArray(m.autoPicking)) return { ok: true, msg: m as DraftPresenceMessage }
+      return { ok: false, reason: 'malformed' }
+    case 'DRAFT_MATCH_STATUS':
+      if (isMatchStatus(m.status)) return { ok: true, msg: m as DraftMatchStatusMessage }
+      return { ok: false, reason: 'malformed' }
+    case 'DRAFT_MATCHES':
+      if (isSeatKeyedMap(m.statuses, isMatchStatus)) return { ok: true, msg: m as DraftMatchesMessage }
       return { ok: false, reason: 'malformed' }
     default:
       return { ok: false, reason: 'malformed' }

@@ -5,12 +5,18 @@ import {
   MAX_PLAYERS,
   PROTOCOL_VERSION,
   ROOM_CODE_LENGTH,
+  draftMatchPlayerId,
+  draftSeatOfMatchPlayer,
+  matchRoomCode,
   type NetMessage,
   type PublicBoard,
+  type Seat,
   deserialize,
   generateRoomCode,
   isValidRoomCode,
   nextFreeSeat,
+  DRAFT_MAX_PLAYERS,
+  DRAFT_SEAT_ORDER,
   parseMessage,
   peerIdToRoomCode,
   relayTargets,
@@ -48,6 +54,7 @@ describe('serialization round-trips', () => {
   const messages: NetMessage[] = [
     { type: 'HELLO', v: PROTOCOL_VERSION, playerId: 'p2', name: 'Bob', deckFormat: 'commander' },
     { type: 'WELCOME', v: PROTOCOL_VERSION, playerId: 'p2', seat: 2 },
+    { type: 'WELCOME', v: PROTOCOL_VERSION, playerId: 'p3', seat: null },
     { type: 'STATE', v: PROTOCOL_VERSION, board: board() },
     { type: 'PLAYER_LEFT', v: PROTOCOL_VERSION, playerId: 'p2' },
   ]
@@ -452,7 +459,7 @@ describe('serialization round-trips', () => {
   })
 
   it('rejects a TURN_PASS with an out-of-range seat', () => {
-    const bad = { type: 'TURN_PASS', v: PROTOCOL_VERSION, activeSeat: 4 }
+    const bad = { type: 'TURN_PASS', v: PROTOCOL_VERSION, activeSeat: 6 }
     expect(deserialize(JSON.stringify(bad))).toBeNull()
   })
 
@@ -535,6 +542,14 @@ describe('nextFreeSeat', () => {
     expect(nextFreeSeat([0, 1, 2, 3])).toBeNull()
     expect([0, 1, 2, 3]).toHaveLength(MAX_PLAYERS)
   })
+
+  it('fills a 6-seat draft room table by table, in seat order', () => {
+    expect(DRAFT_SEAT_ORDER).toHaveLength(DRAFT_MAX_PLAYERS)
+    expect(nextFreeSeat([0], DRAFT_SEAT_ORDER)).toBe(1)
+    expect(nextFreeSeat([0, 1, 3], DRAFT_SEAT_ORDER)).toBe(2)
+    expect(nextFreeSeat([0, 1, 2, 3, 4], DRAFT_SEAT_ORDER)).toBe(5)
+    expect(nextFreeSeat([0, 1, 2, 3, 4, 5], DRAFT_SEAT_ORDER)).toBeNull()
+  })
 })
 
 describe('relayTargets', () => {
@@ -571,5 +586,31 @@ describe('room codes', () => {
     expect(isValidRoomCode('ABC')).toBe(false)
     expect(isValidRoomCode('ABCDE0')).toBe(false) // 0 is not in the alphabet
     expect(isValidRoomCode('ABCDEF')).toBe(true)
+  })
+})
+
+describe('draft match player ids', () => {
+  it('carry the drafter seat, so a match room can tell which drafter is seated where', () => {
+    expect(draftSeatOfMatchPlayer(draftMatchPlayerId(4, 'abc-123'))).toBe(4)
+    expect(draftSeatOfMatchPlayer(draftMatchPlayerId(0, 'x'))).toBe(0)
+    expect(draftSeatOfMatchPlayer('abc-123')).toBeNull()
+    expect(draftSeatOfMatchPlayer('draft9:abc')).toBeNull()
+  })
+})
+
+describe('matchRoomCode', () => {
+  it('gives both players the same valid room code, whichever of them asks', () => {
+    const code = matchRoomCode('ABC234', 0, 1)
+    expect(code).toHaveLength(ROOM_CODE_LENGTH)
+    expect(isValidRoomCode(code)).toBe(true)
+    expect(matchRoomCode('abc234 ', 1, 0)).toBe(code)
+  })
+
+  it('gives every pair of seats its own room, per draft, apart from the draft room itself', () => {
+    const pairs: [Seat, Seat][] = [[0, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3], [4, 5]]
+    const codes = new Set(pairs.map(([a, b]) => matchRoomCode('ABC234', a, b)))
+    expect(codes.size).toBe(pairs.length)
+    expect(matchRoomCode('XYZ789', 0, 1)).not.toBe(matchRoomCode('ABC234', 0, 1))
+    expect(codes.has('ABC234')).toBe(false)
   })
 })

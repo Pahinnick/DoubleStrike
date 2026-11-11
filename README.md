@@ -92,6 +92,8 @@ browser storage, Vitest for tests.
 
 - Card data and images from [Scryfall](https://scryfall.com)
 - Salt scores from [EDHREC](https://edhrec.com)
+- Draft booster collation data derived from [magic-search-engine](https://github.com/taw/magic-search-engine)
+  by Tomasz Wegrzanowski (MIT; see [src/draft/data/README.md](src/draft/data/README.md))
 
 ## License
 

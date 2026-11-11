@@ -17,8 +17,9 @@ import { BATTLEFIELD_SKINS, normalizeBattlefieldSkin, useBattlefieldSkin, type B
 import { useCardSnapshots } from '../../hooks/useCardSnapshots'
 import { usePlaytestWindowMode } from '../../hooks/usePlaytestWindowMode'
 import { useProfileSettings } from '../../hooks/useProfileSettings'
-import { FACE_DOWN_SCRYFALL_ID, type CounterPile, type PtCounterPile, type PublicBoard, type RollResult, type Seat } from '../../net/protocol'
+import { DRAFT_MAX_PLAYERS, FACE_DOWN_SCRYFALL_ID, draftMatchPlayerId, draftSeatOfMatchPlayer, type CounterPile, type PtCounterPile, type PublicBoard, type RollResult, type Seat } from '../../net/protocol'
 import { toPublicBoard } from '../../net/publicBoard'
+import type { DraftMatchStatus } from '../../net/draftProtocol'
 import { useMultiplayer } from '../../net/useMultiplayer'
 import { useDeck } from '../../state/DeckContext'
 import { useProfiles } from '../../state/ProfileContext'
@@ -66,7 +67,7 @@ import NumberInputPrompt from './NumberInputPrompt'
 import { createPanKeys } from './panKeys'
 import PingMarker from './PingMarker'
 import PlaytestCard from './PlaytestCard'
-import { ALL_SEATS, buildSpinSequence, completesRound, nextActiveSeat, pickRandomSeat, SEAT_COLOR_NAMES, SEAT_COLORS, SEAT_GRID, seatOrigin, tableSize } from './podLayout'
+import { ALL_SEATS, buildSpinSequence, DUEL_SEATS, completesRound, nextActiveSeat, pickRandomSeat, SEAT_COLOR_NAMES, SEAT_COLORS, SEAT_GRID, seatOrigin, tableSize } from './podLayout'
 import PtCounterPileStack from './PtCounterPileStack'
 import ReactionMarker from './ReactionMarker'
 import ReactionsTray from './ReactionsTray'
@@ -151,8 +152,37 @@ const SOLO_AUTOSAVE_DEBOUNCE_MS = 800
 
 type Camera = { x: number; y: number; zoom: number }
 
+/** Someone from the same draft you can play a match against. */
+export type DraftMatchPlayer = { seat: Seat; name: string }
+
+/** Arriving at the table from a draft: who you can play, and who to meet first. Each pair of
+ *  drafters has its own room (see matchRoomCode), so players can switch opponents between matches. */
+export type TableGame = {
+  draftCode: string
+  mySeat: Seat
+  /** Everyone else from the draft who can play a match (bots are left out). */
+  players: DraftMatchPlayer[]
+  /** Your first opponent (your tablemate), or null to start at the table on your own. */
+  opponentSeat: Seat | null
+  /** The room to head to for a match against this drafter: the one they're already in if they're
+   *  at a table (you take the open seat, or wait in the room for one), else a fresh room for the
+   *  pair. Read at call time, so it reflects everyone's latest match status. */
+  roomFor: (opponentSeat: Seat) => string
+}
+
+/** A draft match room: two seats facing each other, plus room for other drafters to wait in
+ *  until a seat opens (see PeerConnection's maxSpectators). */
+const DUEL_ROOM = { maxPlayers: DUEL_SEATS.length, maxSpectators: DRAFT_MAX_PLAYERS - DUEL_SEATS.length, seatOrder: DUEL_SEATS }
+
 type Props = {
   onClose: () => void
+  /** The close button's text — "Back to draft" at a draft match. */
+  closeLabel?: string
+  /** Arriving from a draft: connect to the first opponent's match room straight away. */
+  tableGame?: TableGame | null
+  /** At a draft match: told whenever we start waiting for, or playing, an opponent — so the rest
+   *  of the draft can see it (see useDraftSession's reportMatchStatus). */
+  onDraftMatchStatus?: (status: DraftMatchStatus) => void
 }
 
 function initGame(deck: Deck): GameState {
@@ -163,7 +193,7 @@ function initGame(deck: Deck): GameState {
   })
 }
 
-function PlaytestView({ onClose }: Props) {
+function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null, onDraftMatchStatus }: Props) {
   const { deck, dispatch: deckDispatch } = useDeck()
   const tutorial = useTutorialContext()
   const { profiles, activeProfileId } = useProfiles()
@@ -221,7 +251,8 @@ function PlaytestView({ onClose }: Props) {
   // would collide when testing locally and in the boards map. The profile only
   // supplies the display name.
   const playerIdRef = useRef<string>(crypto.randomUUID())
-  const playerId = playerIdRef.current
+  // At a draft match the id also says which drafter you are, so the room can tell who's seated.
+  const playerId = tableGame ? draftMatchPlayerId(tableGame.mySeat, playerIdRef.current) : playerIdRef.current
 
   // Recent dice/coin rolls, newest first — resolved to a display seat at render
   // time (see rollLogEntries below) since a network roll only carries a playerId.
@@ -338,6 +369,8 @@ function PlaytestView({ onClose }: Props) {
     role: mpRole,
     host: mpHost,
     join: mpJoin,
+    hostOrJoin: mpHostOrJoin,
+    requestSeat: mpRequestSeat,
     leave: mpLeave,
     giveCard,
     relocateCard,
@@ -413,6 +446,124 @@ function PlaytestView({ onClose }: Props) {
   useEffect(() => {
     if (consumeAutoOpenMultiplayerRequest()) setMpModalOpen(true)
   }, [])
+  // Arriving from a draft: meet the table opponent in your table's room (whoever arrives first
+  // hosts it), with the multiplayer panel open so you can see them join. Started on a timer and
+  // cancelled in cleanup: StrictMode's dev-only mount → unmount → mount runs useMultiplayer's
+  // unmount disconnect in between, so connecting synchronously would be torn down at once.
+  const [draftOpponentSeat, setDraftOpponentSeat] = useState<Seat | null>(tableGame?.opponentSeat ?? null)
+  // Set only once the first-match connection actually starts (inside the timer), so StrictMode's
+  // cancelled first run doesn't count, but a later re-run of this effect (dev Fast Refresh) can't
+  // drag the table back to the first opponent after the player has moved on.
+  const firstMatchStartedRef = useRef(false)
+  useEffect(() => {
+    if (!tableGame || firstMatchStartedRef.current) return
+    // With nobody to meet yet, show the panel anyway: it lists who they could pick, or explains
+    // why there's no one (a draft against bots only).
+    if (tableGame.opponentSeat === null) {
+      setMpModalOpen(true)
+      return
+    }
+    setMpModalOpen(true)
+    const code = tableGame.roomFor(tableGame.opponentSeat)
+    const timer = window.setTimeout(() => {
+      firstMatchStartedRef.current = true
+      connectToMatchRoom(code)
+    }, 0)
+    return () => window.clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /** The draft match room we're in (or heading to) — reported to the draft so anyone picking us
+   *  comes here, and reopened if its host leaves (see the effect below). */
+  const [matchRoom, setMatchRoom] = useState<string | null>(null)
+  function connectToMatchRoom(code: string) {
+    setMatchRoom(code)
+    mpHostOrJoin(code, DUEL_ROOM).catch(() => {
+      // Shown by the multiplayer panel's status line.
+    })
+  }
+
+  /** Next match: leave the current one, start a fresh game with the same deck, and head to
+   *  `seat`'s table (see TableGame.roomFor) — sitting down across from them, or waiting in the
+   *  room if both seats are taken. */
+  function playDraftOpponent(seat: Seat) {
+    // Re-picking the same opponent only makes sense once that match has dropped ("Play again").
+    const dropped = mpStatus === 'closed' || mpStatus === 'error' || mpStatus === 'idle' || (mpStatus === 'connecting' && /reconnecting/i.test(mpStatusDetail ?? ''))
+    if (!tableGame || (seat === draftOpponentSeat && !dropped)) return
+    mpLeave()
+    handleRestart()
+    hadSeatedOpponentRef.current = false
+    lastSeatedOpponentRef.current = null
+    rehostAttemptsRef.current = 0
+    setDraftOpponentSeat(seat)
+    connectToMatchRoom(tableGame.roomFor(seat))
+  }
+  const atDraftMatch = tableGame !== null
+  // In the room but both seats are taken: watching, until a seat opens and we take it.
+  const waitingForSeat = atDraftMatch && mpStatus === 'connected' && mySeat === null
+  // Whoever actually sits across from us — which may not be who we came for: someone else can
+  // take the open seat first, or our opponent can leave and another drafter sit down.
+  const seatedOpponent = waitingForSeat
+    ? null
+    : ([...boards.values()].map((b) => draftSeatOfMatchPlayer(b.playerId)).find((s) => s !== null && s !== tableGame?.mySeat) ?? null)
+  const hadSeatedOpponentRef = useRef(false)
+  // The last drafter who sat across from us, kept after they leave: a *different* one sitting
+  // down is a new match, so our board starts over; the same one coming back (a dropped
+  // connection) carries on the game in progress.
+  const lastSeatedOpponentRef = useRef<Seat | null>(null)
+  useEffect(() => {
+    if (!atDraftMatch || waitingForSeat) return
+    if (seatedOpponent !== null) {
+      if (lastSeatedOpponentRef.current !== null && lastSeatedOpponentRef.current !== seatedOpponent) handleRestart()
+      lastSeatedOpponentRef.current = seatedOpponent
+      hadSeatedOpponentRef.current = true
+      setDraftOpponentSeat(seatedOpponent)
+    } else if (hadSeatedOpponentRef.current && mpStatus === 'connected') {
+      // They left: we're at the table on our own, free for anyone to sit down.
+      hadSeatedOpponentRef.current = false
+      setDraftOpponentSeat(null)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [atDraftMatch, waitingForSeat, seatedOpponent, mpStatus])
+  // Whoever opened a match room hosts it, and a room closes with its host. If that's the player
+  // who just left, everyone still here reopens the same room (whoever's first hosts, the rest
+  // join), so the table carries on without anyone having to move.
+  const rehostAttemptsRef = useRef(0)
+  useEffect(() => {
+    if (!atDraftMatch || !matchRoom) return
+    if (mpStatus === 'connected') {
+      rehostAttemptsRef.current = 0
+      return
+    }
+    const lost = mpStatus === 'closed' || mpStatus === 'error' || (mpStatus === 'connecting' && /^Reconnecting to the game \(/.test(mpStatusDetail ?? ''))
+    if (!lost || rehostAttemptsRef.current >= 3) return
+    rehostAttemptsRef.current += 1
+    // Staggered so two players reopening at once rarely collide (if they do, one just joins).
+    const timer = window.setTimeout(() => {
+      mpLeave()
+      mpHostOrJoin(matchRoom, DUEL_ROOM).catch(() => {})
+    }, 300 + Math.random() * 900)
+    return () => window.clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [atDraftMatch, matchRoom, mpStatus, mpStatusDetail])
+  // The open seat someone waiting can take, if any (the seated players' boards say who's where).
+  const openDuelSeat = waitingForSeat ? (DUEL_SEATS.find((s) => ![...boards.values()].some((b) => b.seat === s)) ?? null) : null
+  useEffect(() => {
+    if (waitingForSeat) setMpModalOpen(true)
+  }, [waitingForSeat])
+  const draftOpponentName = tableGame?.players.find((p) => p.seat === draftOpponentSeat)?.name ?? null
+  // Keep the draft informed: playing once someone is seated across from us, otherwise waiting.
+  const draftMatchPlaying = mpStatus === 'connected' && mySeat !== null && seatedOpponent !== null
+  const onDraftMatchStatusRef = useRef(onDraftMatchStatus)
+  onDraftMatchStatusRef.current = onDraftMatchStatus
+  useEffect(() => {
+    if (!atDraftMatch) return
+    onDraftMatchStatusRef.current?.({
+      state: draftMatchPlaying ? 'playing' : 'waiting',
+      opponentSeat: draftOpponentSeat,
+      ...(matchRoom ? { room: matchRoom } : {}),
+    })
+  }, [atDraftMatch, draftMatchPlaying, draftOpponentSeat, matchRoom])
   // The persisted per-profile volume (Settings page) applies globally via useProfileSettings'
   // own effect — this is just a session-local quick-mute on top of it (the topbar 🔊 button)
   // that deliberately does NOT persist: muting for one distracting game shouldn't silently
@@ -511,6 +662,8 @@ function PlaytestView({ onClose }: Props) {
   }, [])
 
   const inPod = mpActive || mockBoards !== null
+  // A draft match is a 1v1: just the two boards facing each other, not the 4-seat Commander pod.
+  const tableSeats: readonly Seat[] = tableGame ? DUEL_SEATS : ALL_SEATS
 
   // Adopt whatever station a real pod's host/other players have broadcast — covers both
   // someone else changing it and, via the host's cached replay on HELLO, a late joiner
@@ -566,7 +719,7 @@ function PlaytestView({ onClose }: Props) {
 
   const mySeatResolved: Seat = mySeat ?? (mockBoards !== null ? mockMySeat : 0)
   const myOrigin = inPod ? seatOrigin(mySeatResolved, CANVAS_W, CANVAS_H) : { x: 0, y: 0 }
-  const surface = inPod ? tableSize(CANVAS_W, CANVAS_H) : { width: CANVAS_W, height: CANVAS_H }
+  const surface = inPod ? tableSize(CANVAS_W, CANVAS_H, tableSeats) : { width: CANVAS_W, height: CANVAS_H }
   // A locally-seated top-row player's (seat 2/3) own view flips 180° so their own quadrant
   // renders near the bottom of their screen — where a hand overlay and bottom-row seats
   // already sit — instead of feeling like they're facing away from the table. This is purely
@@ -849,9 +1002,8 @@ function PlaytestView({ onClose }: Props) {
   )
 
   const fitAll = useCallback(() => {
-    const { width, height } = tableSize(CANVAS_W, CANVAS_H)
-    animateCameraTo(cameraForRegion(0, 0, width, height, 1))
-  }, [animateCameraTo, cameraForRegion])
+    animateCameraTo(cameraForRegion(0, 0, surface.width, surface.height, 1))
+  }, [animateCameraTo, cameraForRegion, surface.width, surface.height])
 
   // Centers the canvas in the viewport once it's actually measurable, rather than at (0,0).
   useLayoutEffect(() => centerCamera(), [centerCamera])
@@ -1821,7 +1973,7 @@ function PlaytestView({ onClose }: Props) {
   function seatAtSurfacePoint(x: number, y: number): Seat {
     const col = x >= CANVAS_W ? 1 : 0
     const row = y >= CANVAS_H ? 1 : 0
-    return ALL_SEATS.find((s) => SEAT_GRID[s].col === col && SEAT_GRID[s].row === row) ?? mySeatResolved
+    return tableSeats.find((s) => SEAT_GRID[s].col === col && SEAT_GRID[s].row === row) ?? mySeatResolved
   }
 
   /** Table-space position(s) (for children of the camera-transformed surface) a card — and any
@@ -2259,7 +2411,7 @@ function PlaytestView({ onClose }: Props) {
     const pick = (n: number) => uniqueIds[n % Math.max(1, uniqueIds.length)] ?? ''
     // Distinct battlefieldSkin per mock opponent — exercises the "see each player's own
     // playmat choice" feature (see skinLayers above) without needing a second real connection.
-    const mockSkins: Record<Seat, string> = { 0: 'felt', 1: 'neonGlow', 2: 'prism', 3: 'triangles' }
+    const mockSkins: Record<Seat, string> = { 0: 'felt', 1: 'neonGlow', 2: 'prism', 3: 'triangles', 4: 'felt', 5: 'felt' }
     const mk = (
       seat: Seat,
       name: string,
@@ -2288,8 +2440,10 @@ function PlaytestView({ onClose }: Props) {
       // commander here happens to already be sitting in the command zone.
       commanders: command,
     })
-    const [seatA, seatB, seatC] = ALL_SEATS.filter((s) => s !== seatForMe)
-    return [
+    const [seatA, seatB, seatC] = tableSeats.filter((s) => s !== seatForMe)
+    // A 1v1 table has room for just one mock opponent (seatB/seatC are undefined there).
+    const seated = (boards: PublicBoard[]) => boards.filter((b) => b.seat !== undefined)
+    return seated([
       mk(
         seatA,
         'Ramp Rachel',
@@ -2346,7 +2500,7 @@ function PlaytestView({ onClose }: Props) {
           { instanceId: 'mock-3c2', scryfallId: pick(11) },
         ],
       ),
-    ]
+    ])
   }
 
   function togglePreviewPod() {
@@ -2361,7 +2515,7 @@ function PlaytestView({ onClose }: Props) {
    *  opponents into the other three seats — the fastest way to exercise per-seat rendering
    *  (e.g. the top-row view rotation) without a real second client. */
   function swapMockSeat() {
-    const next = (((mockMySeat as number) + 1) % 4) as Seat
+    const next = tableSeats[(tableSeats.indexOf(mockMySeat) + 1) % tableSeats.length]
     setMockMySeat(next)
     if (mockBoards !== null) setMockBoards(buildMockBoards(next))
   }
@@ -2680,7 +2834,8 @@ function PlaytestView({ onClose }: Props) {
         {/* Hidden (not just disabled) while connected to a pod — switching would currently drop
             the connection (see handleToggleWindowMode's doc), and a control that's always visible
             but usually unclickable read as broken rather than situational. */}
-        {!inPod && (
+        {/* Also hidden at a draft match: the table has to stay inside Draft mode to get back to it. */}
+        {!inPod && !tableGame && (
           <button
             type="button"
             onClick={handleToggleWindowMode}
@@ -2724,7 +2879,7 @@ function PlaytestView({ onClose }: Props) {
           ❓
         </button>
         <button type="button" onClick={onClose}>
-          Exit Playtest
+          {closeLabel}
         </button>
       </div>
 
@@ -2820,7 +2975,7 @@ function PlaytestView({ onClose }: Props) {
                 is it" read directly on the table, instead of needing to cross-reference the
                 fixed player-panel sidebar. Both non-interactive backdrop. */}
             {inPod &&
-              ALL_SEATS.map((seat) => {
+              tableSeats.map((seat) => {
                 const seatOrig = seatOrigin(seat, CANVAS_W, CANVAS_H)
                 const o = mirror(seatOrig.x, seatOrig.y, CANVAS_W, CANVAS_H)
                 // Whichever half of the SCREEN this quadrant renders in — mirror() above already
@@ -3058,7 +3213,7 @@ function PlaytestView({ onClose }: Props) {
                 player's cards stay fully playable, only their own turn is skipped; see
                 handlePassTurn/isEliminated above). */}
             {inPod &&
-              ALL_SEATS.filter((seat) => isEliminated(seat)).map((seat) => {
+              tableSeats.filter((seat) => isEliminated(seat)).map((seat) => {
                 const seatOrig = seatOrigin(seat, CANVAS_W, CANVAS_H)
                 const o = mirror(seatOrig.x, seatOrig.y, CANVAS_W, CANVAS_H)
                 return (
@@ -3560,7 +3715,30 @@ function PlaytestView({ onClose }: Props) {
             mpJoin(code).catch(() => {})
           }}
           onLeave={mpLeave}
-          onClose={() => setMpModalOpen(false)}
+          // Waiting for a seat, there's no board of your own to go back to — the panel stays up.
+          onClose={() => {
+            if (!waitingForSeat) setMpModalOpen(false)
+          }}
+          draftMatch={
+            tableGame
+              ? {
+                  opponentName: draftOpponentName,
+                  opponentSeat: draftOpponentSeat,
+                  players: tableGame.players,
+                  onPlay: playDraftOpponent,
+                  waitingForSeat: waitingForSeat
+                    ? {
+                        seatedNames: [...boards.values()].map((b) => b.name),
+                        canSit: openDuelSeat !== null,
+                        onTakeSeat: () => {
+                          if (openDuelSeat !== null) mpRequestSeat(openDuelSeat)
+                        },
+                        onBackToDraft: onClose,
+                      }
+                    : null,
+                }
+              : null
+          }
         />
       )}
 

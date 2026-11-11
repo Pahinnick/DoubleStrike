@@ -12,7 +12,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { notifyWarning } from '../notifications'
-import { PeerConnection, type ConnectionStatus, type LocalPlayer, type RelocatedCard } from './peerConnection'
+import { PeerConnection, type ConnectionStatus, type LocalPlayer, type PeerConnectionOptions, type RelocatedCard } from './peerConnection'
 import type { GivenCard, PublicBoard, RollResult, Seat } from './protocol'
 
 export type MultiplayerRole = 'host' | 'guest'
@@ -39,7 +39,15 @@ export type MultiplayerSession = {
   isActive: boolean
   host: () => Promise<void>
   join: (roomCode: string) => Promise<void>
+  /** Open the room at `roomCode`, or join it if someone already has — lets two players meet at a
+   *  pre-agreed code (a draft table) without deciding who hosts. */
+  /** Host the room with this code, or join it if it's already open. `maxPlayers` caps the room
+   *  when this client ends up hosting it (a draft match is 2). */
+  hostOrJoin: (roomCode: string, options?: PeerConnectionOptions) => Promise<void>
   leave: () => void
+  /** Sit down at an open seat — for someone in the room without one (see PeerConnection's
+   *  maxSpectators). No-op if it's taken by the time the host hears it. */
+  requestSeat: (seat: Seat) => void
   /** Publish this client's public board to the pod. No-op when not connected. */
   broadcast: (board: PublicBoard) => void
   /** Hand control of a card to another player. No-op when not connected. */
@@ -147,9 +155,9 @@ export function useMultiplayer(
   }, [])
 
   /** Builds a connection wired to our state setters, or returns the existing one. */
-  const ensureConnection = useCallback(() => {
+  const ensureConnection = useCallback((options?: PeerConnectionOptions) => {
     if (connRef.current) return connRef.current
-    const conn = new PeerConnection(localRef.current)
+    const conn = new PeerConnection(localRef.current, options)
     conn.on('status', (s, detail) => {
       setStatus(s)
       setStatusDetail(detail ?? null)
@@ -216,6 +224,27 @@ export function useMultiplayer(
     },
     [ensureConnection],
   )
+
+  const hostOrJoin = useCallback(
+    async (code: string, options?: PeerConnectionOptions) => {
+      setRole('host')
+      try {
+        await ensureConnection(options).hostGame(code)
+      } catch (err) {
+        // Someone already opened this room (e.g. your draft opponent got to the table first): join it.
+        if ((err as { type?: string })?.type !== 'unavailable-id') throw err
+        connRef.current?.disconnect()
+        connRef.current = null
+        setRole('guest')
+        await ensureConnection().joinGame(code)
+      }
+    },
+    [ensureConnection],
+  )
+
+  const requestSeat = useCallback((seat: Seat) => {
+    connRef.current?.requestSeat(seat)
+  }, [])
 
   const leave = useCallback(() => {
     connRef.current?.disconnect()
@@ -306,6 +335,8 @@ export function useMultiplayer(
     isActive,
     host,
     join,
+    hostOrJoin,
+    requestSeat,
     leave,
     broadcast,
     giveCard,

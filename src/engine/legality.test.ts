@@ -23,6 +23,16 @@ function makeSnapshot(
 }
 
 describe('computeDeckLegality', () => {
+  it('limited: only requires 40 mainboard cards, ignoring copies and per-card legality', () => {
+    const snapshots = new Map([['x', makeSnapshot('x', 'Some Card', { standard: 'not_legal' })]])
+    const short: DeckCardRef[] = [{ scryfallId: 'x', quantity: 39, board: 'mainboard' }, { scryfallId: 'x', quantity: 20, board: 'sideboard' }]
+    const result = computeDeckLegality(short, snapshots, 'limited')
+    expect(result.isLegal).toBe(false)
+    expect(result.issues).toHaveLength(1)
+    expect(result.issues[0].reason).toMatch(/39\/40/)
+    expect(computeDeckLegality([{ scryfallId: 'x', quantity: 40, board: 'mainboard' }], snapshots, 'limited').isLegal).toBe(true)
+  })
+
   it('is legal when every card is legal in the format', () => {
     const snapshots = new Map([['a', makeSnapshot('a', 'Card A', { modern: 'legal' })]])
     const cards: DeckCardRef[] = [{ scryfallId: 'a', quantity: 4, board: 'mainboard' }]

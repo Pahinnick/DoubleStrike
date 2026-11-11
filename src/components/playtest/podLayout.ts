@@ -12,12 +12,21 @@ import { HOST_SEAT, type Seat } from '../../net/protocol'
 
 export const ALL_SEATS: readonly Seat[] = [0, 1, 2, 3]
 
+/** A 1v1 table (a draft match): just the left column — seat 0 at the bottom, seat 2 across from
+ *  it at the top. These are the first two seats a room hands out (see protocol's SEAT_JOIN_ORDER),
+ *  so a two-player room needs no re-seating, and each player still sees their own board at the
+ *  bottom (seat 2's view flips, as on the full table). */
+export const DUEL_SEATS: readonly Seat[] = [0, 2]
+
 /** A Magic color per seat, reusing the app's mana-color theme variables. */
 export const SEAT_COLORS: Record<Seat, string> = {
   0: 'var(--color-r)', // Red
   1: 'var(--color-u)', // Blue
   2: 'var(--color-w)', // White
   3: 'var(--color-g)', // Green
+  // Seats 4-5 only exist in 6-seat draft rooms, never on the 4-player VTT table.
+  4: 'var(--color-b)', // Black
+  5: 'var(--accent)', // Purple
 }
 
 export const SEAT_COLOR_NAMES: Record<Seat, string> = {
@@ -25,6 +34,8 @@ export const SEAT_COLOR_NAMES: Record<Seat, string> = {
   1: 'Blue',
   2: 'White',
   3: 'Green',
+  4: 'Black',
+  5: 'Purple',
 }
 
 /**
@@ -37,6 +48,10 @@ export const SEAT_GRID: Record<Seat, { col: 0 | 1; row: 0 | 1 }> = {
   1: { col: 1, row: 1 }, // bottom-right
   2: { col: 0, row: 0 }, // top-left
   3: { col: 1, row: 0 }, // top-right
+  // Seats 4-5 only exist in a 6-seat draft room (see protocol's DRAFT_MAX_PLAYERS) — a VTT pod is
+  // capped at 4, so these quadrants are never actually rendered. Present only so the map stays total.
+  4: { col: 0, row: 1 },
+  5: { col: 1, row: 1 },
 }
 
 /** Top-left corner of a seat's quadrant in table (surface) space, in canvas pixels. */
@@ -45,9 +60,11 @@ export function seatOrigin(seat: Seat, canvasW: number, canvasH: number): { x: n
   return { x: col * canvasW, y: row * canvasH }
 }
 
-/** Full table dimensions for a 2×2 pod. */
-export function tableSize(canvasW: number, canvasH: number): { width: number; height: number } {
-  return { width: canvasW * 2, height: canvasH * 2 }
+/** Table dimensions: just big enough for the quadrants of `seats` (the full 2×2 pod by default). */
+export function tableSize(canvasW: number, canvasH: number, seats: readonly Seat[] = ALL_SEATS): { width: number; height: number } {
+  const cols = Math.max(...seats.map((s) => SEAT_GRID[s].col)) + 1
+  const rows = Math.max(...seats.map((s) => SEAT_GRID[s].row)) + 1
+  return { width: canvasW * cols, height: canvasH * rows }
 }
 
 /** Clockwise turn order around the actual table edges: bottom-left → top-left → top-right

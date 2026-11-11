@@ -175,6 +175,7 @@ function AppShell() {
   }
 
   if (draftOpen) {
+    // Draft matches open their game table inside DraftView, so the draft lasts the whole event.
     return <DraftView onClose={() => setDraftOpen(false)} />
   }
 

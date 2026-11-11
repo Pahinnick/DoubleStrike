@@ -10,7 +10,7 @@ import CardSizeToggle from '../shared/CardSizeToggle'
 import { useDeck } from '../../state/DeckContext'
 import type { CardSizeKey } from '../../utils/cardSize'
 import { COLOR_NAMES, WUBRG, type Color } from '../../utils/colors'
-import { EMPTY_FILTERS, SORT_ORDERS, type SearchFilters, type SortOrder } from '../../utils/scryfallQuery'
+import { EMPTY_FILTERS, SORT_ORDERS, type SearchFilters, type SortOrder, scryfallFormatOf } from '../../utils/scryfallQuery'
 import AdvancedSearchPanel from './AdvancedSearchPanel'
 import { useCommanderRecommendationsContext } from '../shared/CommanderRecommendationsContext'
 import CardResultGrid from './CardResultGrid'
@@ -34,7 +34,9 @@ function SearchPanel({ onAddCard, text, onTextChange, expanded, onExpand, onColl
   const [advancedOpen, setAdvancedOpen] = useState(false)
   // The modal itself is mounted once in App.tsx — the deck list's Commanders header raises it too.
   const { setOpen: setRecommendationsOpen } = useCommanderRecommendationsContext()
-  const filters = useMemo<SearchFilters>(() => ({ ...localFilters, format: deck.format }), [localFilters, deck.format])
+  // A Limited deck has no Scryfall format to filter by (you play whatever you drafted).
+  const searchFormat = scryfallFormatOf(deck.format)
+  const filters = useMemo<SearchFilters>(() => ({ ...localFilters, format: searchFormat }), [localFilters, searchFormat])
   const { results, status, error, hasMore, loadingMore, loadMore } = useCardSearch(text, filters)
   const nameSuggestions = useNameAutocomplete(text)
   const membership = useDeckMembership()
@@ -126,7 +128,7 @@ function SearchPanel({ onAddCard, text, onTextChange, expanded, onExpand, onColl
       />
 
       <div className="search-filters">
-        {deck.format && <span className="search-format-badge">Filtering to {deck.format}</span>}
+        {searchFormat && <span className="search-format-badge">Filtering to {searchFormat}</span>}
         {!advancedOpen && (
           <TypeMultiSelect
             types={localFilters.types}

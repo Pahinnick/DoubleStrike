@@ -21,11 +21,15 @@ import { parseDraftMessage, type DraftMessage } from './draftProtocol'
  *  added to PublicBoard so far (those were purely additive/optional). */
 export const PROTOCOL_VERSION = 2
 
-/** 4-player Commander pod. Seats are 0..3; the host always takes seat 0. */
+/** 4-player Commander pod. VTT seats are 0..3; the host always takes seat 0. */
 export const MAX_PLAYERS = 4
+/** Draft rooms seat up to 6, as three 1v1 tables of two (seats 0-1, 2-3, 4-5) — the VTT's 2×2
+ *  table is the only thing that caps a pod at 4. Seats 4 and 5 only ever exist in a draft room
+ *  (see PeerConnection's maxPlayers). */
+export const DRAFT_MAX_PLAYERS = 6
 export const HOST_SEAT = 0
 
-export type Seat = 0 | 1 | 2 | 3
+export type Seat = 0 | 1 | 2 | 3 | 4 | 5
 
 /** A visual tag for a counter pile — either a player-chosen generic color (not tied to Magic color
  *  identity, just a way to tell independent piles on the same card apart, e.g. a green +1/+1-style
@@ -196,12 +200,14 @@ export type HelloMessage = {
   name: string
   deckFormat: string
 }
-/** Host → newly-joined guest: "you are `playerId`, seated at `seat`." */
+/** Host → newly-joined guest: "you are `playerId`, seated at `seat`." `seat: null` — you're in
+ *  the room but every seat is taken (a draft match room lets people wait for one: see
+ *  PeerConnection's `maxSpectators`); a later WELCOME with a seat follows once they take one. */
 export type WelcomeMessage = {
   type: 'WELCOME'
   v: number
   playerId: string
-  seat: Seat
+  seat: Seat | null
 }
 /** Any client → everyone (host relays): my whole public board, as of now. */
 export type StateMessage = {
@@ -545,7 +551,7 @@ export function parseMessage(raw: unknown): ParseResult {
       }
       return { ok: false, reason: 'malformed' }
     case 'WELCOME':
-      if (isNonEmptyString(m.playerId) && isSeat(m.seat)) {
+      if (isNonEmptyString(m.playerId) && (m.seat === null || isSeat(m.seat))) {
         return { ok: true, msg: obj as WelcomeMessage }
       }
       return { ok: false, reason: 'malformed' }
@@ -648,11 +654,17 @@ export function deserialize(raw: unknown): NetMessage | null {
 // host), then 3, then 1 — matching podLayout's SEAT_GRID/TURN_ORDER (0 bottom-left,
 // 2 top-left, 3 top-right, 1 bottom-right), so the pod fills around the table in
 // the same order turns pass, not by jumping to the opposite corner first.
-const SEAT_JOIN_ORDER: readonly Seat[] = [0, 2, 3, 1]
+export const SEAT_JOIN_ORDER: readonly Seat[] = [0, 2, 3, 1]
 
-/** Next unoccupied seat in join-preference order (host, then clockwise around the table), or null when the pod is full. */
-export function nextFreeSeat(occupied: readonly number[]): Seat | null {
-  for (const s of SEAT_JOIN_ORDER) {
+/** A draft room's seats in order around the table — also the default order joiners fill them, so
+ *  the first two players share table 1, the next two table 2, and so on. Players can then move to
+ *  any open seat themselves (see DraftSeatRequestMessage). */
+export const DRAFT_SEAT_ORDER: readonly Seat[] = [0, 1, 2, 3, 4, 5]
+
+/** Next unoccupied seat in `order` (VTT: host, then clockwise around the table), or null when the
+ *  room is full. */
+export function nextFreeSeat(occupied: readonly number[], order: readonly Seat[] = SEAT_JOIN_ORDER): Seat | null {
+  for (const s of order) {
     if (!occupied.includes(s)) return s
   }
   return null
@@ -695,6 +707,42 @@ export function generateRoomCode(random: () => number = secureRandom): string {
   return code
 }
 
+/** A draft match's table player id: the draft seat in front, so everyone in the room can tell
+ *  which drafter sits where (see draftSeatOfMatchPlayer) without a protocol field for it. */
+export function draftMatchPlayerId(draftSeat: Seat, id: string): string {
+  return `draft${draftSeat}:${id}`
+}
+
+/** The draft seat behind a draftMatchPlayerId, or null for any other player id. */
+export function draftSeatOfMatchPlayer(playerId: string): Seat | null {
+  const match = /^draft([0-5]):/.exec(playerId)
+  return match ? (Number(match[1]) as Seat) : null
+}
+
+/** The game-table room for a post-draft 1v1 between two of the draft's seats: worked out from the
+ *  draft's own room code and the pair of seats (in either order), so both players arrive at the
+ *  same code without exchanging anything (see useMultiplayer's hostOrJoin — whoever gets there
+ *  first hosts). Each pair has its own room, so players can switch opponents between matches.
+ *  Only someone who knew the draft code can derive it, same access level as the draft itself. */
+export function matchRoomCode(draftRoomCode: string, seatA: Seat, seatB: Seat): string {
+  const [low, high] = seatA < seatB ? [seatA, seatB] : [seatB, seatA]
+  // FNV-1a over the input, re-mixed per character so every position depends on all of it.
+  let h = 0x811c9dc5
+  for (const ch of `${draftRoomCode.trim().toUpperCase()}#match${low}-${high}`) {
+    h ^= ch.charCodeAt(0)
+    h = Math.imul(h, 0x01000193) >>> 0
+  }
+  let code = ''
+  for (let i = 0; i < ROOM_CODE_LENGTH; i++) {
+    // `>>> 0` after every step keeps h unsigned — `^` alone yields a signed (possibly negative) int.
+    h = (h ^ (h >>> 13)) >>> 0
+    h = Math.imul(h, 0x5bd1e995) >>> 0
+    h = (h ^ (h >>> 15)) >>> 0
+    code += CODE_ALPHABET[h % CODE_ALPHABET.length]
+  }
+  return code
+}
+
 /** Normalizes user input (case, surrounding whitespace) then maps to the peer id. */
 export function roomCodeToPeerId(code: string): string {
   return PEER_ID_PREFIX + code.trim().toUpperCase()
@@ -726,7 +774,7 @@ export function isNonEmptyString(v: unknown): v is string {
 }
 
 export function isSeat(v: unknown): v is Seat {
-  return v === 0 || v === 1 || v === 2 || v === 3
+  return v === 0 || v === 1 || v === 2 || v === 3 || v === 4 || v === 5
 }
 
 const COUNTER_COLOR_IDS: readonly CounterColor[] = [

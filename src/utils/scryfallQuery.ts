@@ -16,6 +16,18 @@ export const FORMATS = [
 
 export type Format = (typeof FORMATS)[number]
 
+/** Formats a deck can be set to. Everything in FORMATS is a Scryfall format (its own legality field,
+ *  and an `f:` search filter); `limited` is the one addition — a deck built from a draft's pool, where
+ *  any card you opened is playable, so there's no per-card legality or search filter, just a
+ *  40-card minimum (see engine/legality.ts). */
+export const DECK_FORMATS = [...FORMATS, 'limited'] as const
+export type DeckFormat = (typeof DECK_FORMATS)[number]
+
+/** The Scryfall format to filter searches / check per-card legality against, if any. */
+export function scryfallFormatOf(format: DeckFormat | undefined): Format | undefined {
+  return format === 'limited' ? undefined : format
+}
+
 /** Matches Scryfall's own comparator vocabulary so query clauses read exactly like scryfall.com/advanced. */
 export type NumericComparator = '=' | '!=' | '<' | '<=' | '>' | '>='
 

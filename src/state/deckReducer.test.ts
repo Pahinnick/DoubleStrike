@@ -67,6 +67,23 @@ describe('deckReducer', () => {
     expect(deck.cards).toEqual([{ scryfallId: 'abc', quantity: 1, board: 'sideboard' }])
   })
 
+  it('moves single copies between boards, splitting and merging stacks', () => {
+    let deck = createEmptyDeck('Test')
+    for (let i = 0; i < 3; i++) deck = deckReducer(deck, { type: 'ADD_CARD', scryfallId: 'abc', board: 'sideboard' })
+    deck = deckReducer(deck, { type: 'SET_CARD_FOIL', scryfallId: 'abc', board: 'sideboard', foil: 'classic' })
+    deck = deckReducer(deck, { type: 'MOVE_CARD_COPIES', scryfallId: 'abc', fromBoard: 'sideboard', toBoard: 'mainboard', count: 1 })
+    expect(deck.cards.find((c) => c.board === 'sideboard')?.quantity).toBe(2)
+    expect(deck.cards.find((c) => c.board === 'mainboard')).toMatchObject({ quantity: 1, foil: 'classic' })
+    deck = deckReducer(deck, { type: 'MOVE_CARD_COPIES', scryfallId: 'abc', fromBoard: 'sideboard', toBoard: 'mainboard', count: 5 })
+    expect(deck.cards).toHaveLength(1)
+    expect(deck.cards[0]).toMatchObject({ board: 'mainboard', quantity: 3 })
+  })
+
+  it('ignores a copy move with nothing to move', () => {
+    const deck = createEmptyDeck('Test')
+    expect(deckReducer(deck, { type: 'MOVE_CARD_COPIES', scryfallId: 'nope', fromBoard: 'sideboard', toBoard: 'mainboard', count: 1 })).toBe(deck)
+  })
+
   it('renames the deck', () => {
     const deck = createEmptyDeck('Old Name')
     const next = deckReducer(deck, { type: 'RENAME_DECK', name: 'New Name' })

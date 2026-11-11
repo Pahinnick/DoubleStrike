@@ -32,7 +32,8 @@ type DeckListContextValue = {
   decks: DeckSummary[]
   activeDeckId: string
   switchDeck: (id: string) => Promise<void>
-  createDeck: (name: string) => Promise<void>
+  /** Creates, saves and switches to a new empty deck; resolves with its id. */
+  createDeck: (name: string) => Promise<string>
   deleteDeck: (id: string) => Promise<void>
   renameDeck: (id: string, name: string) => Promise<void>
 }
@@ -136,6 +137,7 @@ export function DeckWorkspaceProvider({ profileId, children }: { profileId: stri
       dispatch({ type: 'LOAD_DECK', deck: newDeck })
       await storage.setLastOpenedDeckId(profileId, newDeck.id)
       await refreshDecks()
+      return newDeck.id
     },
     [profileId, refreshDecks],
   )

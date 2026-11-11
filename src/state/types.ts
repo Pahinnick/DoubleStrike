@@ -1,4 +1,4 @@
-import type { Format } from '../utils/scryfallQuery'
+import type { DeckFormat } from '../utils/scryfallQuery'
 
 export type Board = 'mainboard' | 'sideboard'
 
@@ -37,7 +37,7 @@ export type ManaBaseOverride = {
 export type Deck = {
   id: string
   name: string
-  format?: Format
+  format?: DeckFormat
   cards: DeckCard[]
   categories: string[]
   manaBaseOverride?: ManaBaseOverride
@@ -52,7 +52,7 @@ export type Deck = {
 export type DeckSummary = {
   id: string
   name: string
-  format?: Format
+  format?: DeckFormat
   cardCount: number
   updatedAt: string
   /** scryfallIds of every card flagged `isCommander`, in deck order — 0 for non-commander formats,

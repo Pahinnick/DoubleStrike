@@ -14,6 +14,7 @@ export type CardFace = {
   mana_cost: string
   cmc?: number
   type_line?: string
+  oracle_text?: string
   colors?: string[]
   image_uris?: ImageUris
 }
@@ -50,6 +51,9 @@ export type ScryfallCard = {
   mana_cost?: string
   cmc: number
   type_line: string
+  oracle_text?: string
+  /** Frame treatments, e.g. 'colorshifted' (Planar Chaos) — draft collation reads it. */
+  frame_effects?: string[]
   colors?: string[]
   color_identity: string[]
   produced_mana?: string[]
@@ -60,6 +64,8 @@ export type ScryfallCard = {
   set_name?: string
   collector_number?: string
   released_at?: string
+  /** 'common' | 'uncommon' | 'rare' | 'mythic' for regular cards; 'special'/'bonus' for oddities. */
+  rarity?: string
   /** EDHREC popularity rank across all Commander decks — 1 is the single most-played card
    *  (Sol Ring), so LOWER is more popular. Absent for cards EDHREC has no data on (many
    *  Un-set/Alchemy/non-EDH-legal cards), which is a real answer, not a zero. */
@@ -67,6 +73,18 @@ export type ScryfallCard = {
   /** Related cards (tokens, meld halves, combo pieces). Present only when the card has any. */
   all_parts?: RelatedCard[]
   prices?: CardPrices
+}
+
+/** One entry of Scryfall's `/sets` list (only the fields this app reads). */
+export type ScryfallSet = {
+  code: string
+  name: string
+  set_type: string
+  released_at?: string
+  card_count: number
+  digital: boolean
+  /** Set this one belongs to — e.g. OTJ's "Breaking News" bonus sheet (OTP) has parent `otj`. */
+  parent_set_code?: string
 }
 
 export type ScryfallList<T> = {

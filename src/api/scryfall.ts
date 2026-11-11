@@ -1,5 +1,5 @@
 import type { SortOrder } from '../utils/scryfallQuery'
-import type { BulkDataInfo, CardIdentifier, ImageUris, ScryfallCard, ScryfallCatalog, ScryfallError, ScryfallList } from './scryfallTypes'
+import type { BulkDataInfo, CardIdentifier, ImageUris, ScryfallCard, ScryfallCatalog, ScryfallError, ScryfallList, ScryfallSet } from './scryfallTypes'
 
 const API_BASE = 'https://api.scryfall.com'
 // Scryfall asks integrations to stay under ~10 req/sec; spacing requests by
@@ -62,8 +62,17 @@ const searchCache = new Map<string, CachedEntry<ScryfallList<ScryfallCard>>>()
 const printsCache = new Map<string, CachedEntry<ScryfallCard[]>>()
 const cardCache = new Map<string, ScryfallCard>()
 
+/** Every fetched card passes through here (see cacheCards), so this is where Scryfall's one gap in
+ *  `type_line` gets filled: reversible cards (e.g. Lorwyn Eclipsed's and Tarkir: Dragonstorm's
+ *  reversible shocklands) carry it only on their faces, and code all over the app reads the
+ *  top-level field. Same fallback toSnapshot uses. Mutates in place so callers' arrays agree. */
+function normalizeCard(card: ScryfallCard): void {
+  if (typeof card.type_line !== 'string') card.type_line = card.card_faces?.[0]?.type_line ?? ''
+}
+
 function cacheCards(cards: ScryfallCard[]): void {
   for (const card of cards) {
+    normalizeCard(card)
     cardCache.set(card.id, card)
   }
 }
@@ -246,6 +255,48 @@ export async function getCardsByIdentifiers(identifiers: CardIdentifier[], optio
   }
 
   return resolved
+}
+
+let setsPromise: Promise<ScryfallSet[]> | null = null
+
+/** Every set Scryfall knows about (one request, ~1000 entries), fetched once per session. A failed
+ *  request isn't cached, so the next call retries. */
+export function getAllSets(): Promise<ScryfallSet[]> {
+  if (!setsPromise) {
+    setsPromise = scryfallFetch<ScryfallList<ScryfallSet>>(`${API_BASE}/sets`)
+      .then((list) => list.data)
+      .catch((err: unknown) => {
+        setsPromise = null
+        throw err
+      })
+  }
+  return setsPromise
+}
+
+/** Upper bound on pages for searchAllPrints — a booster pool is ~2-5 pages of 175; this only stops
+ *  a runaway query from paging forever. */
+const MAX_SEARCH_PAGES = 12
+
+/** Every printing matching `query`, following Scryfall's pagination to the end. Unlike searchCards
+ *  (one page, oracle-deduped, for the search panel), this asks for `unique=prints` — a booster is
+ *  made of specific printings, and basic lands in particular are all one oracle card. A query that
+ *  matches nothing resolves to [] rather than throwing (Scryfall answers 404 for "no cards"). */
+export async function searchAllPrints(query: string): Promise<ScryfallCard[]> {
+  const cards: ScryfallCard[] = []
+  let url: string | undefined = `${API_BASE}/cards/search?q=${encodeURIComponent(query)}&unique=prints`
+  for (let page = 0; url && page < MAX_SEARCH_PAGES; page++) {
+    let result: ScryfallList<ScryfallCard>
+    try {
+      result = await scryfallFetch<ScryfallList<ScryfallCard>>(url)
+    } catch (err) {
+      if (err instanceof ScryfallApiError && err.status === 404) break
+      throw err
+    }
+    cards.push(...result.data)
+    url = result.has_more ? result.next_page : undefined
+  }
+  cacheCards(cards)
+  return cards
 }
 
 /**

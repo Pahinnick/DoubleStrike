@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { getCastingManaCost, getDisplayImage } from './scryfall'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { getCastingManaCost, getDisplayImage, searchAllPrints } from './scryfall'
 import type { ScryfallCard } from './scryfallTypes'
 
 function makeCard(overrides: Partial<ScryfallCard>): ScryfallCard {
@@ -75,5 +75,24 @@ describe('getDisplayImage', () => {
   it('returns undefined when there are no images anywhere', () => {
     const card = makeCard({})
     expect(getDisplayImage(card)).toBeUndefined()
+  })
+})
+
+describe('fetched cards', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it("fill in a reversible card's missing top-level type line from its face", async () => {
+    // Shaped like Scryfall's reversible shocklands (Lorwyn Eclipsed): no top-level type_line.
+    const reversible = { ...makeCard({ id: 'rev-1', name: 'Blood Crypt // Blood Crypt', layout: 'reversible_card' }), type_line: undefined }
+    reversible.card_faces = [
+      { name: 'Blood Crypt', mana_cost: '', type_line: 'Land — Swamp Mountain' },
+      { name: 'Blood Crypt', mana_cost: '', type_line: 'Land — Swamp Mountain' },
+    ]
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ object: 'list', has_more: false, data: [reversible] }), { status: 200 })),
+    )
+    const [card] = await searchAllPrints('set:ecl is:booster')
+    expect(card.type_line).toBe('Land — Swamp Mountain')
   })
 })

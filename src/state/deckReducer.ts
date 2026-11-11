@@ -6,6 +6,8 @@ export type DeckAction =
   | { type: 'REMOVE_CARD'; scryfallId: string; board: Board }
   | { type: 'SET_QUANTITY'; scryfallId: string; board: Board; quantity: number }
   | { type: 'MOVE_CARD_BOARD'; scryfallId: string; fromBoard: Board; toBoard: Board }
+  /** Move only `count` copies (not the whole stack) — e.g. one card from a drafted pool into the deck. */
+  | { type: 'MOVE_CARD_COPIES'; scryfallId: string; fromBoard: Board; toBoard: Board; count: number }
   | { type: 'SET_FORMAT'; format: Deck['format'] }
   | { type: 'SET_MANA_OVERRIDE'; override: ManaBaseOverride | undefined }
   | { type: 'SET_LAND_DROP_CONFIDENCE'; confidence: number }
@@ -98,6 +100,20 @@ export function deckReducer(deck: Deck, action: DeckAction): Deck {
           c.scryfallId === action.scryfallId && c.board === action.fromBoard ? { ...c, board: action.toBoard } : c,
         ),
       })
+
+    case 'MOVE_CARD_COPIES': {
+      const source = deck.cards.find((c) => c.scryfallId === action.scryfallId && c.board === action.fromBoard)
+      const moving = Math.min(Math.max(0, Math.floor(action.count)), source?.quantity ?? 0)
+      if (!source || moving === 0 || action.fromBoard === action.toBoard) return deck
+      const target = deck.cards.find((c) => c.scryfallId === action.scryfallId && c.board === action.toBoard)
+      let cards = deck.cards
+        .map((c) => (c === source ? { ...c, quantity: c.quantity - moving } : c))
+        .filter((c) => c.quantity > 0)
+      cards = target
+        ? cards.map((c) => (c === target ? { ...c, quantity: c.quantity + moving, foil: c.foil ?? source.foil } : c))
+        : [...cards, { ...source, board: action.toBoard, quantity: moving, isCommander: undefined }]
+      return touch({ ...deck, cards })
+    }
 
     case 'SET_FORMAT':
       return touch({ ...deck, format: action.format })

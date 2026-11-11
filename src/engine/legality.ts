@@ -1,6 +1,6 @@
 import type { CardSnapshot } from '../storage/cardCache'
 import type { Board } from '../state/types'
-import type { Format } from '../utils/scryfallQuery'
+import type { DeckFormat, Format } from '../utils/scryfallQuery'
 
 /** `board` is undefined for deck-wide issues (no commander, wrong deck size) that aren't tied to
  *  a specific card — present for every other issue so callers can distinguish, e.g., a singleton
@@ -10,6 +10,8 @@ export type LegalityIssue = { scryfallId: string; name: string; reason: string; 
 export type DeckCardRef = { scryfallId: string; quantity: number; board: Board; isCommander?: boolean; isToken?: boolean }
 
 const COMMANDER_DECK_SIZE = 100
+/** Limited (draft/sealed) decks: at least 40 cards, any number of copies of anything you opened. */
+export const LIMITED_MIN_DECK_SIZE = 40
 
 export function getCardLegalityStatus(card: CardSnapshot, format: Format): string {
   return card.legalities[format] ?? 'not_legal'
@@ -84,6 +86,14 @@ function computeCommanderIssues(cards: DeckCardRef[], snapshots: Map<string, Car
   return issues
 }
 
+/** Limited's only construction rule: a 40-card minimum mainboard. Copies and card legality don't
+ *  matter — you play what you opened (basic lands are free and unlimited). */
+function computeLimitedIssues(cards: DeckCardRef[]): LegalityIssue[] {
+  const total = cards.filter((c) => c.board === 'mainboard' && !c.isToken).reduce((sum, c) => sum + c.quantity, 0)
+  if (total >= LIMITED_MIN_DECK_SIZE) return []
+  return [{ scryfallId: '__deck-size__', name: 'Deck', reason: `${total}/${LIMITED_MIN_DECK_SIZE} cards (limited decks need at least ${LIMITED_MIN_DECK_SIZE})` }]
+}
+
 /**
  * Checks every card in the deck (all boards) against Scryfall's per-format
  * legality data, plus (for commander) the deck-construction rules that
@@ -92,8 +102,12 @@ function computeCommanderIssues(cards: DeckCardRef[], snapshots: Map<string, Car
 export function computeDeckLegality(
   cards: DeckCardRef[],
   snapshots: Map<string, CardSnapshot>,
-  format: Format,
+  format: DeckFormat,
 ): { isLegal: boolean; issues: LegalityIssue[] } {
+  if (format === 'limited') {
+    const issues = computeLimitedIssues(cards)
+    return { isLegal: issues.length === 0, issues }
+  }
   const issues: LegalityIssue[] = []
 
   for (const deckCard of cards) {

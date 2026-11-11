@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { ALL_SEATS, buildSpinSequence, completesRound, nextActiveSeat, pickRandomSeat, seatOrigin, tableSize } from './podLayout'
+import { SEAT_JOIN_ORDER } from '../../net/protocol'
+import { ALL_SEATS, buildSpinSequence, DUEL_SEATS, completesRound, nextActiveSeat, pickRandomSeat, seatOrigin, tableSize } from './podLayout'
 
 const W = 2400
 const H = 1600
@@ -16,6 +17,13 @@ describe('podLayout', () => {
     expect(seatOrigin(1, W, H)).toEqual({ x: W, y: H }) // bottom-right
     expect(seatOrigin(2, W, H)).toEqual({ x: 0, y: 0 }) // top-left
     expect(seatOrigin(3, W, H)).toEqual({ x: W, y: 0 }) // top-right
+  })
+
+  it('a 1v1 (draft match) table is just two boards, the first two seats a room hands out, facing each other', () => {
+    expect(tableSize(W, H, DUEL_SEATS)).toEqual({ width: W, height: 2 * H })
+    expect(seatOrigin(DUEL_SEATS[0], W, H)).toEqual({ x: 0, y: H }) // bottom
+    expect(seatOrigin(DUEL_SEATS[1], W, H)).toEqual({ x: 0, y: 0 }) // top, across from it
+    expect(SEAT_JOIN_ORDER.slice(0, 2)).toEqual([...DUEL_SEATS])
   })
 
   it('every quadrant sits within the full table bounds', () => {
