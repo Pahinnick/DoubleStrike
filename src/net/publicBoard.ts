@@ -11,7 +11,7 @@
  * scryfallId ever appears in the output).
  */
 import type { GameState } from '../state/gameReducer'
-import { zoneCards } from '../state/gameReducer'
+import { isOwnCommander, zoneCards } from '../state/gameReducer'
 import { MANA_COLOR_KEYS, type ManaColorKey } from '../utils/colors'
 import { FACE_DOWN_SCRYFALL_ID, type CounterPile, type PtCounterPile, type PublicBoard, type PublicCard, type PublicPileCard, type Seat } from './protocol'
 
@@ -126,7 +126,7 @@ export function toPublicBoard(state: GameState, identity: LocalIdentity): Public
     exile: zoneCards(state, 'exile').map(toPublicPileCard),
     command: zoneCards(state, 'command').map(toPublicPileCard),
     // Fixed commander identity, independent of current zone — see PublicBoard.commanders' doc.
-    commanders: state.cards.filter((c) => c.isCommander).map(toPublicCommander),
+    commanders: state.cards.filter((c) => isOwnCommander(c, identity.seat)).map(toPublicCommander),
   }
   // Deliberate, opt-in exception to the hand's usual privacy — same masked-by-default pattern as
   // face-down cards, just inverted: only sent while the player has explicitly toggled it on.

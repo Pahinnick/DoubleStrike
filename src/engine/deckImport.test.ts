@@ -83,10 +83,45 @@ describe('parseArchidektExport', () => {
     expect(card.set).toBe('ecl')
   })
 
-  it('skips lines that do not match the expected format instead of throwing', () => {
+  it('keeps a line it cannot place as a by-name entry instead of dropping it', () => {
+    // Dropped lines never reached the import's "couldn't find" list, so the deck just came out
+    // short with no sign of what was missing.
     const cards = parseArchidektExport('not a real decklist line\n\n1x Fog (m11) 173 [Protection]')
-    expect(cards).toHaveLength(1)
-    expect(cards[0].name).toBe('Fog')
+    expect(cards.map((c) => c.name)).toEqual(['not a real decklist line', 'Fog'])
+    expect(cards[0]).toMatchObject({ quantity: 1, set: '', collectorNumber: '' })
+  })
+
+  it('parses lines without the x, without a printing, and without a quantity', () => {
+    const cards = parseArchidektExport(['1 Command Tower (cmm) 380', '1x Counterspell', 'Sol Ring', '3 Island (ONE)'].join('\n'))
+    expect(cards.map((c) => [c.quantity, c.name, c.set, c.collectorNumber])).toEqual([
+      [1, 'Command Tower', 'cmm', '380'],
+      [1, 'Counterspell', '', ''],
+      [1, 'Sol Ring', '', ''],
+      [3, 'Island', 'one', ''],
+    ])
+  })
+
+  it('accepts any finish marker, not just *F*', () => {
+    const [card] = parseArchidektExport('1x Mana Crypt (2xm) 361 *E* [Ramp]')
+    expect(card).toMatchObject({ name: 'Mana Crypt', set: '2xm', collectorNumber: '361', category: 'Ramp' })
+  })
+
+  it('reads section headers in place of per-line tags', () => {
+    const text = ['About', 'Name My Deck', '', 'Commander', '1 Atraxa, Praetors\' Voice', '', 'Deck', '1 Sol Ring', '', 'Sideboard:', '1 Fog'].join('\n')
+    const cards = parseArchidektExport(text)
+    expect(cards.map((c) => [c.name, c.isCommander, c.isMaybeboard])).toEqual([
+      ["Atraxa, Praetors' Voice", true, false],
+      ['Sol Ring', false, false],
+      ['Fog', false, true],
+    ])
+  })
+
+  it('ignores comments, a byte-order mark and Windows line endings', () => {
+    const cards = parseArchidektExport('\uFEFF1x Fog (m11) 173\r\n// a note\r\n# another\r\n2 Island\r\n')
+    expect(cards.map((c) => [c.quantity, c.name])).toEqual([
+      [1, 'Fog'],
+      [2, 'Island'],
+    ])
   })
 
   it('keeps the trimmed original line as sourceLine, for surfacing next to a failed match', () => {
@@ -276,6 +311,29 @@ describe('matchParsedCards', () => {
     const { matches, missing } = matchParsedCards(parsed, [])
     expect(matches).toHaveLength(0)
     expect(missing).toEqual(parsed)
+  })
+
+  it('matches an entry with no printing by name, including a front-face or unaccented name', () => {
+    const parsed = [
+      parsedCard({ name: 'Counterspell', set: '', collectorNumber: '' }),
+      parsedCard({ name: 'Delver of Secrets', set: '', collectorNumber: '' }),
+      parsedCard({ name: "Lim-Dul's Vault", set: '', collectorNumber: '' }),
+      parsedCard({ name: 'Not A Card', set: '', collectorNumber: '' }),
+    ]
+    const resolved = [
+      { id: 'cs', name: 'Counterspell', set: 'cmm', collector_number: '81' },
+      { id: 'delver', name: 'Delver of Secrets // Insectile Aberration', set: 'isd', collector_number: '51' },
+      { id: 'vault', name: "Lim-D\u00fbl's Vault", set: 'all', collector_number: '107' },
+    ]
+    const { matches, missing } = matchParsedCards(parsed, resolved)
+    expect(matches.map((m) => m.card.id)).toEqual(['cs', 'delver', 'vault'])
+    expect(missing.map((m) => m.name)).toEqual(['Not A Card'])
+  })
+
+  it('does not match a printing-specific entry by name alone', () => {
+    const parsed = [parsedCard({ name: 'Plains', set: 'lea', collectorNumber: '999' })]
+    const resolved = [{ id: 'other', name: 'Plains', set: 'lea', collector_number: '281' }]
+    expect(matchParsedCards(parsed, resolved).missing).toHaveLength(1)
   })
 
   it('does not let one entry\'s collector number match another set\'s same-numbered card', () => {

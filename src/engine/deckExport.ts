@@ -42,7 +42,8 @@ function resolveAndSort(cards: DeckCard[], cardsById: Map<string, ScryfallCard>)
 function buildTag(deckCard: DeckCard, card: ScryfallCard): string {
   if (deckCard.isCommander) return 'Commander{top}'
   if (deckCard.board === 'sideboard') return 'Maybeboard'
-  return deckCard.category ?? getPrimaryTypeGroup(card.type_line)
+  // Reversible-layout printings have no top-level type_line — it only exists per face.
+  return deckCard.category ?? getPrimaryTypeGroup(card.type_line ?? card.card_faces?.[0]?.type_line ?? '')
 }
 
 /**

@@ -37,6 +37,11 @@ export const KEYWORD_COUNTERS: { id: CounterColor; label: string; swatch: string
 
 const ALL_COUNTER_KINDS: { id: CounterColor; swatch: string }[] = [...COUNTER_COLORS, ...KEYWORD_COUNTERS]
 
+/** True for the keyword markers (Flying, Hexproof…), as opposed to the freeform colour piles. */
+export function isKeywordCounter(color: CounterColor): boolean {
+  return KEYWORD_COUNTERS.some((k) => k.id === color)
+}
+
 export function swatchFor(color: CounterColor): string {
   return ALL_COUNTER_KINDS.find((c) => c.id === color)?.swatch ?? '#8a8a94'
 }

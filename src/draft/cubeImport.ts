@@ -1,4 +1,4 @@
-import { getCardsByIdentifiers } from '../api/scryfall'
+import { resolveCardsByIdentifiers } from '../api/scryfall'
 import type { ScryfallCard } from '../api/scryfallTypes'
 import { saveSnapshots } from '../storage/cardCache'
 import type { CubeCard } from './types'
@@ -30,20 +30,53 @@ export type ResolvedCubeList = {
   missing: ParsedCubeLine[]
 }
 
-/** Resolves parsed cube lines against Scryfall by name (case-insensitive) and caches the
- *  resolved cards locally, same as deck import already does. Lines that don't resolve are
- *  returned in `missing` for a fixup UI to offer suggestions on. */
+/** Case- and accent-insensitive, so a name typed without its diacritics still matches. */
+function nameKey(name: string): string {
+  return name
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase()
+}
+
+/** Thrown when Scryfall couldn't be reached for some of the list — as opposed to cards it
+ *  looked up and didn't find, which come back in `missing`. */
+export class CubeLookupError extends Error {}
+
+/** Resolves parsed cube lines against Scryfall by name and caches the resolved cards locally,
+ *  same as deck import already does. Lines that don't resolve are returned in `missing` for a
+ *  fixup UI to offer suggestions on. Throws CubeLookupError if any lookup request failed: those
+ *  cards aren't missing, and reporting them as "couldn't find" saved a quietly shorter cube. */
 export async function resolveCubeList(lines: ParsedCubeLine[]): Promise<ResolvedCubeList> {
-  const identifiers = lines.map((l) => ({ name: l.name }))
-  const resolved = await getCardsByIdentifiers(identifiers)
-  const byName = new Map(resolved.map((card) => [card.name.toLowerCase(), card]))
+  // A line with a leading number is looked up both ways. "3 Sol Ring" is three Sol Rings, but
+  // "1996 World Champion" and "50 Feet of Rope" are card names that start with a number, and
+  // only Scryfall can say which reading is a real card.
+  const names = new Set<string>()
+  for (const line of lines) {
+    names.add(line.name)
+    if (line.sourceLine !== line.name) names.add(line.sourceLine)
+  }
+  const { cards: resolved, failed } = await resolveCardsByIdentifiers([...names].map((name) => ({ name })))
+  if (failed.length > 0) throw new CubeLookupError('Scryfall lookup failed')
+
+  // Keyed by full name and by front face: a double-faced card listed as "Delver of Secrets"
+  // comes back named "Delver of Secrets // Insectile Aberration".
+  const byName = new Map<string, ScryfallCard>()
+  for (const card of resolved) {
+    for (const key of [nameKey(card.name), nameKey(card.name.split(' // ')[0])]) {
+      if (!byName.has(key)) byName.set(key, card)
+    }
+  }
 
   const cards: CubeCard[] = []
   const missing: ParsedCubeLine[] = []
   for (const line of lines) {
-    const card = byName.get(line.name.toLowerCase())
-    if (card) {
-      cards.push({ scryfallId: card.id, quantity: line.quantity })
+    const asCounted = byName.get(nameKey(line.name))
+    const asWholeLine = line.sourceLine !== line.name ? byName.get(nameKey(line.sourceLine)) : undefined
+    if (asCounted) {
+      cards.push({ scryfallId: asCounted.id, quantity: line.quantity })
+    } else if (asWholeLine) {
+      cards.push({ scryfallId: asWholeLine.id, quantity: 1 })
     } else {
       missing.push(line)
     }

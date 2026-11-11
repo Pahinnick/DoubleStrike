@@ -131,3 +131,27 @@ describe('buildSpinSequence', () => {
     expect(buildSpinSequence([], 1)).toEqual([1])
   })
 })
+
+describe('completesRound — measured from whoever went first', () => {
+  // Table order is 0 -> 2 -> 3 -> 1.
+  const all = [0, 1, 2, 3] as const
+
+  it('does not tick after one turn when someone other than seat 0 went first', () => {
+    // Seat 1 went first and passes to seat 0: nobody else has had a turn yet.
+    expect(completesRound(1, all, 1)).toBe(false)
+    // The old head-of-the-ring measure got this wrong.
+    expect(completesRound(1, all)).toBe(true)
+  })
+
+  it('ticks when the turn comes back round to the first player', () => {
+    expect(completesRound(0, all, 1)).toBe(false)
+    expect(completesRound(2, all, 1)).toBe(false)
+    expect(completesRound(3, all, 1)).toBe(true)
+  })
+
+  it('ticks when the turn passes over a first player who is out', () => {
+    // Seat 1 went first but is no longer in the rotation: 3 passes straight on to 0.
+    expect(completesRound(3, [0, 2, 3], 1)).toBe(true)
+    expect(completesRound(0, [0, 2, 3], 1)).toBe(false)
+  })
+})

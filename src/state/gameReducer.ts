@@ -29,7 +29,8 @@ export type GameCard = {
    *  power and toughness move together within a pile, only meaningful on the battlefield. Never
    *  an empty array — absent instead once the last pile is removed. */
   ptCounters?: PtCounterPile[]
-  /** True once flipped to its back face (transform/MDFC/flip cards only) — only meaningful on the battlefield. */
+  /** True once flipped to its back face (transform/MDFC/flip cards only). Meaningful on the
+   *  battlefield and in hand (see FLIP_CARD); cleared when the card goes anywhere else. */
   showBackFace?: boolean
   /** Set when this card was given by another player: the owning player's seat (shown as an owner-color ring). */
   ownerSeat?: Seat
@@ -40,7 +41,11 @@ export type GameCard = {
   faceDown?: boolean
   /** Set once at game start (see buildStartingCards) for cards that began in the command zone —
    *  persists across zone changes (unlike counters/showBackFace/faceDown, which are battlefield-
-   *  only and reset on leaving it) since a card's commander identity never changes mid-game. */
+   *  only and reset on leaving it) since a card's commander identity never changes mid-game.
+   *
+   *  A card being held for another player (ownerSeat set to someone else's seat) can carry this
+   *  too: it rides along so the card is still a commander when it goes home. It is only OUR
+   *  commander when we own it — see isOwnCommander. */
   isCommander?: boolean
   /** Commander tax paid so far — +2 per previous cast from the command zone, in real Magic.
    *  Only meaningful when isCommander is true. Tracked regardless of the card's current zone
@@ -193,6 +198,10 @@ export type GameAction =
    *  locally, same as SET_POSITION but triggered remotely instead of by our own drag. `atSeat`
    *  is the quadrant it was dropped into (undefined = back to our own natural seat). */
   | { type: 'RECEIVE_RELOCATED_CARD'; instanceId: string; x: number; y: number; atSeat?: Seat }
+  /** Brings home every card whose `atSeat` no longer means anything: all of them when `ownSeat`
+   *  is null (not in a pod — there are no other quadrants), otherwise just the ones parked on
+   *  what is now our own seat. Their x/y carry over as-is; they were quadrant-relative already. */
+  | { type: 'NORMALIZE_SEATS'; ownSeat: Seat | null }
   | { type: 'TOGGLE_REVEAL_TOP' }
   /** Public counterpart to TOGGLE_REVEAL_TOP — see GameState.revealTopToPod. */
   | { type: 'TOGGLE_REVEAL_TOP_TO_POD' }
@@ -219,6 +228,12 @@ export const SOLO_CMDR_SOURCE = -1
 /** Highest commander damage taken from any single source — the value the 21-is-lethal rule cares about. */
 export function maxCommanderDamage(commanderDamage: Record<number, number>): number {
   return Math.max(0, ...Object.values(commanderDamage))
+}
+
+/** Whether a commander card is this player's own, as opposed to one they are holding for whoever
+ *  gave it to them. `ownSeat` is this player's seat. */
+export function isOwnCommander(card: GameCard, ownSeat: Seat): boolean {
+  return card.isCommander === true && (card.ownerSeat === undefined || card.ownerSeat === ownSeat)
 }
 
 export function zoneCards(state: GameState, zone: GameZone): GameCard[] {
@@ -591,7 +606,10 @@ function gameReducerInner(state: GameState, action: GameAction): GameState {
 
     case 'FLIP_CARD': {
       const card = state.cards.find((c) => c.instanceId === action.instanceId)
-      if (!card || card.zone !== 'battlefield') return state
+      // Battlefield, or hand: a double-faced card can be turned over in hand to read its other
+      // side, and a modal one is then played that side up (MOVE_CARD carries showBackFace onto
+      // the battlefield). Every other zone has no face to show.
+      if (!card || (card.zone !== 'battlefield' && card.zone !== 'hand')) return state
       return {
         ...state,
         cards: state.cards.map((c) => (c.instanceId === action.instanceId ? { ...c, showBackFace: !c.showBackFace } : c)),
@@ -607,11 +625,17 @@ function gameReducerInner(state: GameState, action: GameAction): GameState {
       }
     }
 
-    case 'SET_TAPPED':
+    case 'SET_TAPPED': {
+      // Battlefield only, like every other permanent-state action here. A tap request from
+      // another player can arrive just after the card left play; applied anyway, it marked a
+      // card in hand as tapped, which then entered the battlefield tapped when next played.
+      const card = state.cards.find((c) => c.instanceId === action.instanceId)
+      if (!card || card.zone !== 'battlefield') return state
       return {
         ...state,
         cards: state.cards.map((c) => (c.instanceId === action.instanceId ? { ...c, tapped: action.tapped } : c)),
       }
+    }
 
     case 'UNTAP_ALL':
       return { ...state, cards: untapControlled(state.cards) }
@@ -667,8 +691,16 @@ function gameReducerInner(state: GameState, action: GameAction): GameState {
         isToken: card.isToken,
         ownerSeat: card.ownerSeat,
         faceDown: card.faceDown,
+        isCommander: card.isCommander,
+        commanderTax: card.commanderTax,
       }
       return { ...state, cards: [...state.cards, received] }
+    }
+
+    case 'NORMALIZE_SEATS': {
+      const stale = (c: GameCard) => c.atSeat !== undefined && (action.ownSeat === null || c.atSeat === action.ownSeat)
+      if (!state.cards.some(stale)) return state
+      return { ...state, cards: state.cards.map((c) => (stale(c) ? { ...c, atSeat: undefined } : c)) }
     }
 
     case 'RECEIVE_RELOCATED_CARD': {

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { mostPopularTagForCard, tagsByPopularity, buildOracleTagQuery } from '../../engine/oracleTagBrowser'
 import { useCardSearch } from '../../hooks/useCardSearch'
+import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 import { useDeck } from '../../state/DeckContext'
 import { loadOrBuildTagIndex, type TagIndexData } from '../../storage/tagIndex'
 import { EMPTY_FILTERS } from '../../utils/scryfallQuery'
@@ -19,6 +20,7 @@ type Props = {
 const SEARCH_FILTERS = { ...EMPTY_FILTERS, sort: 'edhrec' as const }
 
 function OracleTagBrowser({ open, onClose }: Props) {
+  useEscapeToClose(onClose, open)
   const { addCard } = useDeck()
   const [tagIndex, setTagIndex] = useState<TagIndexData | null>(null)
   const [indexStatus, setIndexStatus] = useState<Status>('idle')

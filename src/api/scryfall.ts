@@ -9,6 +9,7 @@ const MIN_REQUEST_INTERVAL_MS = 100
 const COLLECTION_BATCH_SIZE = 75
 const QUERY_CACHE_TTL_MS = 10 * 60 * 1000
 const QUERY_CACHE_MAX_ENTRIES = 50
+const PRINTS_MAX_PAGES = 8
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -187,8 +188,8 @@ export function getTypeWords(): Promise<string[]> {
 /**
  * Every printing of a card, newest first — the "unique=prints" search mode combined with the
  * `oracleid:` filter is Scryfall's documented way to list all prints sharing one Oracle card.
- * Only the first results page (up to 175) is fetched; even the most-reprinted staples don't come
- * close to that count, so a second page is never worth the extra round trip.
+ * Follows `has_more` up to PRINTS_MAX_PAGES: a results page holds 175 printings, which covers
+ * nearly every card in one request, but the basics run to several hundred each.
  */
 export async function getCardPrints(oracleId: string, signal?: AbortSignal): Promise<ScryfallCard[]> {
   const cached = printsCache.get(oracleId)
@@ -196,12 +197,18 @@ export async function getCardPrints(oracleId: string, signal?: AbortSignal): Pro
     return cached.value
   }
 
-  const url = `${API_BASE}/cards/search?q=${encodeURIComponent(`oracleid:${oracleId}`)}&unique=prints&order=released&dir=desc`
-  const result = await scryfallFetch<ScryfallList<ScryfallCard>>(url, { signal })
-  cacheCards(result.data)
+  const prints: ScryfallCard[] = []
+  let url: string | undefined =
+    `${API_BASE}/cards/search?q=${encodeURIComponent(`oracleid:${oracleId}`)}&unique=prints&order=released&dir=desc`
+  for (let page = 0; url && page < PRINTS_MAX_PAGES; page++) {
+    const result: ScryfallList<ScryfallCard> = await scryfallFetch<ScryfallList<ScryfallCard>>(url, { signal })
+    prints.push(...result.data)
+    url = result.has_more ? result.next_page : undefined
+  }
+  cacheCards(prints)
   evictOldestIfFull(printsCache, QUERY_CACHE_MAX_ENTRIES)
-  printsCache.set(oracleId, { value: result.data, cachedAt: Date.now() })
-  return result.data
+  printsCache.set(oracleId, { value: prints, cachedAt: Date.now() })
+  return prints
 }
 
 function chunk<T>(items: T[], size: number): T[][] {
@@ -220,7 +227,22 @@ function chunk<T>(items: T[], size: number): T[][] {
  * hooks/useCardSnapshots.ts, or a card touched earlier this session would just come back unchanged).
  */
 export async function getCardsByIdentifiers(identifiers: CardIdentifier[], options?: { force?: boolean }): Promise<ScryfallCard[]> {
+  return (await resolveCardsByIdentifiers(identifiers, options)).cards
+}
+
+/**
+ * Same lookup as getCardsByIdentifiers, but also reports which identifiers were never answered
+ * because their batch's request failed (offline, rate-limited). That is a different thing from a
+ * card Scryfall looked up and didn't find, and a caller that turns the result into something the
+ * user keeps — an imported deck, an export, a drafted pool — has to be able to tell the two apart
+ * rather than treat a network failure as "those cards don't exist".
+ */
+export async function resolveCardsByIdentifiers(
+  identifiers: CardIdentifier[],
+  options?: { force?: boolean },
+): Promise<{ cards: ScryfallCard[]; failed: CardIdentifier[] }> {
   const resolved: ScryfallCard[] = []
+  const failed: CardIdentifier[] = []
   const toFetch: CardIdentifier[] = []
 
   for (const identifier of identifiers) {
@@ -251,10 +273,11 @@ export async function getCardsByIdentifiers(identifiers: CardIdentifier[], optio
     } catch {
       // Leave this batch's cards out of `resolved` — the caller sees a partial result and can
       // decide to retry just the still-missing ids, rather than the whole request failing.
+      failed.push(...batch)
     }
   }
 
-  return resolved
+  return { cards: resolved, failed }
 }
 
 let setsPromise: Promise<ScryfallSet[]> | null = null

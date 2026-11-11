@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest'
 import {
   FACE_DOWN_SCRYFALL_ID,
   HOST_SEAT,
+  MAX_FRAME_CHARS,
+  MAX_ID_CHARS,
   MAX_PLAYERS,
+  MAX_TEXT_CHARS,
+  MAX_ZONE_CARDS,
   PROTOCOL_VERSION,
   ROOM_CODE_LENGTH,
   draftMatchPlayerId,
@@ -52,7 +56,7 @@ function board(overrides: Partial<PublicBoard> = {}): PublicBoard {
 
 describe('serialization round-trips', () => {
   const messages: NetMessage[] = [
-    { type: 'HELLO', v: PROTOCOL_VERSION, playerId: 'p2', name: 'Bob', deckFormat: 'commander' },
+    { type: 'HELLO', v: PROTOCOL_VERSION, playerId: 'p2', key: 'k2', name: 'Bob', deckFormat: 'commander' },
     { type: 'WELCOME', v: PROTOCOL_VERSION, playerId: 'p2', seat: 2 },
     { type: 'WELCOME', v: PROTOCOL_VERSION, playerId: 'p3', seat: null },
     { type: 'STATE', v: PROTOCOL_VERSION, board: board() },
@@ -64,6 +68,11 @@ describe('serialization round-trips', () => {
       expect(deserialize(serialize(msg))).toEqual(msg)
     })
   }
+
+  it('rejects a HELLO without a join key', () => {
+    const bad = { type: 'HELLO', v: PROTOCOL_VERSION, playerId: 'p2', name: 'Bob', deckFormat: 'commander' }
+    expect(deserialize(JSON.stringify(bad))).toBeNull()
+  })
 
   it('deserialize accepts an already-parsed object, not only a string', () => {
     const msg: NetMessage = { type: 'WELCOME', v: PROTOCOL_VERSION, playerId: 'p2', seat: 1 }
@@ -612,5 +621,41 @@ describe('matchRoomCode', () => {
     expect(codes.size).toBe(pairs.length)
     expect(matchRoomCode('XYZ789', 0, 1)).not.toBe(matchRoomCode('ABC234', 0, 1))
     expect(codes.has('ABC234')).toBe(false)
+  })
+})
+
+describe('size limits on what a peer can send', () => {
+  const state = (b: PublicBoard) => JSON.stringify({ type: 'STATE', v: PROTOCOL_VERSION, board: b })
+  const card = (i: number) => ({ instanceId: `i${i}`, scryfallId: 's', x: 0, y: 0, tapped: false })
+
+  it('accepts a big but real board', () => {
+    expect(deserialize(state(board({ battlefield: Array.from({ length: 150 }, (_, i) => card(i)) })))).not.toBeNull()
+  })
+
+  it('rejects a battlefield with an absurd number of cards', () => {
+    expect(deserialize(state(board({ battlefield: Array.from({ length: MAX_ZONE_CARDS + 1 }, (_, i) => card(i)) })))).toBeNull()
+  })
+
+  it('rejects a frame over the size cap before parsing it', () => {
+    expect(parseMessage('x'.repeat(MAX_FRAME_CHARS + 1))).toEqual({ ok: false, reason: 'malformed' })
+  })
+
+  it('rejects an overlong name and an overlong id', () => {
+    expect(deserialize(state(board({ name: 'n'.repeat(MAX_TEXT_CHARS + 1) })))).toBeNull()
+    expect(deserialize(state(board({ playerId: 'p'.repeat(MAX_ID_CHARS + 1) })))).toBeNull()
+  })
+
+  it('rejects absurd numbers', () => {
+    expect(deserialize(state(board({ life: 1e300 })))).toBeNull()
+  })
+
+  it('rejects a card carrying thousands of counter piles', () => {
+    const counters = Array.from({ length: 5000 }, (_, i) => ({ id: `c${i}`, color: 'green' as const, value: 1 }))
+    expect(deserialize(state(board({ battlefield: [{ ...card(1), counters }] })))).toBeNull()
+  })
+
+  it('rejects a roll of a million dice', () => {
+    const roll = { kind: 'die', sides: 6, value: 1, values: Array.from({ length: 1_000_000 }, () => 1) }
+    expect(deserialize(JSON.stringify({ type: 'ROLL', v: PROTOCOL_VERSION, playerId: 'p', name: 'n', roll }))).toBeNull()
   })
 })

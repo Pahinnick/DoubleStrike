@@ -15,8 +15,10 @@ import {
 import { getCardById } from '../../api/scryfall'
 import { BATTLEFIELD_SKINS, normalizeBattlefieldSkin, useBattlefieldSkin, type BattlefieldSkin } from '../../hooks/useBattlefieldSkin'
 import { useCardSnapshots } from '../../hooks/useCardSnapshots'
+import { isDismissableLayerOpen, useEscapeToClose } from '../../hooks/useEscapeToClose'
 import { usePlaytestWindowMode } from '../../hooks/usePlaytestWindowMode'
 import { useProfileSettings } from '../../hooks/useProfileSettings'
+import { notifyInfo, notifyWarning } from '../../notifications'
 import { DRAFT_MAX_PLAYERS, FACE_DOWN_SCRYFALL_ID, draftMatchPlayerId, draftSeatOfMatchPlayer, type CounterPile, type PtCounterPile, type PublicBoard, type RollResult, type Seat } from '../../net/protocol'
 import { toPublicBoard } from '../../net/publicBoard'
 import type { DraftMatchStatus } from '../../net/draftProtocol'
@@ -26,13 +28,14 @@ import { useProfiles } from '../../state/ProfileContext'
 import {
   buildStartingCards,
   gameReducer,
-  maxCommanderDamage,
-  shuffle,
-  startingLifeFor,
-  zoneCards,
-  SOLO_CMDR_SOURCE,
   type GameState,
   type GameZone,
+  isOwnCommander,
+  maxCommanderDamage,
+  shuffle,
+  SOLO_CMDR_SOURCE,
+  startingLifeFor,
+  zoneCards,
 } from '../../state/gameReducer'
 import type { Deck, FoilKind } from '../../state/types'
 import { isFlippableSnapshot } from '../../storage/cardCache'
@@ -51,12 +54,13 @@ import BattlefieldTriangleGrid from './BattlefieldTriangleGrid'
 import CardContextMenu, { type ContextMenuAction } from '../shared/CardContextMenu'
 import ConfirmModal from '../shared/ConfirmModal'
 import { useTutorialContext } from '../shared/TutorialContext'
-import { COUNTER_COLORS, counterPileLabel, counterPileName, formatPtCounters, KEYWORD_COUNTERS } from './counterFormat'
+import { COUNTER_COLORS, counterPileLabel, counterPileName, formatPtCounters, isKeywordCounter, KEYWORD_COUNTERS } from './counterFormat'
 import CounterPileStack from './CounterPileStack'
 import HandCardFan from './HandCardFan'
 import DeckManagerModal from '../deck/DeckManagerModal'
 import DeckScanTray from './DeckScanTray'
 import TurnOrderTray from './TurnOrderTray'
+import { buildDomSnapshot, copySnapshot, startInputRecording } from './debugSnapshot'
 import { getCounterDragData, isDraggingCounterPile } from './dragCounterPile'
 import { getCurrentDragData, getGameDragData, type DraggedGameCard } from './dragGameCard'
 import GoldfishPanel, { type GoldfishRow } from './GoldfishPanel'
@@ -89,7 +93,8 @@ import './playtest.css'
 // ever more than two (e.g. a Background pairing, though 2 is the realistic max today).
 const COMMANDER_TAX_COLORS = ['var(--color-w)', 'var(--color-u)', 'var(--color-r)', 'var(--color-g)']
 
-const SCRY_SURVEIL_COUNTS = [1, 2, 3, 4, 5]
+/** The piles with a right-click action menu (see zoneActions). */
+type PileZone = 'library' | 'graveyard' | 'exile'
 const DIE_SIZES = [4, 6, 8, 10, 12, 20, 100]
 // Newest-first cap on the shared roll log so it doesn't grow unbounded over a long session.
 const ROLL_LOG_LIMIT = 8
@@ -107,6 +112,9 @@ const REACTION_TTL_MS = 2000
 // How long the "whose turn" banner stays up after a pass — long enough to actually read a
 // name, short enough to not still be sitting there several actions into the new turn.
 const TURN_ANNOUNCE_TTL_MS = 2600
+// How long after joining (or rejoining) a pod the host's replay of whose turn it is can still
+// arrive — see the turn-announcement effect.
+const JOIN_CATCH_UP_MS = 1500
 // Small fixed set of one-click pod reactions — pure fun, not meant to be exhaustive.
 const REACTION_EMOJIS = ['👍', '😂', '😱', '😡', '🎉', '🤔']
 
@@ -193,6 +201,58 @@ function initGame(deck: Deck): GameState {
   })
 }
 
+/** The click half of flipping a double-faced card (F while hovering is the keyboard half). Its
+ *  own small button rather than a click on the card itself, because a click on the card already
+ *  means something everywhere it appears: tap on the battlefield, play from hand. Rendered as a
+ *  sibling of the card inside the card's wrapper — the card is itself a <button>, and buttons
+ *  can't nest. */
+function FlipFaceButton({ showingBack, onFlip }: { showingBack: boolean; onFlip: () => void }) {
+  return (
+    <button
+      type="button"
+      className="playtest-card__flip-button"
+      title={showingBack ? 'Flip to front (F)' : 'Flip to back (F)'}
+      aria-label={showingBack ? 'Flip to front face' : 'Flip to back face'}
+      // Not a drag handle and not a click on the table: keep both from starting underneath it.
+      draggable={false}
+      onMouseDown={(event) => event.stopPropagation()}
+      onClick={(event) => {
+        event.stopPropagation()
+        onFlip()
+      }}
+    >
+      ↻
+    </button>
+  )
+}
+
+/** Fallback for the F9 debug snapshot when the clipboard refuses it: the text on screen, focused
+ *  and fully selected, so Ctrl+C copies it with no mouse involved. */
+function DebugSnapshotPanel({ text, onClose }: { text: string; onClose: () => void }) {
+  useEscapeToClose(onClose)
+  return (
+    <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Debug snapshot" onClick={onClose}>
+      <div className="modal-content" onClick={(event) => event.stopPropagation()}>
+        <h2>Debug snapshot</h2>
+        <p className="search-status">
+          Couldn't copy this to the clipboard automatically. It's selected below — press Ctrl+C (Cmd+C on a Mac) to copy it, then Esc to close.
+        </p>
+        <textarea
+          readOnly
+          rows={12}
+          style={{ width: '100%', fontFamily: 'monospace', fontSize: '0.75rem' }}
+          value={text}
+          autoFocus
+          onFocus={(event) => event.currentTarget.select()}
+        />
+        <button type="button" onClick={onClose}>
+          Close
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null, onDraftMatchStatus }: Props) {
   const { deck, dispatch: deckDispatch } = useDeck()
   const tutorial = useTutorialContext()
@@ -224,7 +284,16 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
   stateRef.current = state
   const undoStackRef = useRef<GameState[]>([])
   const redoStackRef = useRef<GameState[]>([])
+  // The last few actions, for the F9 debug snapshot (see debugSnapshot.ts). Type and target
+  // only — never the payload, which for some actions is the entire game state.
+  const recentActionsRef = useRef<{ at: number; source: 'local' | 'remote'; type: string; instanceId?: string; toZone?: string }[]>([])
+  const noteAction = useCallback((source: 'local' | 'remote', action: Parameters<typeof rawDispatch>[0]) => {
+    const detail = action as { instanceId?: string; toZone?: string }
+    recentActionsRef.current.push({ at: Date.now(), source, type: action.type, instanceId: detail.instanceId?.slice(0, 8), toZone: detail.toZone })
+    if (recentActionsRef.current.length > 30) recentActionsRef.current.shift()
+  }, [])
   const dispatch = useCallback((action: Parameters<typeof rawDispatch>[0]) => {
+    noteAction('local', action)
     const current = stateRef.current
     if (undoStackRef.current[undoStackRef.current.length - 1] !== current) {
       undoStackRef.current.push(current)
@@ -232,7 +301,7 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
     }
     redoStackRef.current = []
     rawDispatch(action)
-  }, [])
+  }, [noteAction])
   const handleUndo = useCallback(() => {
     const prev = undoStackRef.current.pop()
     if (!prev) return
@@ -245,6 +314,30 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
     undoStackRef.current.push(stateRef.current)
     rawDispatch({ type: 'RESTORE_STATE', state: next })
   }, [])
+  /**
+   * For changes this player didn't make and can't take back: a card arriving from or leaving
+   * for another player, and another player tapping, flipping or moving one of our cards.
+   *
+   * Those are facts about the shared table, so they are applied to every snapshot in the undo
+   * and redo history as well as to the live state, and are never recorded as an undo step of
+   * our own. Going through the ordinary `dispatch` did the opposite on both counts. Undoing
+   * after giving a card away brought it back here while the recipient kept it — the same card
+   * on two boards. Undoing an unrelated move after receiving one restored a snapshot from before
+   * it arrived, deleting it from the game. And Ctrl+Z after an opponent tapped our card undid
+   * their tap rather than our own last action.
+   */
+  const dispatchExternal = useCallback((action: Parameters<typeof rawDispatch>[0]) => {
+    noteAction('remote', action)
+    undoStackRef.current = undoStackRef.current.map((snapshot) => gameReducer(snapshot, action))
+    redoStackRef.current = redoStackRef.current.map((snapshot) => gameReducer(snapshot, action))
+    rawDispatch(action)
+  }, [noteAction])
+  /** Drops all undo/redo history — for when the game it described is gone (a different deck, or
+   *  a saved game loaded over the top). */
+  const clearUndoHistory = useCallback(() => {
+    undoStackRef.current = []
+    redoStackRef.current = []
+  }, [])
 
   // Network identity is a fresh per-session id, NOT the profile id: two tabs on
   // the same origin share IndexedDB (same profile), so reusing the profile id
@@ -253,6 +346,8 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
   const playerIdRef = useRef<string>(crypto.randomUUID())
   // At a draft match the id also says which drafter you are, so the room can tell who's seated.
   const playerId = tableGame ? draftMatchPlayerId(tableGame.mySeat, playerIdRef.current) : playerIdRef.current
+  const isOnOwnBattlefield = (instanceId: string) =>
+    stateRef.current.cards.some((c) => c.instanceId === instanceId && c.zone === 'battlefield')
 
   // Recent dice/coin rolls, newest first — resolved to a display seat at render
   // time (see rollLogEntries below) since a network roll only carries a playerId.
@@ -354,6 +449,7 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
     boards,
     activeSeat: mpActiveSeat,
     podTurn: mpPodTurn,
+    podFirstSeat: mpPodFirstSeat,
     radioStation: mpRadioStation,
     broadcast,
     broadcastRoll,
@@ -386,29 +482,36 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
       deckFormat: deck.format ?? 'casual',
     },
     // A card handed to us by another player joins our battlefield under our control.
-    (card) => dispatch({ type: 'RECEIVE_GIVEN_CARD', card }),
+    (card) => dispatchExternal({ type: 'RECEIVE_GIVEN_CARD', card }),
     // Another player's die/coin result, relayed to us — just log it, nothing to broadcast back.
     (rollerId, name, roll, id) => addRollEntry(rollerId, name, roll, id),
     // Another player's ping, relayed to us — just show it, nothing to broadcast back.
     (pingerId, name, x, y) => addPing(pingerId, name, x, y),
     // Another player repositioned one of our own cards — reposition it locally.
-    (card) => dispatch({ type: 'RECEIVE_RELOCATED_CARD', instanceId: card.instanceId, x: card.x, y: card.y, atSeat: card.atSeat }),
+    (card) => dispatchExternal({ type: 'RECEIVE_RELOCATED_CARD', instanceId: card.instanceId, x: card.x, y: card.y, atSeat: card.atSeat }),
     // Another player tapped/untapped one of our own cards sitting on their board (a card they
     // took via relocate) — apply it locally; our next STATE broadcast shows everyone.
-    (req) => dispatch({ type: 'SET_TAPPED', instanceId: req.instanceId, tapped: req.tapped }),
+    (req) => dispatchExternal({ type: 'SET_TAPPED', instanceId: req.instanceId, tapped: req.tapped }),
     // Another player flipped one of our own cards sitting on their board (a card they took via
     // relocate) — apply it locally; our next STATE broadcast shows everyone.
-    (req) => dispatch({ type: 'FLIP_CARD', instanceId: req.instanceId }),
+    (req) => dispatchExternal({ type: 'FLIP_CARD', instanceId: req.instanceId }),
     // Another player sent one of our own cards sitting on their board (a card they took via
     // relocate) to the graveyard — apply it locally; our next STATE broadcast shows everyone.
-    (req) => dispatch({ type: 'MOVE_CARD', instanceId: req.instanceId, toZone: 'graveyard' }),
+    // Only while it is still in play: the sender acted on a mirror of our board that can be a
+    // moment out of date, and a card we have since bounced or tucked is no longer theirs to move.
+    (req) => {
+      if (isOnOwnBattlefield(req.instanceId)) dispatchExternal({ type: 'MOVE_CARD', instanceId: req.instanceId, toZone: 'graveyard' })
+    },
     // Another player's card flash-highlight, relayed to us — just show it, nothing to broadcast back.
     (instanceId) => addHighlight(instanceId),
     // Another player's emoji reaction, relayed to us — just show it, nothing to broadcast back.
     (reactorId, _name, emoji) => addReaction(reactorId, emoji),
     // Another player sent one of our own cards sitting on their board (given, or just taken via
     // relocate) back to one of our own zones — apply it locally; our next STATE broadcast shows everyone.
-    (req) => dispatch({ type: 'MOVE_CARD', instanceId: req.instanceId, toZone: req.toZone, libraryPosition: req.libraryPosition }),
+    (req) => {
+      if (!isOnOwnBattlefield(req.instanceId)) return
+      dispatchExternal({ type: 'MOVE_CARD', instanceId: req.instanceId, toZone: req.toZone, libraryPosition: req.libraryPosition })
+    },
     // Whoever made a roll took it back — drop it from our copy of the log too.
     (id) => removeRollEntry(id),
     // A card's original owner wants it back off our board. Hand it over the same way any give
@@ -419,7 +522,7 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
       // what records that (a card of our own never has one). No owner recorded means this isn't
       // theirs to ask for, so there's nothing to hand back.
       if (!card || card.ownerSeat === undefined) return
-      giveCard(req.fromPlayerId, {
+      const sent = giveCard(req.fromPlayerId, {
         instanceId: card.instanceId,
         scryfallId: card.scryfallId,
         // Sending it home with its original owner's seat: on their client that equals their own
@@ -434,8 +537,11 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
         showBackFace: card.showBackFace,
         isToken: card.isToken,
         faceDown: card.faceDown,
+        isCommander: card.isCommander,
+        commanderTax: card.commanderTax,
       })
-      dispatch({ type: 'REMOVE_CARD', instanceId: card.instanceId })
+      // Keep it if it couldn't be sent (mid-reconnect) — its owner can simply ask again.
+      if (sent) dispatchExternal({ type: 'REMOVE_CARD', instanceId: card.instanceId })
     },
   )
   const [mpModalOpen, setMpModalOpen] = useState(false)
@@ -610,7 +716,11 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
       broadcast(toPublicBoard(state, { playerId, name: playerName, seat: mySeat, battlefieldSkin }))
     }, BROADCAST_DEBOUNCE_MS)
     return () => window.clearTimeout(handle)
-  }, [state, mySeat, mpActive, broadcast, playerId, playerName, battlefieldSkin])
+    // mpStatus is a dependency so that finishing a reconnect sends our board straight away. The
+    // host forgets a dropped guest's board, and nothing else here changes across a rejoin, so
+    // the returning player used to stay invisible — and skipped by Pass Turn — until their
+    // next move or the next heartbeat.
+  }, [state, mySeat, mpActive, mpStatus, broadcast, playerId, playerName, battlefieldSkin])
 
   // Also re-broadcast on a plain interval, regardless of whether our own state actually
   // changed. The wire protocol is meant to be "self-healing after a dropped packet" (every
@@ -647,6 +757,7 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
   const [mockActiveSeat, setMockActiveSeat] = useState<Seat | null>(null)
   // Dev-preview counterpart to the pod's shared turn number, same duality as mockActiveSeat.
   const [mockPodTurn, setMockPodTurn] = useState<number | null>(null)
+  const [mockFirstSeat, setMockFirstSeat] = useState<Seat | null>(null)
   // Local-only override while the "Who Goes First" spin animation is running — takes
   // priority over the authoritative activeSeat (network or mock) so the intermediate
   // flashes are purely cosmetic and never themselves get broadcast; only the final
@@ -686,12 +797,48 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
   // resumes your side of the table exactly where you left it, the same way a plain solo relaunch
   // already did — you just have to type the room code again; nothing about the connection itself
   // is remembered. Mirrors the broadcast effect's debounce-on-every-settled-change shape above.
+  //
+  // `persistedStateRef` is the state as it last came from, or went to, storage. A state equal to
+  // it has nothing to save — which keeps the freshly shuffled game Playtest opens with from
+  // being written over a saved one before the resume below has had its say.
+  const persistedStateRef = useRef(state)
+  // Which version of which deck that save is stamped with. A save only resumes while its stamp
+  // still matches the deck (see SoloGameSave.deckUpdatedAt), and the deck's stamp moves without
+  // the board changing — marking a card in the tray, renaming the deck from Switch Deck, another
+  // window saving it. The save has to be re-stamped then, or the game it holds is thrown away
+  // on the next launch as "built from an older decklist".
+  const persistedDeckStampRef = useRef({ deckId: deck.id, updatedAt: deck.updatedAt })
+  const autosaveDeckRef = useRef(deck)
+  autosaveDeckRef.current = deck
+  const persistGame = useCallback((toSave: GameState) => {
+    const current = autosaveDeckRef.current
+    persistedStateRef.current = toSave
+    persistedDeckStampRef.current = { deckId: current.id, updatedAt: current.updatedAt }
+    void saveSoloGameSave(current.id, { state: toSave, deckUpdatedAt: current.updatedAt }).catch((err: unknown) =>
+      console.error('[playtest] failed to autosave the game', err),
+    )
+  }, [])
+  // Only a newer stamp on the SAME deck counts: after a deck switch the board on screen is still
+  // the previous deck's until the effect further down deals the new one.
+  const isSaveStampStale = (current: { id: string; updatedAt: string }) =>
+    persistedDeckStampRef.current.deckId === current.id && persistedDeckStampRef.current.updatedAt !== current.updatedAt
   useEffect(() => {
-    const handle = window.setTimeout(() => {
-      saveSoloGameSave(deck.id, { state, deckUpdatedAt: deck.updatedAt })
-    }, SOLO_AUTOSAVE_DEBOUNCE_MS)
+    if (state === persistedStateRef.current && !isSaveStampStale({ id: deck.id, updatedAt: deck.updatedAt })) return
+    const handle = window.setTimeout(() => persistGame(state), SOLO_AUTOSAVE_DEBOUNCE_MS)
     return () => window.clearTimeout(handle)
-  }, [state, deck.id, deck.updatedAt])
+  }, [state, deck.id, deck.updatedAt, persistGame])
+  // Leaving Playtest inside the debounce window used to cancel the pending save outright, so
+  // the last action before Exit never reached storage. Write it on the way out instead.
+  useEffect(() => {
+    const flush = () => {
+      if (stateRef.current !== persistedStateRef.current || isSaveStampStale(autosaveDeckRef.current)) persistGame(stateRef.current)
+    }
+    window.addEventListener('pagehide', flush)
+    return () => {
+      window.removeEventListener('pagehide', flush)
+      flush()
+    }
+  }, [persistGame])
 
   /** The window-mode toggle's click handler — seamlessly hands the live game off to the other
    *  window instead of just flipping the preference for next time. Flushes the current board
@@ -705,6 +852,8 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
     const next = playtestWindowMode === 'window' ? 'inline' : 'window'
     setPlaytestWindowMode(next)
     if (inPod) return
+    persistedStateRef.current = state
+    persistedDeckStampRef.current = { deckId: deck.id, updatedAt: deck.updatedAt }
     await saveSoloGameSave(deck.id, { state, deckUpdatedAt: deck.updatedAt })
     if (isPlaytestWindow) {
       // We're the dedicated window switching to inline — hand off to the main window and close.
@@ -736,6 +885,15 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
     return { x: surface.width - x - w, y: surface.height - y - h }
   }
   const opponentBoards: PublicBoard[] = useMemo(() => mockBoards ?? [...boards.values()], [mockBoards, boards])
+  // A card parked on another player's quadrant (GameCard.atSeat) only means something while that
+  // quadrant exists. Out of a pod — the session ended, or a pod game was resumed solo — it was
+  // still drawn a whole quadrant off the playmat and skipped by Untap, since the untap step
+  // leaves cards on other seats to whoever controls them. Bring those home; likewise any parked
+  // on what has since become our own seat.
+  const needsSeatNormalizing = state.cards.some((c) => c.atSeat !== undefined && (!inPod || c.atSeat === mySeatResolved))
+  useEffect(() => {
+    if (needsSeatNormalizing) dispatchExternal({ type: 'NORMALIZE_SEATS', ownSeat: inPod ? mySeatResolved : null })
+  }, [needsSeatNormalizing, inPod, mySeatResolved, dispatchExternal])
   // Eliminated: 0 life or below (real Commander rules), OR a voluntary Scoop — either one is the
   // same "out" state everywhere it's checked (turn rotation, quadrant scrim, nameplate badge), per
   // [[mtg-deckbuilder-vtt-auto-skip-eliminated]] and [[mtg-deckbuilder-vtt-scoop]].
@@ -760,6 +918,7 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
   const seatNameBySeat = new Map<Seat, string>([[mySeatResolved, playerName], ...opponentBoards.map((b) => [b.seat, b.name] as const)])
   const activeSeat: Seat | null = spinSeat ?? (mockBoards !== null ? mockActiveSeat : mpActiveSeat)
   const podTurn: number | null = mockBoards !== null ? mockPodTurn : mpPodTurn
+  const podFirstSeat: Seat | null = mockBoards !== null ? mockFirstSeat : mpPodFirstSeat
 
   // "Whose turn" banner — a brief, hard-to-miss announcement on every genuine pass (Pass Turn or
   // Who Goes First landing), complementing the always-on topbar badge above (easy to miss once
@@ -772,17 +931,29 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
   const [turnAnnouncement, setTurnAnnouncement] = useState<{ seat: Seat; key: string } | null>(null)
   const turnAnnounceTimeoutRef = useRef<number | null>(null)
   const prevSyncedActiveSeatRef = useRef<Seat | null | undefined>(undefined)
+  // When this client last became a live member of the pod. The host replays whose turn it is in
+  // a separate message just after accepting us, so the first seat this effect sees after a join
+  // or a reconnect is null and the replay then looks exactly like a real pass. Anything inside
+  // this short window after going live is catching up, not a turn changing hands.
+  const podLive = mockBoards !== null || mpStatus === 'connected'
+  const podLiveSinceRef = useRef<number | null>(null)
+  useEffect(() => {
+    podLiveSinceRef.current = podLive ? Date.now() : null
+  }, [podLive])
   useEffect(() => {
     if (!inPod) return
     const prev = prevSyncedActiveSeatRef.current
     prevSyncedActiveSeatRef.current = syncedActiveSeat
-    if (prev === undefined || syncedActiveSeat === null || syncedActiveSeat === prev) return
+    const catchingUp =
+      mockBoards === null && (podLiveSinceRef.current === null || Date.now() - podLiveSinceRef.current < JOIN_CATCH_UP_MS)
+    if (prev === undefined || catchingUp || syncedActiveSeat === null || syncedActiveSeat === prev) return
     setTurnAnnouncement({ seat: syncedActiveSeat, key: crypto.randomUUID() })
     if (turnAnnounceTimeoutRef.current) window.clearTimeout(turnAnnounceTimeoutRef.current)
     turnAnnounceTimeoutRef.current = window.setTimeout(() => setTurnAnnouncement(null), TURN_ANNOUNCE_TTL_MS)
     // A distinct cue for "it's YOUR turn now" vs. just "the turn moved on" — the former is meant
     // to actually grab your attention if you've looked away, the latter is only ambient feedback.
     playCue(syncedActiveSeat === mySeatResolved ? 'your-turn' : 'turn-passed')
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mockBoards only gates the catch-up check
   }, [inPod, syncedActiveSeat, mySeatResolved])
   useEffect(() => {
     return () => {
@@ -807,15 +978,19 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
     // eliminated seat's own turn is skipped from the rotation.
     const living = [mySeatResolved, ...opponentBoards.map((b) => b.seat)].filter((seat) => !isEliminated(seat))
     const next = nextActiveSeat(activeSeat, living)
-    // The shared counter ticks over once the rotation wraps back to the first seat — a full
-    // round of the table, which is the only "turn number" that means the same thing to
-    // everyone (GameState.turn counts just our own turns). Starts at 1 on the very first pass.
-    const nextTurn = (podTurn ?? 1) + (completesRound(activeSeat, living) ? 1 : 0)
+    // The shared counter ticks over once the rotation comes back round to whoever took the
+    // first turn — a full round of the table, which is the only "turn number" that means the
+    // same thing to everyone (GameState.turn counts just our own turns). With nobody active yet
+    // this pass IS the start of the game: turn 1, and the seat it lands on went first.
+    const startsGame = activeSeat === null
+    const firstSeat = startsGame ? next : podFirstSeat
+    const nextTurn = startsGame ? 1 : (podTurn ?? 1) + (completesRound(activeSeat, living, firstSeat) ? 1 : 0)
     if (mockBoards !== null) {
       setMockActiveSeat(next)
       setMockPodTurn(nextTurn)
+      setMockFirstSeat(firstSeat)
     } else if (mpActive) {
-      broadcastTurnPass(next, nextTurn)
+      broadcastTurnPass(next, nextTurn, firstSeat ?? undefined)
     }
   }
 
@@ -847,8 +1022,13 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
       const timer = window.setTimeout(() => {
         setSpinSeat(seat)
         if (i === total - 1) {
-          if (mockBoards !== null) setMockActiveSeat(seat)
-          else if (mpActive) broadcastTurnPass(seat)
+          // Picking who goes first starts a game: back to turn 1, measured from this seat. The
+          // counter used to carry straight on from the previous game's number.
+          if (mockBoards !== null) {
+            setMockActiveSeat(seat)
+            setMockPodTurn(1)
+            setMockFirstSeat(seat)
+          } else if (mpActive) broadcastTurnPass(seat, 1, seat)
           setSpinSeat(null)
         }
       }, cumulative)
@@ -858,12 +1038,28 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
 
   const [viewerZone, setViewerZone] = useState<'graveyard' | 'exile' | 'library' | null>(null)
   // Read-only view of an opponent's public zone (graveyard/exile) in a pod.
-  const [oppZoneView, setOppZoneView] = useState<{ board: PublicBoard; zone: 'graveyard' | 'exile' | 'hand' } | null>(null)
+  // Holds WHOSE zone is open, not a copy of their board: the viewer then follows that board as it
+  // changes. A captured board never updated — and kept a revealed hand readable after its owner
+  // had stopped sharing it.
+  const [oppZoneView, setOppZoneView] = useState<{ playerId: string; zone: 'graveyard' | 'exile' | 'hand' } | null>(null)
+  const oppZoneBoard = oppZoneView ? opponentBoards.find((b) => b.playerId === oppZoneView.playerId) : undefined
+  const oppZoneGone = oppZoneView !== null && (!oppZoneBoard || (oppZoneView.zone === 'hand' && !oppZoneBoard.hand))
+  useEffect(() => {
+    if (oppZoneGone) setOppZoneView(null)
+  }, [oppZoneGone])
   const [contextMenu, setContextMenu] = useState<{ instanceId: string; x: number; y: number } | null>(null)
   // Separate from `contextMenu` above (which looks its card up in `battlefield`) since this one
   // looks its card up in `hand` instead — see handCardActions.
   const [handContextMenu, setHandContextMenu] = useState<{ instanceId: string; x: number; y: number } | null>(null)
-  const [countPrompt, setCountPrompt] = useState<{ mode: 'scry' | 'surveil' | 'cascade' | 'dice' | 'bottom' | 'reveal'; x: number; y: number } | null>(null)
+  // The Roll Die prompt; every count-asking zone action uses zoneCountAsk instead.
+  const [countPrompt, setCountPrompt] = useState<{ mode: 'dice'; x: number; y: number } | null>(null)
+  /** A zone pile's right-click menu (see zoneActions), open at the click. */
+  const [zoneMenu, setZoneMenu] = useState<{ zone: PileZone; x: number; y: number } | null>(null)
+  /** The "how many?" box an X action from a zone menu opens; `run` gets the number typed. */
+  const [zoneCountAsk, setZoneCountAsk] = useState<{ label: string; x: number; y: number; run: (count: number) => void } | null>(null)
+  /** Set while the graveyard viewer is open for Dredge N: sending a card to hand from it also
+   *  mills the top N of the library (see moveFromViewer). */
+  const [dredgeCount, setDredgeCount] = useState<number | null>(null)
   // Snapshot of instanceIds captured the moment "Look at top N" is confirmed — deliberately NOT a
   // live count, so dragging one of them away doesn't pull a new card into view to replace it (an
   // "exile the top 5" effect means exactly those 5, not "keep 5 visible as you remove them"). A
@@ -916,6 +1112,28 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
   // own cards' wrapper divs, never opponents' (killing another player's permanent by hotkey
   // isn't something a keyboard shortcut should be able to do).
   const [hoveredInstanceId, setHoveredInstanceId] = useState<string | null>(null)
+  // A card that changes zone is re-rendered somewhere else, and the element the cursor was over
+  // just disappears — no mouseleave fires for it. So "hovered" kept naming the card after it
+  // had moved: play a card from hand, press Delete over empty table, and the card you had just
+  // played went to the graveyard. The same goes for the selection, which is battlefield-only.
+  const hoveredZoneRef = useRef<GameZone | null>(null)
+  useEffect(() => {
+    hoveredZoneRef.current = hoveredInstanceId
+      ? (stateRef.current.cards.find((c) => c.instanceId === hoveredInstanceId)?.zone ?? null)
+      : null
+  }, [hoveredInstanceId])
+  useEffect(() => {
+    if (hoveredInstanceId) {
+      const card = state.cards.find((c) => c.instanceId === hoveredInstanceId)
+      if (card && hoveredZoneRef.current !== null && card.zone !== hoveredZoneRef.current) setHoveredInstanceId(null)
+    }
+    setSelectedIds((prev) => {
+      if (prev.size === 0) return prev
+      const inPlay = new Set(state.cards.filter((c) => c.zone === 'battlefield').map((c) => c.instanceId))
+      const kept = [...prev].filter((id) => inPlay.has(id))
+      return kept.length === prev.size ? prev : new Set(kept)
+    })
+  }, [state.cards, hoveredInstanceId])
   // Which of your own battlefield cards a dragged counter pile is currently hovering over — a
   // drop-target highlight, distinct from hoveredInstanceId above (a plain mouseover, unrelated
   // to a drag in progress). See the wrapper div's onDragEnter/onDragLeave/onDrop below.
@@ -1036,7 +1254,11 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
     const isSwitch = lastDeckIdRef.current !== null
     lastDeckIdRef.current = deck.id
     if (isSwitch) {
-      dispatch({ type: 'START_GAME', cards: buildStartingCards(deck), startingLife: startingLifeFor(deck) })
+      // Not undoable, and the history goes with it: every snapshot on the stack is a board of
+      // the PREVIOUS deck. Left in place, Ctrl+Z after a switch put that deck's cards back on
+      // the table under this one's name, and autosave then stored them as this deck's game.
+      clearUndoHistory()
+      rawDispatch({ type: 'START_GAME', cards: buildStartingCards(deck), startingLife: startingLifeFor(deck) })
       setSelectedIds(new Set())
       centerCamera()
     }
@@ -1049,9 +1271,18 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
     const attempt = ++resumeAttemptRef.current
     getSoloGameSave(deck.id).then((saved) => {
       if (resumeAttemptRef.current !== attempt || !saved || saved.deckUpdatedAt !== deck.updatedAt) return
-      dispatch({ type: 'RESTORE_STATE', state: saved.state })
+      // Loading the saved game is where this session starts, not a step to undo back past — one
+      // Ctrl+Z used to swap the resumed game for the throwaway shuffle that was on screen for
+      // an instant before it, and autosave then overwrote the save with that.
+      clearUndoHistory()
+      const resumed = gameReducer(stateRef.current, { type: 'RESTORE_STATE', state: saved.state })
+      persistedStateRef.current = resumed
+      persistedDeckStampRef.current = { deckId: deck.id, updatedAt: saved.deckUpdatedAt }
+      rawDispatch({ type: 'RESTORE_STATE', state: resumed })
     })
-  }, [deck, centerCamera, dispatch])
+    // deck.id is the trigger (see lastDeckIdRef); the rest of `deck` is read as of that moment.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deck.id, centerCamera, clearUndoHistory])
 
   // Frame the table when entering a pod (focus your own seat) and return to the
   // plain centered view when leaving, or when your seat is (re)assigned.
@@ -1504,7 +1735,14 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
   const command = zoneCards(state, 'command')
   // All commander cards regardless of current zone — commander tax persists whether the
   // commander is sitting in Command or out on the battlefield (see GameCard.isCommander).
-  const commanders = state.cards.filter((c) => c.isCommander)
+  // Only our own: a commander we are holding for another player keeps its flag for the trip home
+  // (see GameCard.isCommander) but its tax is theirs to track, not ours.
+  const commanders = state.cards.filter((c) => isOwnCommander(c, mySeatResolved))
+  /** Whether a card has a second face to turn to (transform, modal double-faced, flip…). */
+  const isFlippable = (scryfallId: string) => {
+    const snapshot = snapshotFor(scryfallId)
+    return snapshot !== undefined && isFlippableSnapshot(snapshot)
+  }
 
   function clampToCanvas(x: number, y: number): { x: number; y: number } {
     return {
@@ -1516,21 +1754,74 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
   /** Staggered fill for cards played without an explicit drop point, with the
    *  row block centered horizontally on the canvas so early cards land near the
    *  middle of the view rather than off toward an edge. */
-  function autoPosition(): { x: number; y: number } {
-    const n = battlefield.length
+  /** `taken`: spots already handed out in this same batch (playing several cards at once), which
+   *  the battlefield doesn't show yet because nothing has re-rendered between the dispatches. */
+  function autoPosition(taken: { x: number; y: number }[] = []): { x: number; y: number } {
     const cols = 6
     const stepX = CARD_W_PX + 14
     const blockW = cols * stepX
-    return clampToCanvas(
-      (CANVAS_W - blockW) / 2 + (n % cols) * stepX,
-      CANVAS_H / 2 - 220 + Math.floor(n / cols) * (CARD_H_PX + 20),
-    )
+    const slot = (n: number) =>
+      clampToCanvas((CANVAS_W - blockW) / 2 + (n % cols) * stepX, CANVAS_H / 2 - 220 + Math.floor(n / cols) * (CARD_H_PX + 20))
+    // The first slot nothing is sitting on, not slot number battlefield.length: once any card
+    // had left play that count pointed at a slot still in use, and the new card landed exactly
+    // on top of the one already there, hiding it completely.
+    const inOwnQuadrant = battlefield.filter((c) => c.atSeat === undefined)
+    const isFree = (p: { x: number; y: number }) =>
+      !inOwnQuadrant.some((c) => Math.abs((c.x ?? 0) - p.x) < 12 && Math.abs((c.y ?? 0) - p.y) < 12) &&
+      !taken.some((t) => Math.abs(t.x - p.x) < 12 && Math.abs(t.y - p.y) < 12)
+    const slotCount = cols * 6
+    for (let n = 0; n < slotCount; n++) {
+      const candidate = slot(n)
+      if (isFree(candidate)) return candidate
+    }
+    // Every slot is taken: step off the last one so the new card at least shows.
+    const last = slot(battlefield.length % slotCount)
+    const overflow = battlefield.length % 6
+    return clampToCanvas(last.x + 18 + overflow * 6, last.y + 18 + overflow * 6)
   }
 
   function playToBattlefield(instanceId: string) {
     const { x, y } = autoPosition()
     dispatch({ type: 'MOVE_CARD', instanceId, toZone: 'battlefield', x, y })
     playCue('play-card')
+  }
+
+  /** Plays several hand cards at once, each to its own free spot, and drops the selection. */
+  function playManyToBattlefield(instanceIds: string[]) {
+    const taken: { x: number; y: number }[] = []
+    for (const instanceId of instanceIds) {
+      const spot = autoPosition(taken)
+      taken.push(spot)
+      dispatch({ type: 'MOVE_CARD', instanceId, toZone: 'battlefield', x: spot.x, y: spot.y })
+    }
+    setSelectedIds(new Set())
+    playCue('play-card')
+  }
+
+  /** Shift+click on a card (battlefield or hand): add it to, or take it out of, the selection. */
+  function toggleSelected(instanceId: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(instanceId)) next.delete(instanceId)
+      else next.add(instanceId)
+      return next
+    })
+  }
+
+  /** Clicking a hand card plays it. Shift+click selects it instead, and clicking any card of a
+   *  multi-card hand selection plays the whole selection, the hand's version of clicking a
+   *  selected battlefield card tapping the group. */
+  function handleHandCardClick(instanceId: string, event: ReactMouseEvent) {
+    if (event.shiftKey) {
+      toggleSelected(instanceId)
+      return
+    }
+    const selectedInHand = hand.filter((c) => selectedIds.has(c.instanceId)).map((c) => c.instanceId)
+    if (selectedInHand.length > 1 && selectedIds.has(instanceId)) {
+      playManyToBattlefield(selectedInHand)
+      return
+    }
+    playToBattlefield(instanceId)
   }
 
   /** Like playToBattlefield, but hides the card's identity from opponents from the moment it
@@ -1585,12 +1876,7 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
       particlesRef.current?.burst(burstPoint.x, burstPoint.y, 9)
     }
     if (event.shiftKey) {
-      setSelectedIds((prev) => {
-        const next = new Set(prev)
-        if (next.has(gameCard.instanceId)) next.delete(gameCard.instanceId)
-        else next.add(gameCard.instanceId)
-        return next
-      })
+      toggleSelected(gameCard.instanceId)
       return
     }
     if (selectedIds.size > 1 && selectedIds.has(gameCard.instanceId)) {
@@ -1782,13 +2068,15 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
     // Ownership transfer is now exclusively an explicit choice here — dropping a card onto
     // someone else's board just relocates it (see handleBattlefieldDrop), so giving it away for
     // real needs its own unambiguous action instead.
-    if (inPod && mpActive && opponentBoards.length > 0) {
+    // Only while actually connected: mid-reconnect the opponents' boards are still on screen but
+    // there is no open channel to hand a card across.
+    if (inPod && mpActive && mpStatus === 'connected' && opponentBoards.length > 0) {
       actions.push({
         label: 'Give Card',
         submenu: opponentBoards.map((board) => ({
           label: board.name || `Seat ${board.seat}`,
           onSelect: () => {
-            giveCard(board.playerId, {
+            const sent = giveCard(board.playerId, {
               instanceId: gameCard.instanceId,
               scryfallId: gameCard.scryfallId,
               // Preserve the true owner if this card was itself given to us.
@@ -1801,8 +2089,16 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
               showBackFace: gameCard.showBackFace,
               isToken: gameCard.isToken,
               faceDown: gameCard.faceDown,
+              isCommander: gameCard.isCommander,
+              commanderTax: gameCard.commanderTax,
             })
-            dispatch({ type: 'REMOVE_CARD', instanceId: gameCard.instanceId })
+            // The card only leaves our board once it has actually been sent. Removing it
+            // regardless is how a give during a reconnect deleted the card outright.
+            if (!sent) {
+              notifyWarning("Couldn't hand that card over — the connection isn't ready. Try again in a moment.")
+              return
+            }
+            dispatchExternal({ type: 'REMOVE_CARD', instanceId: gameCard.instanceId })
           },
         })),
       })
@@ -1822,6 +2118,14 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
   }
 
   function moveFromViewer(instanceId: string, toZone: GameZone) {
+    // Dredge: the card picked goes back to hand in place of a draw, and the top N are milled.
+    if (dredgeCount !== null && viewerZone === 'graveyard' && toZone === 'hand') {
+      dispatch({ type: 'MOVE_CARD', instanceId, toZone: 'hand' })
+      moveTopCards('library', 'graveyard', dredgeCount)
+      setDredgeCount(null)
+      setViewerZone(null)
+      return
+    }
     if (toZone === 'battlefield') {
       playToBattlefield(instanceId)
       return
@@ -1836,6 +2140,7 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
    *  table. The viewer's note text reminds them. */
   function closeViewer() {
     setViewerZone(null)
+    setDredgeCount(null)
   }
 
   /** Shuffles the library, with the cue — shared by the R shortcut and anything else that wants
@@ -1854,6 +2159,90 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
   function startRevealTop(count: number) {
     setPeekedLibraryIds(library.slice(0, count).map((c) => c.instanceId))
     setCountPrompt(null)
+  }
+
+  /** The top `count` cards of a pile, top first: the front of the library, and the newest end of
+   *  the graveyard and exile (the card shown on the pile). */
+  function topCardsOf(zone: PileZone, count: number) {
+    const cards = zoneCards(state, zone)
+    return (zone === 'library' ? cards : [...cards].reverse()).slice(0, Math.max(0, count))
+  }
+
+  /** The one step behind Mill X, Exile top X, Return top X to hand and the rest: the top `count`
+   *  cards of `from` go to `to`, top card first. Asking for more than the zone holds moves all of
+   *  it. One undo step, like any other burst. */
+  function moveTopCards(from: PileZone, to: GameZone, count: number, libraryPosition?: 'top' | 'bottom') {
+    for (const card of topCardsOf(from, count)) {
+      dispatch({ type: 'MOVE_CARD', instanceId: card.instanceId, toZone: to, libraryPosition })
+    }
+  }
+
+  /** Shuffles every card in `from` into the library (graveyard or exile, e.g. Elixir of Immortality). */
+  function shuffleZoneIntoLibrary(from: 'graveyard' | 'exile') {
+    const ids = zoneCards(state, from).map((c) => c.instanceId)
+    if (ids.length === 0) return
+    for (const instanceId of ids) dispatch({ type: 'MOVE_CARD', instanceId, toZone: 'library', libraryPosition: 'bottom' })
+    dispatch({ type: 'SHUFFLE_LIBRARY', shuffledOrder: shuffle([...library.map((c) => c.instanceId), ...ids]) })
+    playCue('shuffle')
+  }
+
+  /** A zone's right-click menu. Named the way the game names them (mill, exile X, dredge...),
+   *  though most are the same "move the top X somewhere" step underneath. X actions ask for the
+   *  number first, in a box opened where the menu was. The library's own cards stay hidden until
+   *  the player picks "Search library". */
+  function zoneActions(zone: PileZone, x: number, y: number): ContextMenuAction[] {
+    const ask = (label: string, run: (count: number) => void) => () => setZoneCountAsk({ label, x, y, run })
+    if (zone === 'library') {
+      return [
+        { label: 'Draw X…', onSelect: ask('Draw how many?', (n) => { dispatch({ type: 'DRAW', count: n, toSide: handDrawSide }); playCue('draw') }) },
+        { label: 'Scry X…', onSelect: ask('Scry how many?', (n) => startScryOrSurveil('scry', n)) },
+        { label: 'Surveil X…', onSelect: ask('Surveil how many?', (n) => startScryOrSurveil('surveil', n)) },
+        { label: 'Mill X…', onSelect: ask('Mill how many?', (n) => moveTopCards('library', 'graveyard', n)) },
+        { label: 'Exile top X…', onSelect: ask('Exile how many?', (n) => moveTopCards('library', 'exile', n)) },
+        { label: 'Look at top X…', onSelect: ask('Look at how many?', (n) => startRevealTop(n)) },
+        { label: 'Put top X on the bottom…', onSelect: ask('Bottom how many?', (n) => moveTopCards('library', 'library', n, 'bottom')) },
+        { label: 'View bottom X…', onSelect: ask('View how many?', (n) => openBottomViewer(n)) },
+        { label: 'Cascade…', onSelect: ask('Mana value', (n) => startCascade(n)) },
+        {
+          label: state.revealTopOfLibrary ? 'Stop looking at top card' : 'Look at top card',
+          onSelect: () => dispatch({ type: 'TOGGLE_REVEAL_TOP' }),
+        },
+        {
+          label: state.revealTopToPod ? 'Hide top card from table' : 'Reveal top card to table',
+          onSelect: () => dispatch({ type: 'TOGGLE_REVEAL_TOP_TO_POD' }),
+        },
+        {
+          label: 'Shuffle',
+          onSelect: () => {
+            dispatch({ type: 'SHUFFLE_LIBRARY', shuffledOrder: shuffle(library.map((c) => c.instanceId)) })
+            playCue('shuffle')
+          },
+        },
+        { label: 'Search library (show cards)', onSelect: () => setViewerZone('library') },
+      ]
+    }
+    if (zone === 'graveyard') {
+      return [
+        { label: 'View graveyard', onSelect: () => setViewerZone('graveyard') },
+        { label: 'Exile top X…', onSelect: ask('Exile how many?', (n) => moveTopCards('graveyard', 'exile', n)) },
+        { label: 'Exile graveyard', onSelect: () => moveTopCards('graveyard', 'exile', graveyard.length) },
+        { label: 'Return top X to hand…', onSelect: ask('Return how many?', (n) => moveTopCards('graveyard', 'hand', n)) },
+        {
+          label: 'Dredge X…',
+          onSelect: ask('Dredge how many?', (n) => {
+            setDredgeCount(n)
+            setViewerZone('graveyard')
+          }),
+        },
+        { label: 'Shuffle graveyard into library', onSelect: () => shuffleZoneIntoLibrary('graveyard') },
+      ]
+    }
+    return [
+      { label: 'View exile', onSelect: () => setViewerZone('exile') },
+      { label: 'Return top X to hand…', onSelect: ask('Return how many?', (n) => moveTopCards('exile', 'hand', n)) },
+      { label: 'Put top X into graveyard…', onSelect: ask('How many?', (n) => moveTopCards('exile', 'graveyard', n)) },
+      { label: 'Shuffle exile into library', onSelect: () => shuffleZoneIntoLibrary('exile') },
+    ]
   }
 
   function startScryOrSurveil(mode: 'scry' | 'surveil', count: number) {
@@ -1996,8 +2385,13 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
     const surfaceX = cursor.x - CARD_W_PX / 2
     const surfaceY = cursor.y - CARD_H_PX / 2
 
+    // Same three cases, in the same order, as handleBattlefieldDrop: another player's card lands
+    // on whichever quadrant it is dropped in (occupied or not); our own battlefield or hand card
+    // lands on a live opponent's quadrant if dropped there; anything else stays on ours.
     let origin = myOrigin
-    if (inPod && mpActive && drag.fromZone === 'battlefield') {
+    if (inPod && drag.fromPlayerId) {
+      origin = seatOrigin(seatAtSurfacePoint(surfaceX, surfaceY), CANVAS_W, CANVAS_H)
+    } else if (inPod && mpActive && (drag.fromZone === 'battlefield' || drag.fromZone === 'hand')) {
       const targetSeat = seatAtSurfacePoint(surfaceX, surfaceY)
       if (targetSeat !== mySeatResolved && opponentBoards.some((b) => b.seat === targetSeat)) {
         origin = seatOrigin(targetSeat, CANVAS_W, CANVAS_H)
@@ -2107,6 +2501,12 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
         } else {
           // Playing straight from hand onto someone else's quadrant — same "still ours" rule.
           dispatch({ type: 'MOVE_CARD', instanceId: card.instanceId, toZone: 'battlefield', x: local.x, y: local.y, atSeat })
+          for (const g of data.groupOffsets ?? []) {
+            if (!hand.some((c) => c.instanceId === g.instanceId)) continue
+            const memberLocal = clampToCanvas(surfaceX - targetOrigin.x + g.dx, surfaceY - targetOrigin.y + g.dy)
+            dispatch({ type: 'MOVE_CARD', instanceId: g.instanceId, toZone: 'battlefield', x: memberLocal.x, y: memberLocal.y, atSeat })
+          }
+          if (data.groupOffsets?.length) setSelectedIds(new Set())
           playCue('play-card')
         }
         return
@@ -2125,6 +2525,12 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
       }
     } else {
       dispatch({ type: 'MOVE_CARD', instanceId: data.instanceId, toZone: 'battlefield', x, y })
+      // A multi-card hand selection lands as a row, keeping the layout the preview showed.
+      for (const g of data.groupOffsets ?? []) {
+        const member = clampToCanvas(surfaceX - myOrigin.x + g.dx, surfaceY - myOrigin.y + g.dy)
+        dispatch({ type: 'MOVE_CARD', instanceId: g.instanceId, toZone: 'battlefield', x: member.x, y: member.y })
+      }
+      if (data.groupOffsets?.length) setSelectedIds(new Set())
       playCue('play-card')
     }
   }
@@ -2216,6 +2622,9 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
       const start = surfacePointAt(event.clientX, event.clientY)
       if (!start) return
       setMarquee({ x1: start.x, y1: start.y, x2: start.x, y2: start.y })
+      // The hand floats over the table in screen space, so its cards are tested against the
+      // box's screen rectangle rather than the table-space one.
+      const startClient = { x: event.clientX, y: event.clientY }
 
       function onMove(moveEvent: globalThis.MouseEvent) {
         const point = surfacePointAt(moveEvent.clientX, moveEvent.clientY)
@@ -2224,6 +2633,19 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
       function onUp(upEvent: globalThis.MouseEvent) {
         window.removeEventListener('mousemove', onMove)
         window.removeEventListener('mouseup', onUp)
+        const box = {
+          left: Math.min(startClient.x, upEvent.clientX),
+          right: Math.max(startClient.x, upEvent.clientX),
+          top: Math.min(startClient.y, upEvent.clientY),
+          bottom: Math.max(startClient.y, upEvent.clientY),
+        }
+        const handHits = [...document.querySelectorAll<HTMLElement>('.playtest__hand-card[data-instance-id]')]
+          .filter((el) => {
+            const r = el.getBoundingClientRect()
+            return r.left < box.right && r.right > box.left && r.top < box.bottom && r.bottom > box.top
+          })
+          .map((el) => el.dataset.instanceId!)
+        if (handHits.length > 0) setSelectedIds((prevSel) => new Set([...prevSel, ...handHits]))
         const end = surfacePointAt(upEvent.clientX, upEvent.clientY)
         setMarquee((prev) => {
           if (!prev) return null
@@ -2232,10 +2654,14 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
           const right = Math.max(prev.x1, point.x)
           const top = Math.min(prev.y1, point.y)
           const bottom = Math.max(prev.y1, point.y)
-          const hitIds = battlefield
+          // Live cards (not the list captured at mouse-down), each tested where it is drawn: a
+          // card parked on another quadrant sits at THAT seat's origin. Testing everything
+          // against our own origin selected far-away parked cards the box never touched.
+          const hitIds = zoneCards(stateRef.current, 'battlefield')
             .filter((c) => {
-              const cx = (c.x ?? 0) + myOrigin.x
-              const cy = (c.y ?? 0) + myOrigin.y
+              const origin = inPod && c.atSeat !== undefined ? seatOrigin(c.atSeat, CANVAS_W, CANVAS_H) : myOrigin
+              const cx = (c.x ?? 0) + origin.x
+              const cy = (c.y ?? 0) + origin.y
               return cx < right && cx + CARD_W_PX > left && cy < bottom && cy + CARD_H_PX > top
             })
             .map((c) => c.instanceId)
@@ -2302,8 +2728,16 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
         }
         return
       }
-      dispatch({ type: 'MOVE_CARD', instanceId: data.instanceId, toZone, libraryPosition })
+      // The whole selection goes, not just the card that was grabbed.
+      const ids = draggedIds(data)
+      for (const instanceId of ids) dispatch({ type: 'MOVE_CARD', instanceId, toZone, libraryPosition })
+      if (ids.length > 1) setSelectedIds(new Set())
     }
+  }
+
+  /** The grabbed card plus every selected card riding along with it (see groupOffsets). */
+  function draggedIds(data: DraggedGameCard): string[] {
+    return [data.instanceId, ...(data.groupOffsets ?? []).map((g) => g.instanceId)]
   }
 
   /** Right-clicking ANOTHER player's battlefield card — a one-item menu offering to make your
@@ -2536,6 +2970,105 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
   // directly in its dependency array — not just inside the deferred keydown callback — so they
   // need to already exist by the time this line itself runs, not just by the time a key is
   // actually pressed.)
+  // F9: copy a debug snapshot of the table to the clipboard (see debugSnapshot.ts for why this
+  // exists). Read through a ref so the key handler is installed once and always sees the current
+  // render's values, and listened for in the capture phase with no focus or modal checks — it
+  // has to work in exactly the situations where the rest of the UI isn't behaving.
+  const [debugSnapshotText, setDebugSnapshotText] = useState<string | null>(null)
+  const debugStateRef = useRef<() => Record<string, unknown>>(() => ({}))
+  debugStateRef.current = () => {
+    const now = Date.now()
+    return {
+      appVersion: __APP_VERSION__,
+      connection: {
+        status: mpStatus,
+        statusDetail: mpStatusDetail,
+        role: mpRole,
+        mpActive,
+        inPod,
+        mockPod: mockBoards !== null,
+        mySeat,
+        mySeatResolved,
+        viewRotated,
+        activeSeat,
+        podTurn,
+        opponents: opponentBoards.map((b) => ({
+          player: b.playerId.slice(0, 8),
+          seat: b.seat,
+          battlefield: b.battlefield.length,
+          parkedOnMySeat: b.battlefield.filter((c) => c.atSeat === mySeatResolved).length,
+          heldForMe: b.battlefield.filter((c) => c.ownerSeat === mySeatResolved).length,
+        })),
+      },
+      game: {
+        zones: Object.fromEntries((['library', 'hand', 'battlefield', 'graveyard', 'exile', 'command'] as const).map((z) => [z, zoneCards(state, z).length])),
+        battlefield: battlefield.map((c) => ({
+          id: c.instanceId.slice(0, 8),
+          tapped: c.tapped,
+          atSeat: c.atSeat,
+          ownerSeat: c.ownerSeat,
+          faceDown: c.faceDown,
+          isToken: c.isToken,
+          x: Math.round(c.x ?? 0),
+          y: Math.round(c.y ?? 0),
+        })),
+        handIds: hand.map((c) => c.instanceId.slice(0, 8)),
+        // Any id here more than once means a card exists twice on this client.
+        duplicateInstanceIds: state.cards.map((c) => c.instanceId).filter((id, i, all) => all.indexOf(id) !== i).map((id) => id.slice(0, 8)),
+        undoDepth: undoStackRef.current.length,
+        redoDepth: redoStackRef.current.length,
+      },
+      ui: {
+        camera,
+        dragInProgress: getCurrentDragData(),
+        dragPreviewShown: dragPreview !== null,
+        panInProgress: panState.current !== null,
+        marqueeInProgress: marquee !== null,
+        spinInProgress: spinSeat !== null,
+        hoveredInstanceId: hoveredInstanceId?.slice(0, 8) ?? null,
+        selectedCount: selectedIds.size,
+        open: {
+          multiplayerModal: mpModalOpen,
+          zoneViewer: viewerZone,
+          opponentZoneViewer: oppZoneView?.zone ?? null,
+          cardMenu: contextMenu !== null,
+          handCardMenu: handContextMenu !== null,
+          copyCardMenu: copyCardMenu !== null,
+          countPrompt: countPrompt?.mode ?? null,
+          libraryPeek: peek !== null,
+          tokenPicker: tokenPickerOpen,
+          bottomViewer: bottomViewerCount !== null,
+          confirmScoop: confirmScoopOpen,
+          anyDismissableLayer: isDismissableLayerOpen(),
+        },
+      },
+      recentActions: recentActionsRef.current.map((a) => ({ ...a, msAgo: now - a.at, at: undefined })),
+    }
+  }
+  useEffect(() => {
+    const stopRecording = startInputRecording()
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'F9') return
+      event.preventDefault()
+      const snapshot = { ...debugStateRef.current(), page: buildDomSnapshot() }
+      void copySnapshot(snapshot).then((copied) => {
+        if (copied) {
+          notifyInfo('Debug snapshot copied to the clipboard.')
+          return
+        }
+        // The clipboard can refuse (the window isn't focused, or the page is in an odd state —
+        // which is exactly when this key gets pressed). Put the text on screen instead, already
+        // selected, so Ctrl+C alone finishes the job without needing the mouse.
+        setDebugSnapshotText(JSON.stringify(snapshot, null, 2))
+      })
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => {
+      window.removeEventListener('keydown', onKey, true)
+      stopRecording()
+    }
+  }, [])
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null
@@ -2544,6 +3077,18 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
       }
       if (event.key !== 'f' && event.key !== 'F') return
       if (hoveredInstanceId) {
+        // A double-faced card in hand turns over too — to read the other side, or to choose
+        // which side of a modal card to play. Nothing else in hand reacts to F (face-down is a
+        // battlefield state; "play face down" is on the hand card's right-click menu).
+        const handCard = hand.find((c) => c.instanceId === hoveredInstanceId)
+        if (handCard) {
+          const handSnapshot = snapshotFor(handCard.scryfallId)
+          if (handSnapshot && isFlippableSnapshot(handSnapshot)) {
+            event.preventDefault()
+            dispatch({ type: 'FLIP_CARD', instanceId: hoveredInstanceId })
+          }
+          return
+        }
         const hoveredCard = battlefield.find((c) => c.instanceId === hoveredInstanceId)
         const snapshot = hoveredCard ? snapshotFor(hoveredCard.scryfallId) : undefined
         if (hoveredCard && snapshot && isFlippableSnapshot(snapshot)) {
@@ -2582,7 +3127,7 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [hoveredInstanceId, battlefield, libraryHovered, library, dispatch, snapshotFor, inPod, opponentBoards, mySeatResolved, flipRemoteCard])
+  }, [hoveredInstanceId, battlefield, hand, libraryHovered, library, dispatch, snapshotFor, inPod, opponentBoards, mySeatResolved, flipRemoteCard])
 
   // R: shuffle the hovered library — the explicit replacement for the old shuffle-on-tutor-close
   // behavior (see closeViewer). Library only: it's the one zone whose order is hidden information;
@@ -2621,56 +3166,17 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
   const exileTop = topOf(exile)
   const commandTop = topOf(command)
 
+  // Only what isn't about a zone's cards: everything that works on the library, graveyard or
+  // exile is on that pile's right-click menu instead (see zoneActions).
   const trayActions: TrayAction[] = [
-    { key: 'scry', label: 'Scry', icon: '🔮', onClick: (event) => setCountPrompt({ mode: 'scry', x: event.clientX, y: event.clientY }) },
-    { key: 'surveil', label: 'Surveil', icon: '👀', onClick: (event) => setCountPrompt({ mode: 'surveil', x: event.clientX, y: event.clientY }) },
-    { key: 'cascade', label: 'Cascade', icon: '🌊', onClick: (event) => setCountPrompt({ mode: 'cascade', x: event.clientX, y: event.clientY }) },
-    {
-      key: 'peek-top',
-      label: 'Look at Top N',
-      icon: '🔎',
-      onClick: (event) => setCountPrompt({ mode: 'reveal', x: event.clientX, y: event.clientY }),
-    },
-    { key: 'tutor', label: 'Tutor', icon: '🔍', onClick: () => setViewerZone('library') },
     { key: 'tokens', label: 'Create Token', icon: '⭐', onClick: () => setTokenPickerOpen(true) },
     { key: 'dice', label: 'Roll Die', icon: '🎲', onClick: (event) => setCountPrompt({ mode: 'dice', x: event.clientX, y: event.clientY }) },
     { key: 'coin', label: 'Flip Coin', icon: '🪙', onClick: () => flipCoin() },
-    // Magic's two top-of-library effects are separate, so these are two separate toggles, named
-    // with the game's own vocabulary: "look at" is private to you, "reveal" is open information
-    // for the whole table. See GameState.revealTopOfLibrary / revealTopToPod.
-    {
-      key: 'look-at-top',
-      label: state.revealTopOfLibrary ? 'Stop Looking at Top Card' : 'Look at Top Card',
-      icon: state.revealTopOfLibrary ? '🙈' : '👁',
-      onClick: () => dispatch({ type: 'TOGGLE_REVEAL_TOP' }),
-    },
-    {
-      key: 'reveal-top',
-      label: state.revealTopToPod ? 'Hide Top Card from Table' : 'Reveal Top Card to Table',
-      icon: state.revealTopToPod ? '🔒' : '🔎',
-      onClick: () => dispatch({ type: 'TOGGLE_REVEAL_TOP_TO_POD' }),
-    },
     {
       key: 'reveal-hand',
       label: state.revealHand ? 'Hide Hand' : 'Reveal Hand',
       icon: state.revealHand ? '🤜' : '🖐️',
       onClick: () => dispatch({ type: 'TOGGLE_REVEAL_HAND' }),
-    },
-    {
-      key: 'bottom',
-      label: 'View Bottom',
-      icon: '📚',
-      onClick: (event) => setCountPrompt({ mode: 'bottom', x: event.clientX, y: event.clientY }),
-    },
-    {
-      key: 'shuffle',
-      label: 'Shuffle Library',
-      icon: '🔀',
-      tutorialId: 'action-shuffle-library',
-      onClick: () => {
-        dispatch({ type: 'SHUFFLE_LIBRARY', shuffledOrder: shuffle(library.map((c) => c.instanceId)) })
-        playCue('shuffle')
-      },
     },
   ]
 
@@ -2725,7 +3231,7 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
         {/* Two different numbers, so both are labelled rather than one bare "Turn N": your own
             turn count (what NEXT_TURN advances, meaningful solo) and — in a pod — the table's
             shared round, which is the one everybody agrees on. See TurnPassMessage.turn. */}
-        <span className="playtest__turn">Turn {state.turn}</span>
+        {!inPod && <span className="playtest__turn">Turn {state.turn}</span>}
         {inPod && podTurn !== null && (
           <span className="playtest__turn playtest__turn--table" title="The table's shared turn — advances when play comes back around to the first seat">
             Table Turn {podTurn}
@@ -3114,6 +3620,12 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
                       snapshot={pc.faceDown ? undefined : snapshotFor(pc.scryfallId)}
                     />
                     {pc.isToken && <span className="playtest-card__token-badge" title="Token">T</span>}
+                    {/* Only for a card sitting on OUR quadrant — the same cards F can flip, and
+                        for the same reason: it is ours to handle while it is here. The flip
+                        itself happens on its owner's client. */}
+                    {!pc.faceDown && pc.atSeat !== undefined && pc.atSeat === mySeatResolved && mpActive && isFlippable(pc.scryfallId) && (
+                      <FlipFaceButton showingBack={!!pc.showBackFace} onFlip={() => flipRemoteCard(board.playerId, pc.instanceId)} />
+                    )}
                     <CounterPileStack
                       items={(pc.counters ?? []).map((p) => ({ id: p.id, color: p.color, text: counterPileLabel(p), name: counterPileName(p.color) }))}
                       side="left"
@@ -3147,7 +3659,7 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
                   : undefined
               // Usually myOrigin, unless another player dragged this card of ours onto a
               // different quadrant (gameCard.atSeat) — see RECEIVE_RELOCATED_CARD.
-              const cardOrigin = gameCard.atSeat !== undefined ? seatOrigin(gameCard.atSeat, CANVAS_W, CANVAS_H) : myOrigin
+              const cardOrigin = inPod && gameCard.atSeat !== undefined ? seatOrigin(gameCard.atSeat, CANVAS_W, CANVAS_H) : myOrigin
               const pos = mirror((gameCard.x ?? 0) + cardOrigin.x, (gameCard.y ?? 0) + cardOrigin.y, CARD_W_PX, CARD_H_PX)
               return (
               <div
@@ -3188,11 +3700,23 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
                   foil={foilFor(gameCard.scryfallId)}
                 />
                 {gameCard.isToken && <span className="playtest-card__token-badge" title="Token">T</span>}
+                {isFlippable(gameCard.scryfallId) && (
+                  <FlipFaceButton showingBack={!!gameCard.showBackFace} onFlip={() => dispatch({ type: 'FLIP_CARD', instanceId: gameCard.instanceId })} />
+                )}
                 <CounterPileStack
                   items={(gameCard.counters ?? []).map((p) => ({ id: p.id, color: p.color, text: counterPileLabel(p), name: counterPileName(p.color) }))}
                   side="left"
                   sourceInstanceId={gameCard.instanceId}
-                  onAdjust={(pileId, delta) => dispatch({ type: 'ADJUST_COUNTER_PILE', instanceId: gameCard.instanceId, pileId, delta })}
+                  onAdjust={(pileId, delta) => {
+                    // A keyword marker (Flying, Hexproof…) is there or it isn't: taking the last
+                    // one off removes the chip, where it used to read "FLY×0" and then "FLY×-1".
+                    const pile = gameCard.counters?.find((p) => p.id === pileId)
+                    if (pile && isKeywordCounter(pile.color) && pile.value + delta <= 0) {
+                      dispatch({ type: 'REMOVE_COUNTER_PILE', instanceId: gameCard.instanceId, pileId })
+                      return
+                    }
+                    dispatch({ type: 'ADJUST_COUNTER_PILE', instanceId: gameCard.instanceId, pileId, delta })
+                  }}
                   onRemove={(pileId) => dispatch({ type: 'REMOVE_COUNTER_PILE', instanceId: gameCard.instanceId, pileId })}
                 />
                 <PtCounterPileStack
@@ -3358,7 +3882,7 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
                   floatingMana={board.floatingMana}
                   isSelf={false}
                   onFocus={() => centerOnSeat(board.seat)}
-                  onViewZone={(zone) => setOppZoneView({ board, zone })}
+                  onViewZone={(zone) => setOppZoneView({ playerId: board.playerId, zone })}
                 />
               ))}
           </div>
@@ -3468,7 +3992,7 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
             tutorialId="library-pile"
             count={library.length}
             onClick={library.length > 0 ? handleDraw : undefined}
-            onContextMenu={library.length > 0 ? () => setViewerZone('library') : undefined}
+            onContextMenu={(event) => setZoneMenu({ zone: 'library', x: event.clientX, y: event.clientY })}
             // Cards dragged in from hand (e.g. putting back mulligan discards) go to the bottom —
             // dropping them on top would hand the player free knowledge of their next draw.
             // Battlefield cards returned to the library (an explicit "put on top" effect) keep
@@ -3503,6 +4027,7 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
             label="Graveyard"
             count={graveyard.length}
             onClick={() => setViewerZone('graveyard')}
+            onContextMenu={(event) => setZoneMenu({ zone: 'graveyard', x: event.clientX, y: event.clientY })}
             onDropCard={dropToZone('graveyard')}
           >
             {graveyardTop && (
@@ -3514,7 +4039,13 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
               />
             )}
           </ZonePile>
-          <ZonePile label="Exile" count={exile.length} onClick={() => setViewerZone('exile')} onDropCard={dropToZone('exile')}>
+          <ZonePile
+            label="Exile"
+            count={exile.length}
+            onClick={() => setViewerZone('exile')}
+            onContextMenu={(event) => setZoneMenu({ zone: 'exile', x: event.clientX, y: event.clientY })}
+            onDropCard={dropToZone('exile')}
+          >
             {exileTop && (
               <PlaytestCard
                 gameCard={exileTop}
@@ -3582,18 +4113,22 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
             if (mpActive) returnRemoteCard(data.fromPlayerId, data.instanceId, 'hand')
             return
           }
+          // Every selected card riding along with the grabbed one comes too.
+          const moving = new Set(draggedIds(data))
           if (data.fromZone !== 'hand') {
-            dispatch({ type: 'MOVE_CARD', instanceId: data.instanceId, toZone: 'hand' })
+            for (const instanceId of moving) dispatch({ type: 'MOVE_CARD', instanceId, toZone: 'hand' })
+            if (moving.size > 1) setSelectedIds(new Set())
             return
           }
           // Reordering within the hand itself (distinct from playing a card in from elsewhere,
           // handled above) — insertion index comes from where the cursor sits relative to the
-          // OTHER hand cards' midpoints (the dragged card's own element is excluded from that
-          // comparison so its rect, mid-drag, can't skew where it lands).
-          const draggedCard = hand.find((c) => c.instanceId === data.instanceId)
-          if (!draggedCard) return
+          // OTHER hand cards' midpoints (the dragged cards' own elements are excluded from that
+          // comparison so their rects, mid-drag, can't skew where they land). A multi-card
+          // selection moves as one block, in hand order.
+          const block = hand.filter((c) => moving.has(c.instanceId))
+          if (block.length === 0) return
           const otherEls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('.playtest__hand-card')).filter(
-            (el) => el.dataset.instanceId !== data.instanceId,
+            (el) => !moving.has(el.dataset.instanceId ?? ''),
           )
           let insertIndex = otherEls.length
           for (let i = 0; i < otherEls.length; i++) {
@@ -3603,8 +4138,8 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
               break
             }
           }
-          const withoutDragged = hand.filter((c) => c.instanceId !== data.instanceId)
-          const reordered = [...withoutDragged.slice(0, insertIndex), draggedCard, ...withoutDragged.slice(insertIndex)]
+          const withoutDragged = hand.filter((c) => !moving.has(c.instanceId))
+          const reordered = [...withoutDragged.slice(0, insertIndex), ...block, ...withoutDragged.slice(insertIndex)]
           dispatch({ type: 'REORDER_HAND', orderedInstanceIds: reordered.map((c) => c.instanceId) })
         }}
       >
@@ -3624,6 +4159,17 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
               '--fan-lift': `${lift}px`,
               zIndex: i,
             } as CSSProperties
+            // Dragging one card of a multi-card hand selection brings the rest along, laid out
+            // in a row in hand order around the grabbed card (see handleBattlefieldDrop).
+            const isSelected = selectedIds.has(gameCard.instanceId)
+            const selectedInHand = isSelected ? hand.filter((c) => selectedIds.has(c.instanceId)) : []
+            const anchorIndex = selectedInHand.findIndex((c) => c.instanceId === gameCard.instanceId)
+            const handGroupOffsets =
+              selectedInHand.length > 1
+                ? selectedInHand
+                    .map((c, k) => ({ instanceId: c.instanceId, dx: (k - anchorIndex) * (CARD_W_PX + 10), dy: 0 }))
+                    .filter((g) => g.instanceId !== gameCard.instanceId)
+                : undefined
             return (
               <div
                 key={gameCard.instanceId}
@@ -3636,10 +4182,15 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
                 <PlaytestCard
                   gameCard={gameCard}
                   snapshot={snapshotFor(gameCard.scryfallId)}
-                  onClick={() => playToBattlefield(gameCard.instanceId)}
+                  onClick={(event) => handleHandCardClick(gameCard.instanceId, event)}
                   onContextMenu={(event) => setHandContextMenu({ instanceId: gameCard.instanceId, x: event.clientX, y: event.clientY })}
                   foil={foilFor(gameCard.scryfallId)}
+                  selected={isSelected}
+                  groupOffsets={handGroupOffsets}
                 />
+                {isFlippable(gameCard.scryfallId) && (
+                  <FlipFaceButton showingBack={!!gameCard.showBackFace} onFlip={() => dispatch({ type: 'FLIP_CARD', instanceId: gameCard.instanceId })} />
+                )}
               </div>
             )
           })}
@@ -3661,8 +4212,29 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
           }))}
           onMove={moveFromViewer}
           onClose={closeViewer}
-          note={viewerZone === 'library' ? 'Searching your library means shuffling afterward — hover the library pile and press R.' : undefined}
+          zone={viewerZone}
+          note={
+            viewerZone === 'library'
+              ? 'Searching your library means shuffling afterward — hover the library pile and press R.'
+              : dredgeCount !== null && viewerZone === 'graveyard'
+                ? `Dredge ${dredgeCount}: press Hand on the card you're dredging. The top ${dredgeCount} of your library are milled when you do.`
+                : undefined
+          }
           searchable={viewerZone === 'library'}
+        />
+      )}
+
+      {zoneMenu && (
+        <CardContextMenu x={zoneMenu.x} y={zoneMenu.y} actions={zoneActions(zoneMenu.zone, zoneMenu.x, zoneMenu.y)} onClose={() => setZoneMenu(null)} />
+      )}
+
+      {zoneCountAsk && (
+        <NumberInputPrompt
+          x={zoneCountAsk.x}
+          y={zoneCountAsk.y}
+          label={zoneCountAsk.label}
+          onSubmit={zoneCountAsk.run}
+          onClose={() => setZoneCountAsk(null)}
         />
       )}
 
@@ -3679,17 +4251,17 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
         />
       )}
 
-      {oppZoneView && (
+      {oppZoneView && oppZoneBoard && !oppZoneGone && (
         <ZoneViewerModal
-          label={`${oppZoneView.board.name} — ${oppZoneView.zone === 'graveyard' ? 'Graveyard' : oppZoneView.zone === 'exile' ? 'Exile' : 'Hand'}`}
+          label={`${oppZoneBoard.name} — ${oppZoneView.zone === 'graveyard' ? 'Graveyard' : oppZoneView.zone === 'exile' ? 'Exile' : 'Hand'}`}
           // Graveyard/exile read as a stack (most-recently-added on top); a revealed hand has no
           // such ordering to preserve, so it's shown as-is instead of reversed.
           entries={(
             oppZoneView.zone === 'graveyard'
-              ? (oppZoneView.board.graveyard ?? []).slice().reverse()
+              ? (oppZoneBoard.graveyard ?? []).slice().reverse()
               : oppZoneView.zone === 'exile'
-                ? (oppZoneView.board.exile ?? []).slice().reverse()
-                : (oppZoneView.board.hand ?? [])
+                ? (oppZoneBoard.exile ?? []).slice().reverse()
+                : (oppZoneBoard.hand ?? [])
           ).map((pc) => ({
             gameCard: { instanceId: pc.instanceId, scryfallId: pc.scryfallId, zone: oppZoneView.zone, tapped: false, showBackFace: pc.showBackFace },
             snapshot: snapshotFor(pc.scryfallId),
@@ -3698,6 +4270,8 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
           readOnly
         />
       )}
+
+      {debugSnapshotText !== null && <DebugSnapshotPanel text={debugSnapshotText} onClose={() => setDebugSnapshotText(null)} />}
 
       {mpModalOpen && (
         <MultiplayerModal
@@ -3779,66 +4353,18 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
         />
       )}
 
-      {countPrompt &&
-        (() => {
-          const mode = countPrompt.mode
-          if (mode === 'cascade') {
-            return (
-              <NumberInputPrompt
-                x={countPrompt.x}
-                y={countPrompt.y}
-                label="Mana value"
-                onSubmit={startCascade}
-                onClose={() => setCountPrompt(null)}
-              />
-            )
-          }
-          if (mode === 'dice') {
-            return (
-              <DiceRollPrompt
-                x={countPrompt.x}
-                y={countPrompt.y}
-                sizes={DIE_SIZES}
-                // d20 if the deck's dice are the usual ones, else whatever's listed first — the
-                // single most-reached-for die, so the common roll stays one click plus Roll.
-                defaultSides={DIE_SIZES.includes(20) ? 20 : DIE_SIZES[0]}
-                onRoll={(sides, count) => rollDie(sides, count)}
-                onClose={() => setCountPrompt(null)}
-              />
-            )
-          }
-          if (mode === 'bottom') {
-            return (
-              <CardContextMenu
-                x={countPrompt.x}
-                y={countPrompt.y}
-                actions={SCRY_SURVEIL_COUNTS.map((count) => ({ label: `Bottom ${count}`, onSelect: () => openBottomViewer(count) }))}
-                onClose={() => setCountPrompt(null)}
-              />
-            )
-          }
-          if (mode === 'reveal') {
-            return (
-              <CardContextMenu
-                x={countPrompt.x}
-                y={countPrompt.y}
-                actions={SCRY_SURVEIL_COUNTS.map((count) => ({ label: `Look at top ${count}`, onSelect: () => startRevealTop(count) }))}
-                onClose={() => setCountPrompt(null)}
-              />
-            )
-          }
-          return (
-            <CardContextMenu
-              x={countPrompt.x}
-              y={countPrompt.y}
-              actions={SCRY_SURVEIL_COUNTS.map((count) => ({
-                label: `${mode === 'scry' ? 'Scry' : 'Surveil'} ${count}`,
-                onSelect: () => startScryOrSurveil(mode, count),
-              }))}
-              onClose={() => setCountPrompt(null)}
-            />
-          )
-        })()}
+      {countPrompt && (
+        <DiceRollPrompt
+          x={countPrompt.x}
+          y={countPrompt.y}
+          sizes={DIE_SIZES}
+          // d20 if the deck's dice are the usual ones, else whatever's listed first — the
+          // single most-reached-for die, so the common roll stays one click plus Roll.
+          defaultSides={DIE_SIZES.includes(20) ? 20 : DIE_SIZES[0]}
+          onRoll={(sides, count) => rollDie(sides, count)}
+          onClose={() => setCountPrompt(null)}
+        />
+      )}
 
       {peek && (
         <LibraryPeekModal

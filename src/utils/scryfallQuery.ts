@@ -157,7 +157,10 @@ export const EMPTY_FILTERS: SearchFilters = {
 export function buildScryfallQuery(text: string, filters: SearchFilters): string {
   const clauses: string[] = []
   const trimmedText = text.trim()
-  if (trimmedText.length > 0) clauses.push(trimmedText)
+  // A typed `or` binds looser than the implicit AND between clauses, so unparenthesized it
+  // would swallow the filters below: `t:elf or t:goblin f:commander` means "any elf, or a
+  // commander-legal goblin". Parenthesized only when there is an `or` to contain.
+  if (trimmedText.length > 0) clauses.push(/(^|\s)or(\s|$)/i.test(trimmedText) ? `(${trimmedText})` : trimmedText)
   if (filters.format) clauses.push(`f:${filters.format}`)
   if (filters.colors.length > 0) clauses.push(`c${filters.colorMatch}${filters.colors.join('')}`)
   if (filters.colorIdentity.length > 0) clauses.push(`id${filters.colorIdentityMatch}${filters.colorIdentity.join('')}`)

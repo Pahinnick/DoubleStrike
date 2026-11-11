@@ -11,7 +11,7 @@
  * (GIVE_CARD/RELOCATE_CARD/etc., guest->host->target).
  */
 import type { DraftConfig, DraftSource } from '../draft/types'
-import { isNonEmptyString, isSeat, isString, isValidRoomCode, type Seat } from './protocol'
+import { MAX_ZONE_CARDS, isBoundedArray, isFiniteNumber, isNonEmptyString, isSeat, isString, isValidRoomCode, type Seat } from './protocol'
 
 /** Same shape as the host's own DraftConfig — the pack source (cube or set) plus pack settings. */
 export type DraftConfigPayload = DraftConfig
@@ -121,17 +121,13 @@ function isDraftSource(v: unknown): v is DraftSource {
 function isDraftConfigPayload(v: unknown): v is DraftConfigPayload {
   if (typeof v !== 'object' || v === null) return false
   const c = v as Record<string, unknown>
-  return isDraftSource(c.source) && typeof c.packSize === 'number' && typeof c.packsPerPlayer === 'number'
+  return isDraftSource(c.source) && isFiniteNumber(c.packSize) && isFiniteNumber(c.packsPerPlayer)
 }
 
 function isSeatKeyedMap(v: unknown, isValue: (value: unknown) => boolean): boolean {
   if (typeof v !== 'object' || v === null) return false
   const m = v as Record<string, unknown>
   return Object.keys(m).every((key) => isSeat(Number(key)) && isValue(m[key]))
-}
-
-function isStringArray(v: unknown): v is string[] {
-  return Array.isArray(v) && v.every(isString)
 }
 
 function isSeatArray(v: unknown): v is Seat[] {
@@ -151,7 +147,7 @@ function isMatchStatus(v: unknown): boolean {
 function isResumePack(v: unknown): boolean {
   if (typeof v !== 'object' || v === null) return false
   const p = v as Record<string, unknown>
-  return isNonEmptyString(p.packId) && typeof p.round === 'number' && isStringArray(p.cards)
+  return isNonEmptyString(p.packId) && isFiniteNumber(p.round) && isBoundedArray(p.cards, MAX_ZONE_CARDS, isNonEmptyString)
 }
 
 export function parseDraftMessage(m: Record<string, unknown>): DraftParseResult {
@@ -171,9 +167,8 @@ export function parseDraftMessage(m: Record<string, unknown>): DraftParseResult 
       if (
         isNonEmptyString(m.toPlayerId) &&
         isNonEmptyString(m.packId) &&
-        typeof m.round === 'number' &&
-        Array.isArray(m.cards) &&
-        m.cards.every(isString)
+        isFiniteNumber(m.round) &&
+        isBoundedArray(m.cards, MAX_ZONE_CARDS, isNonEmptyString)
       ) {
         return { ok: true, msg: m as DraftPackMessage }
       }
@@ -187,22 +182,23 @@ export function parseDraftMessage(m: Record<string, unknown>): DraftParseResult 
       }
       return { ok: false, reason: 'malformed' }
     case 'DRAFT_ROUND_COMPLETE':
-      if (typeof m.round === 'number') return { ok: true, msg: m as DraftRoundCompleteMessage }
+      if (isFiniteNumber(m.round)) return { ok: true, msg: m as DraftRoundCompleteMessage }
       return { ok: false, reason: 'malformed' }
     case 'DRAFT_COMPLETE':
       return { ok: true, msg: m as DraftCompleteMessage }
     case 'DRAFT_PROGRESS':
-      if (isSeatKeyedMap(m.picksBySeat, (v) => typeof v === 'number')) return { ok: true, msg: m as DraftProgressMessage }
+      if (isSeatKeyedMap(m.picksBySeat, (v) => isFiniteNumber(v))) return { ok: true, msg: m as DraftProgressMessage }
       return { ok: false, reason: 'malformed' }
     case 'DRAFT_RESUME':
       if (
         isNonEmptyString(m.toPlayerId) &&
         isDraftConfigPayload(m.config) &&
         (m.phase === 'drafting' || m.phase === 'complete') &&
-        isStringArray(m.pool) &&
+        isBoundedArray(m.pool, MAX_ZONE_CARDS, isString) &&
         Array.isArray(m.packs) &&
+        m.packs.length <= 50 &&
         m.packs.every(isResumePack) &&
-        isSeatKeyedMap(m.picksBySeat, (v) => typeof v === 'number') &&
+        isSeatKeyedMap(m.picksBySeat, (v) => isFiniteNumber(v)) &&
         isSeatKeyedMap(m.roster, isString)
       ) {
         return { ok: true, msg: m as DraftResumeMessage }

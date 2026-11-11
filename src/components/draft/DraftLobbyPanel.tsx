@@ -11,6 +11,7 @@ import { useProfileSettings } from '../../hooks/useProfileSettings'
 import { DRAFT_MAX_PLAYERS, isValidRoomCode, type Seat } from '../../net/protocol'
 import { saveSnapshots } from '../../storage/cardCache'
 import { listCubes, loadCube } from '../../storage/cubeRepository'
+import { PrivacyNotice } from '../playtest/MultiplayerModal'
 import { SEAT_COLORS } from '../playtest/podLayout'
 import './draft.css'
 
@@ -31,6 +32,14 @@ const DEV_BOTS = import.meta.env.DEV || import.meta.env.VITE_DRAFT_BOTS === 'tru
 
 const DEFAULT_CUBE_PACK_SIZE = 15
 const DEFAULT_PACKS_PER_PLAYER = 3
+
+/** A pack size or pack count typed into a number box. Always a whole number of at least 1: the
+ *  draft engine counts rounds and slices packs with these, and a value like 2.5 made the "last
+ *  round" test never come true, so the draft could not finish. */
+function toWholeCount(raw: string): number {
+  const value = Math.floor(Number(raw))
+  return Number.isFinite(value) && value >= 1 ? value : 1
+}
 
 function setLabel(set: DraftableSet): string {
   return `${set.name} (${set.code.toUpperCase()}) · ${set.releasedAt.slice(0, 4)}`
@@ -186,7 +195,7 @@ function DraftLobbyPanel({ profileId, session, cubesVersion }: Props) {
             </div>
           </div>
         )}
-        <button type="button" className="draft-lobby__primary" onClick={() => void session.host()}>
+        <button type="button" className="draft-lobby__primary" onClick={() => void session.host().catch(() => undefined)}>
           Host Draft
         </button>
         <div className="draft-lobby__divider">or</div>
@@ -194,7 +203,7 @@ function DraftLobbyPanel({ profileId, session, cubesVersion }: Props) {
           className="draft-lobby__join"
           onSubmit={(event) => {
             event.preventDefault()
-            if (isValidRoomCode(code)) void session.join(code)
+            if (isValidRoomCode(code)) void session.join(code).catch(() => undefined)
           }}
         >
           <input
@@ -209,6 +218,7 @@ function DraftLobbyPanel({ profileId, session, cubesVersion }: Props) {
             Join Draft
           </button>
         </form>
+        <PrivacyNotice />
       </div>
     )
   }
@@ -349,14 +359,14 @@ function DraftLobbyPanel({ profileId, session, cubesVersion }: Props) {
               </label>
               <label>
                 <span>Pack size</span>
-                <input type="number" min={1} value={cubePackSize} onChange={(event) => setCubePackSize(Math.max(1, Number(event.target.value)))} />
+                <input type="number" min={1} value={cubePackSize} onChange={(event) => setCubePackSize(toWholeCount(event.target.value))} />
               </label>
             </>
           )}
 
           <label>
             <span>Packs per player</span>
-            <input type="number" min={1} max={6} value={packsPerPlayer} onChange={(event) => setPacksPerPlayer(Math.min(6, Math.max(1, Number(event.target.value))))} />
+            <input type="number" min={1} max={6} value={packsPerPlayer} onChange={(event) => setPacksPerPlayer(Math.min(6, toWholeCount(event.target.value)))} />
           </label>
 
           {solo && (

@@ -5,6 +5,7 @@ import type { ScryfallCard } from '../../api/scryfallTypes'
 import { findSimilarCards, getTagsForCard } from '../../engine/similarCards'
 import { SIMILAR_SORT_OPTIONS, sortSimilarMatches, type SimilarSort } from '../../engine/similarCardSort'
 import { useCommanderColorIdentity } from '../../hooks/useCommanderColorIdentity'
+import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 import { useSaltScores } from '../../hooks/useSaltScores'
 import { useDeck } from '../../state/DeckContext'
 import type { FoilKind } from '../../state/types'
@@ -121,6 +122,9 @@ function SimilarCardsView({ onAddTagToSearch }: Props) {
     }
     let cancelled = false
     const controller = new AbortController()
+    // Cleared before the request, not just replaced after it: until the new list arrives the
+    // art and foil rows would still be the previous card's, and clicking one changed that card.
+    setPrints([])
     setPrintsStatus('loading')
     getCardPrints(openCard.oracle_id, controller.signal)
       .then((result) => {
@@ -143,14 +147,7 @@ function SimilarCardsView({ onAddTagToSearch }: Props) {
     }
   }, [openCard])
 
-  useEffect(() => {
-    if (!openCard) return
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') setOpenCard(null)
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [openCard, setOpenCard])
+  useEscapeToClose(() => setOpenCard(null), Boolean(openCard))
 
   // Deck entries (any board) currently using some printing of this Oracle card — used both to
   // highlight the active art and to decide whether picking an art swaps those entries' printing

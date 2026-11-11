@@ -37,7 +37,12 @@ export function edhrecSlug(cardName: string): string {
   const front = cardName.split(' // ')[0]
   // Apostrophes (straight + curly) are elided, not hyphenated — EDHREC slugs "Umezawa's Jitte"
   // as `umezawas-jitte`, not `umezawa-s-jitte`.
+  // Accented letters are transliterated, not dropped: EDHREC slugs "Éomer, King of Rohan" as
+  // `eomer-king-of-rohan` and "Lim-Dûl's Vault" as `lim-duls-vault`. Decomposing first splits
+  // each into its base letter plus a combining mark, which is then stripped.
   return front
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .replace(/['’]/g, '')
     .replace(/[^a-z0-9]+/g, '-')
@@ -57,16 +62,11 @@ type EdhrecPage = {
 /** Raw network fetch only, rate-limited — no persistence. See storage/saltCache.ts +
  *  hooks/useSaltScores.ts for the cached layer components should actually use. */
 export async function fetchEdhrecSalt(cardName: string): Promise<number | null> {
-  const slug = edhrecSlug(cardName)
-  return scheduleRequest(async () => {
-    // EDHREC returns 404 for unknown slugs and 403 for cards it refuses to serve (some Secret
-    // Lair crossovers). Neither is retryable — both just mean "no salt score exists."
-    const res = await fetch(`${EDHREC_JSON_BASE}/${slug}.json`)
-    if (!res.ok) return null
-    const body = (await res.json()) as EdhrecPage
-    const raw = body.container?.json_dict?.card?.salt
-    return typeof raw === 'number' ? raw : null
-  })
+  // EDHREC returns 404 for unknown slugs and 403 for cards it refuses to serve (some Secret
+  // Lair crossovers). Neither is retryable — both just mean "no salt score exists."
+  const body = (await fetchEdhrecPage(EDHREC_JSON_BASE, edhrecSlug(cardName))) as EdhrecPage | null
+  const raw = body?.container?.json_dict?.card?.salt
+  return typeof raw === 'number' ? raw : null
 }
 
 type EdhrecCommanderPage = {
@@ -124,6 +124,13 @@ function readRedirectSlug(body: unknown): string | null {
  * layer components should actually use.
  */
 export async function fetchEdhrecCommanderPage(slug: string): Promise<unknown | null> {
+  return fetchEdhrecPage(EDHREC_COMMANDER_JSON_BASE, slug)
+}
+
+/** One page of EDHREC JSON, following its `redirect` responses. Card pages redirect too, not just
+ *  partner pairs: a split card's front-half slug (`fire`) answers 200 with
+ *  `{"redirect": "/cards/fire-ice"}` rather than page data. */
+async function fetchEdhrecPage(base: string, slug: string): Promise<unknown | null> {
   let currentSlug = slug
   const seen = new Set<string>()
 
@@ -134,7 +141,7 @@ export async function fetchEdhrecCommanderPage(slug: string): Promise<unknown | 
     const body = await scheduleRequest(async () => {
       // Same contract as the other two fetchers: 404/403 means "no such commander page", which is
       // a real answer rather than a retryable failure.
-      const res = await fetch(`${EDHREC_COMMANDER_JSON_BASE}/${requestedSlug}.json`)
+      const res = await fetch(`${base}/${requestedSlug}.json`)
       if (!res.ok) return null
       return (await res.json()) as unknown
     })
@@ -153,14 +160,9 @@ export async function fetchEdhrecCommanderPage(slug: string): Promise<unknown | 
  *  See storage/commanderPopularityCache.ts + hooks/useCommanderPopularity.ts for the cached layer
  *  components should actually use. */
 export async function fetchEdhrecCommanderDecks(cardName: string): Promise<number | null> {
-  const slug = edhrecSlug(cardName)
-  return scheduleRequest(async () => {
-    // Cards that have never been anyone's commander 403 here (EDHREC only serves genuine
-    // commander pages under this path) — not retryable, just means "not a commander."
-    const res = await fetch(`${EDHREC_COMMANDER_JSON_BASE}/${slug}.json`)
-    if (!res.ok) return null
-    const body = (await res.json()) as EdhrecCommanderPage
-    const raw = body.container?.json_dict?.card?.num_decks
-    return typeof raw === 'number' ? raw : null
-  })
+  // Cards that have never been anyone's commander 403 here (EDHREC only serves genuine
+  // commander pages under this path) — not retryable, just means "not a commander."
+  const body = (await fetchEdhrecPage(EDHREC_COMMANDER_JSON_BASE, edhrecSlug(cardName))) as EdhrecCommanderPage | null
+  const raw = body?.container?.json_dict?.card?.num_decks
+  return typeof raw === 'number' ? raw : null
 }

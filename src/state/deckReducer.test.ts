@@ -170,3 +170,37 @@ describe('deckReducer', () => {
     expect(deck.cards.find((c) => c.board === 'sideboard')?.mark).toBeUndefined()
   })
 })
+
+describe('deckReducer — merging instead of duplicating', () => {
+  const base = () => ({ ...createEmptyDeck('Test'), categories: ['Ramp', 'Draw'] })
+
+  it('folds a moved card into a copy already on the destination board', () => {
+    const deck = {
+      ...base(),
+      cards: [
+        { scryfallId: 'a', quantity: 2, board: 'mainboard' as const },
+        { scryfallId: 'a', quantity: 1, board: 'sideboard' as const },
+      ],
+    }
+    const next = deckReducer(deck, { type: 'MOVE_CARD_BOARD', scryfallId: 'a', fromBoard: 'mainboard', toBoard: 'sideboard' })
+    expect(next.cards).toEqual([{ scryfallId: 'a', quantity: 3, board: 'sideboard' }])
+  })
+
+  it('merges a category renamed onto an existing one', () => {
+    const deck = {
+      ...base(),
+      cards: [
+        { scryfallId: 'a', quantity: 1, board: 'mainboard' as const, category: 'Draw' },
+        { scryfallId: 'b', quantity: 1, board: 'mainboard' as const, category: 'Ramp' },
+      ],
+    }
+    const next = deckReducer(deck, { type: 'RENAME_CATEGORY', oldName: 'Draw', newName: 'ramp' })
+    expect(next.categories).toEqual(['Ramp'])
+    expect(next.cards.map((c) => c.category)).toEqual(['Ramp', 'Ramp'])
+  })
+
+  it('refuses to rename a category onto a built-in group heading', () => {
+    const deck = base()
+    expect(deckReducer(deck, { type: 'RENAME_CATEGORY', oldName: 'Draw', newName: 'Uncategorized' })).toBe(deck)
+  })
+})

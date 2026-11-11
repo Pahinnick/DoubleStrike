@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
-import { getCardsByIdentifiers, getDisplayImage, searchCards } from '../../api/scryfall'
+import { getDisplayImage, resolveCardsByIdentifiers, ScryfallApiError, searchCards } from '../../api/scryfall'
 import type { ScryfallCard } from '../../api/scryfallTypes'
 import { parseCubeList, resolveCubeList, type ParsedCubeLine } from '../../draft/cubeImport'
 import type { Cube, CubeCard } from '../../draft/types'
+import { saveSnapshots } from '../../storage/cardCache'
 import { loadCube, saveCube } from '../../storage/cubeRepository'
 import { getCardImageUrl } from '../../utils/cardSize'
+import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 import './draft.css'
 
 type Props = {
@@ -32,8 +34,13 @@ function cubeToText(cube: CubeCard[], resolvedNames: Map<string, string>): strin
 }
 
 function CubeEditorModal({ profileId, cubeId, onClose }: Props) {
+  useEscapeToClose(onClose)
   const [name, setName] = useState(DEFAULT_NAME)
   const [text, setText] = useState('')
+  // The list text that `resolvedCards` was built from. Save writes `resolvedCards`, so while the
+  // box says something else there are edits Save would silently leave out — see canSave.
+  const [resolvedText, setResolvedText] = useState('')
+  const [createdAt, setCreatedAt] = useState<string | null>(null)
   const [status, setStatus] = useState<Status>(cubeId ? 'loading' : 'idle')
   const [error, setError] = useState<string | null>(null)
   const [resolvedCards, setResolvedCards] = useState<CubeCard[]>([])
@@ -48,11 +55,18 @@ function CubeEditorModal({ profileId, cubeId, onClose }: Props) {
       if (cancelled || !cube) return
       setName(cube.name)
       setResolvedCards(cube.cards)
+      setCreatedAt(cube.createdAt)
       // Re-resolve by id to recover display names for the textarea — cheap, ids are already known.
-      const looked = await getCardsByIdentifiers(cube.cards.map((c) => ({ id: c.scryfallId })))
+      const { cards: looked, failed } = await resolveCardsByIdentifiers(cube.cards.map((c) => ({ id: c.scryfallId })))
       if (cancelled) return
       const names = new Map(looked.map((c) => [c.id, c.name]))
-      setText(cubeToText(cube.cards, names))
+      const listText = cubeToText(cube.cards, names)
+      setText(listText)
+      setResolvedText(listText)
+      if (failed.length > 0) {
+        // Those lines show as raw ids, and resolving ids as names would drop them from the cube.
+        setError("Couldn't load some card names from Scryfall — close this and reopen it once you're back online before editing the list.")
+      }
       setStatus('idle')
     })
     return () => {
@@ -67,8 +81,11 @@ function CubeEditorModal({ profileId, cubeId, onClose }: Props) {
     try {
       const result = await searchCards(cardName)
       setSuggestionsByName((prev) => ({ ...prev, [key]: result.data.slice(0, SUGGESTION_LIMIT) }))
-    } catch {
-      setSuggestionsByName((prev) => ({ ...prev, [key]: 'error' }))
+    } catch (err) {
+      // Scryfall answers a search with no results as a 404 "not_found" — an answer, not a
+      // failure. It used to read "Couldn't search Scryfall right now" for any name with no match.
+      const noMatches = err instanceof ScryfallApiError && err.code === 'not_found'
+      setSuggestionsByName((prev) => ({ ...prev, [key]: noMatches ? [] : 'error' }))
     }
   }
 
@@ -78,6 +95,7 @@ function CubeEditorModal({ profileId, cubeId, onClose }: Props) {
   }
 
   function acceptSuggestion(entry: ParsedCubeLine, card: ScryfallCard) {
+    void saveSnapshots([card])
     setResolvedCards((prev) => [...prev, { scryfallId: card.id, quantity: entry.quantity }])
     setUnresolved((prev) => prev.filter((u) => u !== entry))
     setActiveIndex(null)
@@ -95,11 +113,19 @@ function CubeEditorModal({ profileId, cubeId, onClose }: Props) {
     setUnresolved([])
     setActiveIndex(null)
     try {
+      const resolvingText = text
       const result = await resolveCubeList(lines)
       setResolvedCards(result.cards)
+      setResolvedText(resolvingText)
       setUnresolved(result.missing)
       setStatus('idle')
-      if (result.missing.length > 0) selectUnresolved(0)
+      if (result.missing.length > 0) {
+        // Not selectUnresolved(0): it reads `unresolved` from this render's closure, still the
+        // empty list from before setUnresolved above. That threw, landed in the catch below, and
+        // reported a resolve that had just succeeded as "Couldn't reach Scryfall".
+        setActiveIndex(0)
+        void loadSuggestions(result.missing[0].name)
+      }
     } catch {
       setError("Couldn't reach Scryfall to look up these cards — check your connection and try again.")
       setStatus('error')
@@ -113,7 +139,7 @@ function CubeEditorModal({ profileId, cubeId, onClose }: Props) {
       id: cubeId ?? crypto.randomUUID(),
       name: trimmedName,
       cards: resolvedCards,
-      createdAt: now,
+      createdAt: createdAt ?? now,
       updatedAt: now,
     }
     await saveCube(profileId, cube)
@@ -121,11 +147,24 @@ function CubeEditorModal({ profileId, cubeId, onClose }: Props) {
   }
 
   const totalCards = resolvedCards.reduce((sum, c) => sum + c.quantity, 0)
+  const hasUnresolvedEdits = text !== resolvedText
+  const canSave = resolvedCards.length > 0 && status !== 'resolving' && !hasUnresolvedEdits
   const activeEntry = activeIndex !== null ? unresolved[activeIndex] : undefined
   const activeSuggestions = activeEntry ? suggestionsByName[activeEntry.name.toLowerCase()] : undefined
 
   return (
-    <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="Cube editor" onClick={onClose}>
+    <div
+      className="modal-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Cube editor"
+      // Nested inside the cube manager's own overlay — stop the click here so dismissing the
+      // editor doesn't bubble up and close the manager behind it too (same as ConfirmModal).
+      onClick={(event) => {
+        event.stopPropagation()
+        onClose()
+      }}
+    >
       <div className={`modal-content cube-editor ${unresolved.length > 0 ? 'cube-editor--wide' : ''}`} onClick={(event) => event.stopPropagation()}>
         <h2>{cubeId ? 'Edit Cube' : 'New Cube'}</h2>
         <label className="cube-editor__field">
@@ -144,6 +183,9 @@ function CubeEditorModal({ profileId, cubeId, onClose }: Props) {
         </label>
         {error && <p className="search-status search-status--error">{error}</p>}
         {resolvedCards.length > 0 && <p className="cube-editor__count">{totalCards} cards resolved</p>}
+        {resolvedCards.length > 0 && hasUnresolvedEdits && status !== 'resolving' && (
+          <p className="search-status">You've changed the list — press Resolve Cards to include those changes before saving.</p>
+        )}
         {unresolved.length > 0 && (
           <div className="cube-editor__unresolved">
             <p className="search-status search-status--error">
@@ -195,7 +237,7 @@ function CubeEditorModal({ profileId, cubeId, onClose }: Props) {
           <button type="button" onClick={handleResolve} disabled={status === 'resolving' || text.trim().length === 0}>
             {status === 'resolving' ? 'Resolving…' : 'Resolve Cards'}
           </button>
-          <button type="button" onClick={handleSave} disabled={resolvedCards.length === 0}>
+          <button type="button" onClick={handleSave} disabled={!canSave}>
             Save Cube
           </button>
           <button type="button" onClick={onClose}>

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { getCardsByIdentifiers, getDisplayImage } from '../../api/scryfall'
 import type { ImageUris } from '../../api/scryfallTypes'
 import type { DeckToken } from '../../engine/deckTokens'
+import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 import { useHoverPreview } from '../../hooks/useHoverPreview'
 import { saveSnapshots } from '../../storage/cardCache'
 
@@ -21,6 +22,7 @@ type Loaded = {
 /** Grid picker of "tokens your deck can make." Fetches the token cards on open to show their art and
  *  to cache their snapshots (so the battlefield can resolve the image once one is added). */
 function TokenPickerModal({ tokens, onPick, onClose }: Props) {
+  useEscapeToClose(onClose)
   const [loaded, setLoaded] = useState<Loaded>({ images: new Map(), status: 'loading' })
 
   useEffect(() => {

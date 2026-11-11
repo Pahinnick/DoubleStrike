@@ -6,7 +6,7 @@ const { app, ipcMain } = require('electron')
 // Meaningless before the app is packaged: there's no signed installer feed to check against,
 // and autoUpdater throws looking for a dev-app-update.yml that only `electron-builder` writes
 // into a real build. Every export here is a no-op in dev, same as isDev elsewhere in main.cjs.
-function registerUpdaterIpc(mainWindow) {
+function registerUpdaterIpc(getMainWindow) {
   if (!app.isPackaged) return
 
   const { autoUpdater } = require('electron-updater')
@@ -16,6 +16,10 @@ function registerUpdaterIpc(mainWindow) {
   autoUpdater.autoInstallOnAppQuit = true
 
   autoUpdater.on('update-downloaded', (info) => {
+    // The download can finish after the window is gone (closed mid-download, or the quit is
+    // already under way) — sending to a destroyed window throws in the main process.
+    const mainWindow = getMainWindow()
+    if (!mainWindow || mainWindow.isDestroyed()) return
     mainWindow.webContents.send('updater:downloaded', { version: info.version })
   })
   autoUpdater.on('error', (err) => {

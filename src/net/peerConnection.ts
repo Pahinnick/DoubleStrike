@@ -86,7 +86,15 @@ export type PeerConnectionEvents = {
   reaction: (playerId: string, name: string, emoji: string) => void
   /** Whose turn it is now, from any player's Pass Turn (including relayed ones, and the
    *  host's replay of its cached value to a newly-joined guest). */
-  turnPass: (activeSeat: Seat, turn?: number) => void
+  turnPass: (activeSeat: Seat, turn?: number, firstSeat?: Seat) => void
+  /** Guest only: the host has (re)accepted us and is about to replay every board it knows. What
+   *  this client mirrored before is stale by definition — anyone who left while we were away
+   *  never produced a PLAYER_LEFT we could hear — so listeners should clear it and let the
+   *  replay rebuild it. */
+  welcomed: () => void
+  /** Host only: a guest has just been seated, on first join or on a rejoin. Lets a layer with its
+   *  own per-seat state (the draft) bring that guest back up to date. */
+  guestSeated: (playerId: string, seat: Seat) => void
   /** The shared table radio's station changed (including relayed ones, and the host's replay
    *  of its cached value to a newly-joined guest). Null means it's off. */
   radio: (station: string | null) => void
@@ -143,6 +151,48 @@ type GuestRecord = {
   name?: string // learned from HELLO — only needed for the draft lobby roster today
 }
 
+/**
+ * How many messages one connection may send: a burst of up to `capacity`, refilled at
+ * `perSecond`. Real play sends a few per second at most (a board update per change, plus pings
+ * and rolls), so this only ever bites a peer flooding the pod — which, unchecked, made the host
+ * relay thousands of boards a second to everyone and froze every client.
+ */
+class MessageBudget {
+  private tokens: number
+  private last = Date.now()
+  /** Messages refused since the connection opened. */
+  dropped = 0
+
+  constructor(
+    private readonly capacity = 200,
+    private readonly perSecond = 50,
+  ) {
+    this.tokens = capacity
+  }
+
+  allow(): boolean {
+    const now = Date.now()
+    this.tokens = Math.min(this.capacity, this.tokens + ((now - this.last) / 1000) * this.perSecond)
+    this.last = now
+    if (this.tokens < 1) {
+      this.dropped += 1
+      return false
+    }
+    this.tokens -= 1
+    return true
+  }
+}
+
+/** A guest that keeps flooding after this many refused messages is disconnected. */
+const MAX_DROPPED_BEFORE_KICK = 2000
+
+/** The secret a connection proves its playerId with — see HelloMessage.key. */
+function newJoinKey(): string {
+  const bytes = new Uint8Array(16)
+  crypto.getRandomValues(bytes)
+  return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
 const MAX_ID_RETRIES = 5
 // PeerJS's 'disconnected' event means we lost the signaling-server (broker) socket — the thing
 // that introduces two peers to each other — NOT an already-established peer-to-peer data
@@ -197,18 +247,28 @@ export class PeerConnection {
   // same playerId, new PeerJS connection — can be offered their old seat back instead of
   // landing wherever nextFreeSeat happens to put them.
   private readonly lastSeatByPlayerId = new Map<string, Seat>()
+  // Host: the join key each playerId first arrived with (see HelloMessage.key). Kept for the
+  // whole session, like lastSeatByPlayerId, so a rejoin must prove it is the same player.
+  private readonly joinKeyByPlayerId = new Map<string, string>()
+  // This client's own join key, sent in every HELLO, including rejoins on this connection object.
+  private readonly joinKey = newJoinKey()
   // Cached like lastBoards (not transient like ROLL/PING) so a late joiner sees whose turn
   // it is immediately rather than a stale/default highlight until the next pass.
   private lastActiveSeat: Seat | null = null
   // The pod's shared turn number, cached alongside lastActiveSeat and replayed in the same
   // breath — the two always travel together (see TurnPassMessage.turn).
   private lastTurn: number | null = null
+  // Who took the first turn, cached with the two above — see TurnPassMessage.firstSeat.
+  private lastFirstSeat: Seat | null = null
   // Cached like lastActiveSeat so a late joiner hears whatever station is already playing
   // instead of silence until someone happens to change it.
   private lastRadioStation: string | null = null
 
   // Guest state: the single connection to the host.
   private hostConn: DataConnection | null = null
+  // Guest: the host has accepted us (WELCOME). Not the same as having a seat — a room with
+  // `maxSpectators` lets people in to wait for one.
+  private admitted = false
   // Guest reconnection bookkeeping. `roomCode` is remembered purely so a dropped connection can
   // be re-established without asking the player to re-enter it; `deliberateDisconnect` keeps
   // leave() from being mistaken for a drop and immediately retried.
@@ -240,6 +300,8 @@ export class PeerConnection {
     highlight: new Set(),
     reaction: new Set(),
     turnPass: new Set(),
+    welcomed: new Set(),
+    guestSeated: new Set(),
     radio: new Set(),
     draftRoster: new Set(),
     draftConfig: new Set(),
@@ -354,8 +416,10 @@ export class PeerConnection {
         const code = preferredCode ?? generateRoomCode()
         const peer = new Peer(roomCodeToPeerId(code))
         this.peer = peer
+        let registered = false
 
         peer.on('open', () => {
+          registered = true
           this.emit('seat', HOST_SEAT)
           this.emit('code', code)
           this.emit('status', 'connected')
@@ -369,23 +433,50 @@ export class PeerConnection {
         peer.on('error', (err) => {
           const type = (err as unknown as { type?: string }).type
           // A chosen code that's taken means that room already exists — the caller decides what
-          // to do (useMultiplayer's hostOrJoin joins it), so no error status here.
-          if (type === 'unavailable-id' && preferredCode) {
-            peer.destroy()
+          // to do (useMultiplayer's hostOrJoin joins it), so no error status here. Only before
+          // the room is up: see the next check.
+          if (type === 'unavailable-id' && !registered && preferredCode) {
             this.peer = null
+            peer.destroy()
             reject(err)
             return
           }
-          if (type === 'unavailable-id' && retriesLeft > 0) {
+          // Only before the room is up. The broker answers "ID taken" to a RE-registration too,
+          // when our own previous socket hasn't been released on its side yet (a wifi roam, a
+          // laptop waking) — and that arrives here as the same 'unavailable-id'. Treating it as
+          // a collision destroyed the live peer, every guest's channel with it, and opened a
+          // brand-new room under a different code. PeerJS disconnects after raising it, so
+          // handleSignalingDisconnect below simply tries again.
+          if (type === 'unavailable-id' && !registered && retriesLeft > 0) {
             // Code collided with an existing room — throw it away and try another.
+            this.peer = null
             peer.destroy()
             attempt(retriesLeft - 1)
+            return
+          }
+          if (registered) {
+            // The room is already up, and PeerJS reports every later problem through this same
+            // event: a blip on the broker socket (which handleSignalingDisconnect below is
+            // already retrying), or one joiner's connection failing to negotiate. Neither ends
+            // the game for the players already connected — their channels are separate — but
+            // treating them as fatal used to drop the host out of its own pod, wipe its view of
+            // every opponent, and leave "Back" (which ends the session for everyone) as the only
+            // button.
+            console.warn('[peerConnection] non-fatal host error:', type, err)
             return
           }
           this.emit('status', 'error', describePeerError(err))
           reject(err)
         })
-        this.handleSignalingDisconnect(peer, () => this.emit('status', 'error', 'Lost connection to the signaling server.'))
+        this.handleSignalingDisconnect(peer, () => {
+          // Out of retries on the broker. With guests still connected the game itself carries
+          // on peer-to-peer; only new joins and rejoins need the broker.
+          if ([...this.guests.values()].some((g) => g.conn.open)) {
+            this.emit('status', 'connected', "Lost the game server — the game continues, but nobody new can join right now.")
+            return
+          }
+          this.emit('status', 'error', 'Lost connection to the signaling server.')
+        })
       }
       attempt(MAX_ID_RETRIES)
     })
@@ -399,7 +490,10 @@ export class PeerConnection {
   private handleSignalingDisconnect(peer: Peer, onExhausted: () => void): void {
     let attempts = 0
     peer.on('disconnected', () => {
-      if (peer.destroyed) return
+      // `this.peer !== peer` is the check that actually catches a peer being torn down:
+      // PeerJS's destroy() raises 'disconnected' BEFORE it marks the peer destroyed, so every
+      // teardown here (which detaches the peer first) would otherwise announce a reconnect.
+      if (peer.destroyed || this.peer !== peer) return
       attempts += 1
       if (attempts > MAX_RECONNECT_ATTEMPTS) {
         onExhausted()
@@ -435,7 +529,14 @@ export class PeerConnection {
       // seat stays occupied, and every directed send to it silently goes nowhere.
       this.watchConnectionHealth(conn, () => this.dropGuest(conn.peer))
     })
-    conn.on('data', (data) => this.onHostData(conn, data))
+    const budget = new MessageBudget()
+    conn.on('data', (data) => {
+      if (!budget.allow()) {
+        if (budget.dropped > MAX_DROPPED_BEFORE_KICK) conn.close()
+        return
+      }
+      this.onHostData(conn, data)
+    })
     conn.on('close', () => this.dropGuest(conn.peer))
     conn.on('error', () => this.dropGuest(conn.peer))
   }
@@ -457,9 +558,22 @@ export class PeerConnection {
     if (!msg) return
     const record = this.guests.get(conn.peer)
     if (!record) return
+    // Nothing but HELLO counts until this connection has said who it is.
+    if (msg.type !== 'HELLO' && !record.playerId) return
 
     switch (msg.type) {
       case 'HELLO': {
+        // A connection's identity is fixed by its first HELLO; it can't switch to someone else's.
+        if (record.playerId) break
+        // Nobody may join as the host, and nobody may join as a player whose id first arrived
+        // with a different key — playerIds are public, so claiming one used to be enough to have
+        // the host drop the real player and hand over their seat and board.
+        const knownKey = this.joinKeyByPlayerId.get(msg.playerId)
+        if (msg.playerId === this.local.playerId || (knownKey !== undefined && knownKey !== msg.key)) {
+          conn.close()
+          return
+        }
+        this.joinKeyByPlayerId.set(msg.playerId, msg.key)
         // A reconnect (network hiccup, tab refresh, etc.) arrives as a brand-new PeerJS
         // connection — a new conn.peer, hence a new key in `guests` — landing right on top of
         // an old entry for the same playerId that may never have gotten a 'close'/'error' event
@@ -497,12 +611,19 @@ export class PeerConnection {
           this.sendTo(conn, { type: 'STATE', v: PROTOCOL_VERSION, board })
         }
         if (this.lastActiveSeat !== null) {
-          this.sendTo(conn, { type: 'TURN_PASS', v: PROTOCOL_VERSION, activeSeat: this.lastActiveSeat, turn: this.lastTurn ?? undefined })
+          this.sendTo(conn, {
+            type: 'TURN_PASS',
+            v: PROTOCOL_VERSION,
+            activeSeat: this.lastActiveSeat,
+            turn: this.lastTurn ?? undefined,
+            firstSeat: this.lastFirstSeat ?? undefined,
+          })
         }
-        if (this.lastRadioStation !== null) {
-          this.sendTo(conn, { type: 'RADIO', v: PROTOCOL_VERSION, station: this.lastRadioStation })
-        }
+        // Sent even when it's off: a guest rejoining after the radio was switched off while it
+        // was away would otherwise keep playing the old station to a silent table.
+        this.sendTo(conn, { type: 'RADIO', v: PROTOCOL_VERSION, station: this.lastRadioStation })
         this.broadcastRoster()
+        if (seat !== null) this.emit('guestSeated', msg.playerId, seat)
         // Also catch up every OTHER already-connected guest, not just the (re)joining one: a
         // guest can miss a relayed STATE/PLAYER_LEFT if their connection happened to be
         // transiently not-open at that exact instant (see sendTo — a silent, un-retried drop),
@@ -535,8 +656,13 @@ export class PeerConnection {
         break
       }
       case 'GIVE_CARD':
-        // A guest handed a card to someone; route it to the intended recipient.
-        this.deliverGive(msg)
+        // A guest handed a card to someone; route it to the intended recipient. The giver has
+        // already removed the card from its own board, so if the recipient can't be reached
+        // (left, or its link has died) the card goes straight back to the giver rather than
+        // ceasing to exist.
+        if (!this.deliverGive(msg) && record.playerId) {
+          this.sendTo(conn, { ...msg, toPlayerId: record.playerId })
+        }
         break
       case 'RELOCATE_CARD':
         // A guest repositioned a card on someone else's board; route it to that board's owner.
@@ -563,12 +689,15 @@ export class PeerConnection {
         this.deliverReclaim(msg)
         break
       case 'ROLL': {
-        this.emit('roll', msg.playerId, msg.name, msg.roll, msg.id)
+        // Stamped with who really sent it: these carry the roller's id and name, and a guest
+        // could otherwise roll a 20 "as" anyone at the table.
+        const stamped = { ...msg, playerId: record.playerId!, name: record.name ?? msg.name }
+        this.emit('roll', stamped.playerId, stamped.name, stamped.roll, stamped.id)
         // Fan out to every other guest, same star-relay pattern as STATE.
         const targets = relayTargets([...this.guests.keys()], conn.peer)
         for (const peerId of targets) {
           const target = this.guests.get(peerId)
-          if (target) this.sendTo(target.conn, msg)
+          if (target) this.sendTo(target.conn, stamped)
         }
         break
       }
@@ -582,11 +711,12 @@ export class PeerConnection {
         break
       }
       case 'PING': {
-        this.emit('ping', msg.playerId, msg.name, msg.x, msg.y)
+        const stamped = { ...msg, playerId: record.playerId!, name: record.name ?? msg.name }
+        this.emit('ping', stamped.playerId, stamped.name, stamped.x, stamped.y)
         const targets = relayTargets([...this.guests.keys()], conn.peer)
         for (const peerId of targets) {
           const target = this.guests.get(peerId)
-          if (target) this.sendTo(target.conn, msg)
+          if (target) this.sendTo(target.conn, stamped)
         }
         break
       }
@@ -600,18 +730,20 @@ export class PeerConnection {
         break
       }
       case 'REACTION': {
-        this.emit('reaction', msg.playerId, msg.name, msg.emoji)
+        const stamped = { ...msg, playerId: record.playerId!, name: record.name ?? msg.name }
+        this.emit('reaction', stamped.playerId, stamped.name, stamped.emoji)
         const targets = relayTargets([...this.guests.keys()], conn.peer)
         for (const peerId of targets) {
           const target = this.guests.get(peerId)
-          if (target) this.sendTo(target.conn, msg)
+          if (target) this.sendTo(target.conn, stamped)
         }
         break
       }
       case 'TURN_PASS': {
         this.lastActiveSeat = msg.activeSeat
         if (msg.turn !== undefined) this.lastTurn = msg.turn
-        this.emit('turnPass', msg.activeSeat, msg.turn)
+        if (msg.firstSeat !== undefined) this.lastFirstSeat = msg.firstSeat
+        this.emit('turnPass', msg.activeSeat, msg.turn, msg.firstSeat)
         const targets = relayTargets([...this.guests.keys()], conn.peer)
         for (const peerId of targets) {
           const target = this.guests.get(peerId)
@@ -744,14 +876,15 @@ export class PeerConnection {
     return fallback
   }
 
-  /** Deliver a GIVE_CARD to its target: to us if we're the recipient, else to that guest's connection. */
-  private deliverGive(msg: Extract<NetMessage, { type: 'GIVE_CARD' }>) {
+  /** Deliver a GIVE_CARD to its target: to us if we're the recipient, else to that guest's
+   *  connection. False when there was no open connection to hand it to. */
+  private deliverGive(msg: Extract<NetMessage, { type: 'GIVE_CARD' }>): boolean {
     if (msg.toPlayerId === this.local.playerId) {
       this.emit('cardGiven', msg.card)
-      return
+      return true
     }
     const conn = this.findGuestConn(msg.toPlayerId)
-    if (conn) this.sendTo(conn, msg)
+    return conn ? this.sendTo(conn, msg) : false
   }
 
   /** Deliver a RELOCATE_CARD to its target board's owner, same routing as deliverGive. */
@@ -875,6 +1008,14 @@ export class PeerConnection {
       this.peer = peer
 
       peer.on('open', () => {
+        // 'open' fires again whenever the broker socket is re-established (see
+        // handleSignalingDisconnect). The game channel is a separate connection that never went
+        // away in that case — opening a second one on top of it made the host see a new guest,
+        // and in a full pod refuse it as over capacity.
+        if (this.peer === peer && this.hostConn?.open) {
+          if (this.admitted) this.emit('status', 'connected')
+          return
+        }
         const conn = peer.connect(roomCodeToPeerId(roomCode), { reliable: true })
         this.hostConn = conn
         conn.on('open', () => {
@@ -890,6 +1031,7 @@ export class PeerConnection {
             type: 'HELLO',
             v: PROTOCOL_VERSION,
             playerId: this.local.playerId,
+            key: this.joinKey,
             name: this.local.name,
             deckFormat: this.local.deckFormat,
           })
@@ -898,13 +1040,21 @@ export class PeerConnection {
           this.watchConnectionHealth(conn, () => this.handleGuestDisconnect('Lost connection to the game.'))
           resolve()
         })
-        conn.on('data', (data) => this.onGuestData(data))
+        // The host's messages are budgeted too (a host is just another player who made the room),
+        // but never disconnected over it: dropping the host is leaving the game.
+        const budget = new MessageBudget(400, 100)
+        conn.on('data', (data) => {
+          if (this.hostConn === conn && budget.allow()) this.onGuestData(data)
+        })
         conn.on('close', () => {
-          // If we never got WELCOME (ownSeat still null), the host rejected/dropped us before
+          // A connection we have already moved on from (replaced by a rejoin attempt) closing
+          // is that teardown finishing, not the current session dropping.
+          if (this.hostConn !== conn) return
+          // If we never got WELCOME (not admitted), the host rejected/dropped us before
           // ever accepting us into the pod — most commonly because it's already full — rather
           // than a session we were genuinely part of being ended. A rejection is final, so it
           // is reported as-is; a session we were really part of is worth trying to recover.
-          if (this.ownSeat === null) {
+          if (!this.admitted) {
             this.clearAttemptTimeout()
             this.emit('status', 'closed', "Couldn't join — the game may be full or no longer available.")
             return
@@ -912,7 +1062,11 @@ export class PeerConnection {
           this.handleGuestDisconnect('The host ended the session.')
         })
         conn.on('error', (err) => {
-          if (this.ownSeat === null) {
+          if (this.hostConn !== conn) return
+          if (!this.admitted) {
+            // The attempt is over; its deadline must not fire later and replace this message
+            // with "the game didn't respond".
+            this.clearAttemptTimeout()
             this.emit('status', 'error', describePeerError(err))
             return
           }
@@ -920,17 +1074,44 @@ export class PeerConnection {
         })
       })
       peer.on('error', (err) => {
+        // A Peer from an attempt we have since abandoned, finishing late.
+        if (this.peer !== peer) {
+          reject(err)
+          return
+        }
+        // PeerJS raises an error on the Peer for a dropped BROKER socket too, just ahead of its
+        // 'disconnected' event. That is not the game dropping: the data channel to the host is
+        // its own connection and is still open. Treating it as a drop tore down a healthy
+        // session and rejoined — the guest's board vanished for the whole pod over a non-event.
+        // handleSignalingDisconnect below already deals with the broker.
+        const type = (err as unknown as { type?: string }).type
+        if (this.hostConn?.open && type !== undefined && SIGNALING_ERROR_TYPES.has(type)) return
         // On a rejoin attempt the peer failing is just this attempt failing — fold it back into
         // the retry schedule rather than tearing the session down on the first miss.
-        if (isRejoin || this.ownSeat !== null) {
+        if (isRejoin || this.admitted) {
           this.handleGuestDisconnect(describePeerError(err))
           reject(err)
           return
         }
+        this.clearAttemptTimeout()
         this.emit('status', 'error', describePeerError(err))
         reject(err)
       })
-      this.handleSignalingDisconnect(peer, () => this.emit('status', 'error', 'Lost connection to the signaling server.'))
+      this.handleSignalingDisconnect(peer, () => {
+        if (this.peer !== peer) return
+        // Out of retries on the broker. A guest only needs it to (re)connect; with the game
+        // channel still open there is nothing to recover from.
+        if (this.hostConn?.open && this.admitted) {
+          this.emit('status', 'connected')
+          return
+        }
+        if (this.admitted) {
+          this.handleGuestDisconnect('Lost connection to the game server.')
+          return
+        }
+        this.clearAttemptTimeout()
+        this.emit('status', 'error', 'Lost connection to the signaling server.')
+      })
     })
   }
 
@@ -945,7 +1126,7 @@ export class PeerConnection {
     this.clearAttemptTimeout()
     this.attemptTimer = window.setTimeout(() => {
       this.attemptTimer = null
-      if (isRejoin || this.ownSeat !== null) {
+      if (isRejoin || this.admitted) {
         // Schedule the next retry FIRST: closing the channel below re-enters
         // handleGuestDisconnect, which then sees a retry already pending and leaves it alone,
         // so the attempt counter advances exactly once.
@@ -954,7 +1135,14 @@ export class PeerConnection {
         return
       }
       this.emit('status', 'closed', "Couldn't join — the game didn't respond. Check the code and try again.")
-      this.hostConn?.close()
+      // Detached before it is torn down, for the same reason as in handleGuestDisconnect: the
+      // channel's own 'close' would otherwise report "the game may be full" over the message
+      // above. The peer goes too — one still stalled on the broker could finish registering
+      // minutes later and walk into the game after the player had been told the join failed.
+      const stalledPeer = this.peer
+      this.peer = null
+      this.hostConn = null
+      stalledPeer?.destroy()
     }, ATTEMPT_TIMEOUT_MS)
   }
 
@@ -985,10 +1173,14 @@ export class PeerConnection {
       this.rejoinTimer = null
       if (this.deliberateDisconnect || !this.roomCode) return
       // Tear the old peer down first: it's dead, and leaving it registered would keep its
-      // stale broker id alive alongside the new one.
-      this.peer?.destroy()
+      // stale broker id alive alongside the new one. Detached BEFORE it is destroyed: destroy()
+      // closes the old channel synchronously, and that 'close' must find it is no longer the
+      // current connection (see the guards in openGuestConnection) — otherwise it re-entered
+      // this method and queued a second retry that later tore down the fresh connection.
+      const oldPeer = this.peer
       this.peer = null
       this.hostConn = null
+      oldPeer?.destroy()
       void this.openGuestConnection(this.roomCode, true).catch(() => {
         // Surfaced through the status events above; a rejected promise here is expected on a
         // failed attempt and must not become an unhandled rejection.
@@ -1002,10 +1194,16 @@ export class PeerConnection {
     switch (msg.type) {
       case 'WELCOME':
         this.ownSeat = msg.seat
+        this.admitted = true
         // Accepted into the pod — this attempt succeeded, so the next unexpected drop starts
         // its own fresh backoff rather than inheriting this one's spent attempts.
         this.clearAttemptTimeout()
+        if (this.rejoinTimer !== null) {
+          window.clearTimeout(this.rejoinTimer)
+          this.rejoinTimer = null
+        }
         this.rejoinAttempts = 0
+        this.emit('welcomed')
         this.emit('seat', msg.seat)
         // The host has now actually accepted us into the pod — this is the real "connected"
         // moment, not just the raw channel opening (see joinGame's conn.on('open') doc).
@@ -1073,7 +1271,7 @@ export class PeerConnection {
         this.emit('reaction', msg.playerId, msg.name, msg.emoji)
         break
       case 'TURN_PASS':
-        this.emit('turnPass', msg.activeSeat, msg.turn)
+        this.emit('turnPass', msg.activeSeat, msg.turn, msg.firstSeat)
         break
       case 'RADIO':
         this.emit('radio', msg.station)
@@ -1144,13 +1342,14 @@ export class PeerConnection {
    * Hand control of a card to another player. The host delivers directly; a guest
    * sends it to the host, which routes it on to the recipient.
    */
-  giveCard(toPlayerId: string, card: GivenCard): void {
-    const msg: NetMessage = { type: 'GIVE_CARD', v: PROTOCOL_VERSION, toPlayerId, card }
-    if (this.role === 'host') {
-      this.deliverGive(msg)
-    } else if (this.role === 'guest' && this.hostConn) {
-      this.sendTo(this.hostConn, msg)
-    }
+  giveCard(toPlayerId: string, card: GivenCard): boolean {
+    const msg: Extract<NetMessage, { type: 'GIVE_CARD' }> = { type: 'GIVE_CARD', v: PROTOCOL_VERSION, toPlayerId, card }
+    // The result matters: the caller removes the card from its own board once this returns, so
+    // "sent" has to mean it actually left. During a reconnect there is no open channel, and a
+    // give that silently went nowhere used to delete the card from the game.
+    if (this.role === 'host') return this.deliverGive(msg)
+    if (this.role === 'guest' && this.hostConn) return this.sendTo(this.hostConn, msg)
+    return false
   }
 
   /**
@@ -1298,14 +1497,15 @@ export class PeerConnection {
 
   /** Publish whose turn it is now. Cached (unlike broadcastRoll/broadcastPing) so a late
    *  joiner gets it via the HELLO replay instead of waiting for the next pass. */
-  broadcastTurnPass(activeSeat: Seat, turn?: number): void {
-    const msg: NetMessage = { type: 'TURN_PASS', v: PROTOCOL_VERSION, activeSeat, turn }
+  broadcastTurnPass(activeSeat: Seat, turn?: number, firstSeat?: Seat): void {
+    const msg: NetMessage = { type: 'TURN_PASS', v: PROTOCOL_VERSION, activeSeat, turn, firstSeat }
     // Unlike broadcastState (whose sender always renders its own board locally, never
     // through the `boards` map), the turn highlight has no separate "my own" render path —
     // it's driven entirely by this one shared value, so every sender (host or guest) has
     // to hear its own pass too, not just whoever it gets relayed to.
-    this.emit('turnPass', activeSeat, turn)
+    this.emit('turnPass', activeSeat, turn, firstSeat)
     if (turn !== undefined) this.lastTurn = turn
+    if (firstSeat !== undefined) this.lastFirstSeat = firstSeat
     if (this.role === 'host') {
       this.lastActiveSeat = activeSeat
       for (const guest of this.guests.values()) this.sendTo(guest.conn, msg)
@@ -1375,13 +1575,16 @@ export class PeerConnection {
    *  this. Deferring one microtask breaks that reentrancy — same effect either way from the
    *  user's perspective (still resolves before the next paint), just outside the original
    *  call stack. */
-  sendDraftPick(packId: string, scryfallId: string): void {
+  sendDraftPick(packId: string, scryfallId: string): boolean {
     if (this.role === 'host') {
       queueMicrotask(() => this.emit('draftPickReceived', { fromPlayerId: this.local.playerId, packId, scryfallId }))
-    } else if (this.role === 'guest' && this.hostConn) {
-      const msg: NetMessage = { type: 'DRAFT_PICK', v: PROTOCOL_VERSION, packId, scryfallId }
-      this.sendTo(this.hostConn, msg)
+      return true
     }
+    if (this.role === 'guest' && this.hostConn) {
+      const msg: NetMessage = { type: 'DRAFT_PICK', v: PROTOCOL_VERSION, packId, scryfallId }
+      return this.sendTo(this.hostConn, msg)
+    }
+    return false
   }
 
   /** Host only: tell one player their pick didn't apply (defensive — e.g. a stale double-click). */
@@ -1471,8 +1674,11 @@ export class PeerConnection {
     return map
   }
 
-  private sendTo(conn: DataConnection, msg: NetMessage): void {
-    if (conn.open) conn.send(serialize(msg))
+  /** False when the connection isn't open and the message was dropped. */
+  private sendTo(conn: DataConnection, msg: NetMessage): boolean {
+    if (!conn.open) return false
+    conn.send(serialize(msg))
+    return true
   }
 
   disconnect(): void {
@@ -1491,19 +1697,28 @@ export class PeerConnection {
     this.guests.clear()
     this.lastBoards.clear()
     this.lastSeatByPlayerId.clear()
+    this.joinKeyByPlayerId.clear()
     this.lastActiveSeat = null
     this.lastTurn = null
+    this.lastFirstSeat = null
     this.lastRadioStation = null
     this.seatsLocked = false
     this.virtualSeats.clear()
     this.hostConn = null
-    this.peer?.destroy()
+    // Detached first — see handleSignalingDisconnect.
+    const peer = this.peer
     this.peer = null
+    peer?.destroy()
     this.role = null
     this.ownSeat = null
+    this.admitted = false
     this.emit('status', 'closed')
   }
 }
+
+// PeerJS error types that are about the broker (signaling) socket rather than a peer-to-peer
+// data connection.
+const SIGNALING_ERROR_TYPES = new Set(['network', 'server-error', 'socket-error', 'socket-closed', 'disconnected'])
 
 function describePeerError(err: unknown): string {
   const type = (err as { type?: string })?.type

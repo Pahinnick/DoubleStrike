@@ -21,6 +21,9 @@ export type DeckAction =
   | { type: 'SET_CARD_MARK'; scryfallId: string; board: Board; mark: string | undefined }
   | { type: 'SET_CARD_FOIL'; scryfallId: string; board: Board; foil: FoilKind | undefined }
 
+// Lowercased COMMANDERS_LABEL / UNCATEGORIZED_LABEL from engine/deckGrouping.ts.
+const RESERVED_GROUP_NAMES = new Set(['commanders', 'uncategorized'])
+
 function touch(deck: Deck): Deck {
   return { ...deck, updatedAt: new Date().toISOString() }
 }
@@ -93,13 +96,28 @@ export function deckReducer(deck: Deck, action: DeckAction): Deck {
       })
     }
 
-    case 'MOVE_CARD_BOARD':
+    case 'MOVE_CARD_BOARD': {
+      if (action.fromBoard === action.toBoard) return deck
+      const source = deck.cards.find((c) => c.scryfallId === action.scryfallId && c.board === action.fromBoard)
+      if (!source) return deck
+      // The destination can already hold this printing (moved there earlier, then added again
+      // from search). Two entries with the same printing and board are indistinguishable to every
+      // other action here — they share a list key, and a quantity or category edit hits both —
+      // so fold the moved copies into the existing entry, same as SET_PRINTING does.
+      const target = deck.cards.find((c) => c.scryfallId === action.scryfallId && c.board === action.toBoard)
+      if (target) {
+        return touch({
+          ...deck,
+          cards: deck.cards
+            .filter((c) => c !== source)
+            .map((c) => (c === target ? { ...c, quantity: c.quantity + source.quantity } : c)),
+        })
+      }
       return touch({
         ...deck,
-        cards: deck.cards.map((c) =>
-          c.scryfallId === action.scryfallId && c.board === action.fromBoard ? { ...c, board: action.toBoard } : c,
-        ),
+        cards: deck.cards.map((c) => (c === source ? { ...c, board: action.toBoard } : c)),
       })
+    }
 
     case 'MOVE_CARD_COPIES': {
       const source = deck.cards.find((c) => c.scryfallId === action.scryfallId && c.board === action.fromBoard)
@@ -135,11 +153,20 @@ export function deckReducer(deck: Deck, action: DeckAction): Deck {
 
     case 'RENAME_CATEGORY': {
       const newName = action.newName.trim()
-      if (!newName || !deck.categories.includes(action.oldName)) return deck
+      if (!newName || newName === action.oldName || !deck.categories.includes(action.oldName)) return deck
+      // These are group headings the deck list derives for itself, not categories — a real
+      // category of the same name would render as a second group under the same heading.
+      if (RESERVED_GROUP_NAMES.has(newName.toLowerCase())) return deck
+      // Renaming onto a category that already exists merges into it. Left as two entries of one
+      // name, the deck list drew the group twice, with every card in it twice.
+      const existing = deck.categories.find((c) => c !== action.oldName && c.toLowerCase() === newName.toLowerCase())
+      const finalName = existing ?? newName
       return touch({
         ...deck,
-        categories: deck.categories.map((c) => (c === action.oldName ? newName : c)),
-        cards: deck.cards.map((c) => (c.category === action.oldName ? { ...c, category: newName } : c)),
+        categories: existing
+          ? deck.categories.filter((c) => c !== action.oldName)
+          : deck.categories.map((c) => (c === action.oldName ? finalName : c)),
+        cards: deck.cards.map((c) => (c.category === action.oldName ? { ...c, category: finalName } : c)),
       })
     }
 

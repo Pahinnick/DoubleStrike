@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import type { HandDrawSide } from '../state/gameReducer'
 import { useProfiles } from '../state/ProfileContext'
+import { setCardCachePersistence } from '../storage/cardCache'
 import { setSoundVolume as applySoundVolume } from '../utils/sound'
 import { isTheme, LEGACY_THEME_KEY, type Theme } from './useTheme'
 
@@ -51,6 +52,10 @@ export function useProfileSettings() {
   const goldfishStatsDefault = stored?.goldfishStatsDefault ?? false
   const handDrawSide: HandDrawSide = stored?.handDrawSide === 'right' ? 'right' : 'left'
   const cardCacheEnabled = stored?.cardCacheEnabled ?? true
+
+  useEffect(() => {
+    setCardCachePersistence(cardCacheEnabled)
+  }, [cardCacheEnabled])
 
   // Global, not Playtest-specific — UI sound cues (playCue) fire from the search/deck-list views
   // too, so this needs to apply regardless of which screen is showing. AppShell keeps this

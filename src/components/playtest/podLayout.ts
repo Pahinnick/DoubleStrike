@@ -92,14 +92,30 @@ export function nextActiveSeat(current: Seat | null, occupiedSeats: readonly Sea
  * which begins round 1 rather than ending one) and a `current` that's no longer occupied (a seat
  * vacated mid-game — the rotation recovers by restarting at the ring's head, which isn't a round
  * anyone actually played through).
+ *
+ * `firstSeat` is who took the game's first turn. A round ends when the turn comes back round to
+ * that seat — or passes over it, if that player has since been eliminated or left. Without it
+ * (an older peer that doesn't send one) the round is measured from the head of the seat order,
+ * which is only right when that seat happened to go first.
  */
-export function completesRound(current: Seat | null, occupiedSeats: readonly Seat[]): boolean {
+export function completesRound(current: Seat | null, occupiedSeats: readonly Seat[], firstSeat?: Seat | null): boolean {
   if (current === null) return false
   const ring = TURN_ORDER.filter((seat) => occupiedSeats.includes(seat))
   if (ring.length === 0) return false
   const idx = ring.indexOf(current)
   if (idx === -1) return false
-  return (idx + 1) % ring.length === 0
+  if (firstSeat === undefined || firstSeat === null) return (idx + 1) % ring.length === 0
+
+  // Walk the full table order from the seat after `current` up to and including the seat the
+  // turn lands on, looking for the first player's seat along the way.
+  const next = ring[(idx + 1) % ring.length]
+  let at = TURN_ORDER.indexOf(current)
+  for (let step = 0; step < TURN_ORDER.length; step++) {
+    at = (at + 1) % TURN_ORDER.length
+    if (TURN_ORDER[at] === firstSeat) return true
+    if (TURN_ORDER[at] === next) return false
+  }
+  return false
 }
 
 /** Uniformly random seat among those occupied, for "who goes first". */

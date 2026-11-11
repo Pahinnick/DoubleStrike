@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { resetInMemoryCardCache } from '../../api/scryfall'
+import { resetCardSnapshotSession } from '../../hooks/useCardSnapshots'
+import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 import { useProfileSettings } from '../../hooks/useProfileSettings'
 import { notifyInfo } from '../../notifications'
 import { clearCardCache } from '../../storage/cardCache'
@@ -13,6 +15,7 @@ type Props = {
 }
 
 function SettingsModal({ onClose }: Props) {
+  useEscapeToClose(onClose)
   const {
     theme,
     setTheme,
@@ -36,6 +39,7 @@ function SettingsModal({ onClose }: Props) {
     try {
       await clearCardCache()
       resetInMemoryCardCache()
+      resetCardSnapshotSession()
       notifyInfo('Cleared cached card data.')
     } finally {
       setClearingCache(false)

@@ -46,7 +46,16 @@ function serveDist(distDir) {
   const root = path.resolve(distDir)
 
   function requestHandler(req, res) {
-    const requestPath = decodeURIComponent(req.url.split('?')[0])
+    // A malformed escape ("/%") makes decodeURIComponent throw, and an exception here is an
+    // uncaught one in the main process — any local page or process can send such a request.
+    let requestPath
+    try {
+      requestPath = decodeURIComponent(req.url.split('?')[0])
+    } catch {
+      res.writeHead(400)
+      res.end('Bad request')
+      return
+    }
     const filePath = path.resolve(root, `.${requestPath === '/' ? '/index.html' : requestPath}`)
 
     // Stay inside distDir even if req.url tries to traverse out of it (e.g. "/../"). Compared
@@ -139,10 +148,27 @@ function createMainWindow(baseUrl) {
   win.on('close', () => markQuitting())
   win.on('closed', () => closePlaytestWindowIfOpen())
   setMainWindow(win)
+  mainWindowRef = win
   return win
 }
 
+// A second copy of the app would find PREFERRED_PORT taken, fall back to a random port — a
+// different origin, so empty IndexedDB/localStorage — and write the same profile and deck files
+// as the first. Hand focus to the running instance instead.
+let mainWindowRef = null
+const hasInstanceLock = app.requestSingleInstanceLock()
+if (!hasInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindowRef || mainWindowRef.isDestroyed()) return
+    if (mainWindowRef.isMinimized()) mainWindowRef.restore()
+    mainWindowRef.focus()
+  })
+}
+
 app.whenReady().then(async () => {
+  if (!hasInstanceLock) return
   // autoHideMenuBar (in createMainWindow) only hides the bar until Alt is pressed —
   // it doesn't remove it. Removing the menu entirely means Alt does nothing.
   Menu.setApplicationMenu(null)
@@ -151,9 +177,11 @@ app.whenReady().then(async () => {
   registerShellIpc()
   const baseUrl = await resolveBaseUrl()
   registerPlaytestWindowIpc(baseUrl)
-  const mainWindow = createMainWindow(baseUrl)
+  createMainWindow(baseUrl)
   maybeReopenPlaytestWindow(baseUrl)
-  registerUpdaterIpc(mainWindow)
+  // Passed as a getter, not the window itself: on macOS the app outlives its window and
+  // 'activate' below creates a new one, which a captured reference would never see.
+  registerUpdaterIpc(() => mainWindowRef)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow(baseUrl)

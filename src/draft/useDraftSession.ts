@@ -44,6 +44,14 @@ const AUTO_PICK_DELAY_MS = 700
 
 export type DraftPhase = 'lobby' | 'drafting' | 'complete'
 
+// Clicks closer together than this count as one pick — see pickCard.
+const PICK_GUARD_MS = 350
+
+function removeLastOccurrence(items: string[], value: string): string[] {
+  const index = items.lastIndexOf(value)
+  return index === -1 ? items : [...items.slice(0, index), ...items.slice(index + 1)]
+}
+
 export type CurrentPack = { packId: string; round: number; cards: string[] }
 
 export type DraftSession = {
@@ -143,6 +151,7 @@ export function useDraftSession(localPlayerId: string, localName: string): Draft
   const awaySeatsRef = useRef<Set<Seat>>(new Set())
   const autoSeatsRef = useRef<Set<Seat>>(new Set())
   const autoPickTimersRef = useRef<Map<Seat, number>>(new Map())
+  const lastPickAtRef = useRef(0)
 
   const [role, setRole] = useState<'host' | 'guest' | null>(null)
   const [status, setStatus] = useState<ConnectionStatus>('idle')
@@ -320,9 +329,22 @@ export function useDraftSession(localPlayerId: string, localName: string): Draft
       }
     })
     conn.on('draftPack', (pack) => {
+      // A pack can arrive that we already know about (a resend around a reconnect).
+      const pending = pendingPicksRef.current.get(pack.packId)
+      pendingPicksRef.current.delete(pack.packId)
+      if (pending && pack.cards.length === pending.pack.cards.length) {
+        // The very pack we picked from, back with nothing taken out of it: that pick never
+        // reached the host. Take the card back out of the pool; the pack is ours to pick from
+        // again.
+        setMyPool((prev) => removeLastOccurrence(prev, pending.scryfallId))
+      }
       // Appended, not replaced — a faster neighbor can hand us a second pack before we've
-      // finished picking through our first (see packQueueRef's doc).
-      packQueueRef.current = [...packQueueRef.current, pack]
+      // finished picking through our first (see packQueueRef's doc). A pack already in the queue
+      // is updated in place rather than queued twice.
+      const queued = packQueueRef.current.some((p) => p.packId === pack.packId)
+      packQueueRef.current = queued
+        ? packQueueRef.current.map((p) => (p.packId === pack.packId ? pack : p))
+        : [...packQueueRef.current, pack]
       bumpPackQueue()
       setPickError(null)
     })
@@ -332,9 +354,11 @@ export function useDraftSession(localPlayerId: string, localName: string): Draft
       const pending = pendingPicksRef.current.get(packId)
       pendingPicksRef.current.delete(packId)
       if (pending) {
-        packQueueRef.current = [pending.pack, ...packQueueRef.current]
+        packQueueRef.current = [pending.pack, ...packQueueRef.current.filter((p) => p.packId !== packId)]
         bumpPackQueue()
-        setMyPool((prev) => (prev[prev.length - 1] === pending.scryfallId ? prev.slice(0, -1) : prev))
+        // The most recent copy of that card, wherever it now sits: a later pick can have been
+        // added behind it by the time the rejection arrives.
+        setMyPool((prev) => removeLastOccurrence(prev, pending.scryfallId))
       }
       setPickError(reason)
     })
@@ -352,6 +376,7 @@ export function useDraftSession(localPlayerId: string, localName: string): Draft
     conn.on('draftComplete', () => {
       setPhase('complete')
       packQueueRef.current = []
+      pendingPicksRef.current.clear()
       bumpPackQueue()
       // Away/host-picked seats are kept: the deckbuilder uses them to tell a bot opponent from a
       // real one (see DraftView opponentIsBot).
@@ -542,14 +567,32 @@ export function useDraftSession(localPlayerId: string, localName: string): Draft
     const conn = connRef.current
     const pack = packQueueRef.current[0]
     if (!conn || !pack) return
+    // With a second pack already queued, the next one slides into the same grid the moment a
+    // pick is made — so the second click of a double-click landed on whatever card of THAT
+    // pack was now under the cursor, and counted as a real pick.
+    const now = Date.now()
+    if (now - lastPickAtRef.current < PICK_GUARD_MS) return
+    if (!pack.cards.includes(scryfallId)) return
     // Optimistic, same "sender applies locally" pattern the rest of this app's wire layer
     // uses — a rejection (draftPickRejected) rolls this back by restoring `pack` to the
     // front of the queue, leaving the picker waiting rather than silently losing the pack.
+    // Applied BEFORE sending: the host's own pick is resolved synchronously inside the send, so
+    // its rejection (or the next pack) can arrive before sendDraftPick even returns.
     pendingPicksRef.current.set(pack.packId, { pack, scryfallId })
     packQueueRef.current = packQueueRef.current.slice(1)
     bumpPackQueue()
     setMyPool((prev) => [...prev, scryfallId])
-    conn.sendDraftPick(pack.packId, scryfallId)
+    // With the connection down (mid-reconnect) the pick can't go: undo it rather than leave the
+    // pack gone on both sides.
+    if (!conn.sendDraftPick(pack.packId, scryfallId)) {
+      pendingPicksRef.current.delete(pack.packId)
+      packQueueRef.current = [pack, ...packQueueRef.current.filter((p) => p.packId !== pack.packId)]
+      bumpPackQueue()
+      setMyPool((prev) => removeLastOccurrence(prev, scryfallId))
+      setPickError("You're not connected right now, so that pick wasn't sent — try again in a moment.")
+      return
+    }
+    lastPickAtRef.current = now
   }, [])
 
   const autoPickNow = useCallback((target: Seat) => {

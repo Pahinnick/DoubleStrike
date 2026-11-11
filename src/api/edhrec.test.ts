@@ -77,3 +77,11 @@ describe('fetchEdhrecCommanderPage', () => {
     await expect(fetchEdhrecCommanderPage('a')).resolves.toBeNull()
   })
 })
+
+describe('edhrecSlug — accents', () => {
+  it('transliterates accented letters rather than dropping them', () => {
+    expect(edhrecSlug('Éomer, King of Rohan')).toBe('eomer-king-of-rohan')
+    expect(edhrecSlug("Lim-Dûl's Vault")).toBe('lim-duls-vault')
+    expect(edhrecSlug('Barad-dûr')).toBe('barad-dur')
+  })
+})

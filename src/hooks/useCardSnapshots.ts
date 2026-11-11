@@ -8,13 +8,22 @@ import { useProfileSettings } from './useProfileSettings'
 // though multiple components (DeckPanel, DeckStatsPanel, PlaytestView) call this hook.
 const refreshedIds = new Set<string>()
 
-// Every snapshot fetched this session, kept in memory regardless of the "cache card data" setting.
-// With that setting off nothing reaches IndexedDB, so without this fallback the effect below
-// re-running for any reason (the deck's id list changing — adding a card, switching decks) read
-// an empty disk cache, skipped every id already in `refreshedIds` as "fetched this session", and
-// replaced its state with a map missing all of them: cards went art-less for the rest of the
-// session. The in-memory copy is what "fetched this session" should have meant all along.
+// What this session has fetched, kept in memory. `refreshedIds` means "don't fetch this again",
+// which is only safe while the card can still be read back from somewhere: with local caching
+// switched off (or the cache just cleared) IndexedDB has nothing, and every change to the id list
+// rebuilt the map from IndexedDB alone — so the whole deck list degraded to bare ids.
 const sessionSnapshots = new Map<string, CardSnapshot>()
+
+function rememberForSession(cards: Awaited<ReturnType<typeof getCardsByIdentifiers>>): void {
+  for (const card of cards) sessionSnapshots.set(card.id, toSnapshot(card))
+}
+
+/** Forgets everything fetched this session, so the next lookup goes back to Scryfall. Paired with
+ *  the Settings "Clear cached card data" button. */
+export function resetCardSnapshotSession(): void {
+  refreshedIds.clear()
+  sessionSnapshots.clear()
+}
 
 // A handful of bounded, increasingly spaced-out retry attempts for ids whose fetch didn't come
 // back — covers the "app launched before the network/Wi-Fi was actually ready" and "one
@@ -41,12 +50,12 @@ export function useCardSnapshots(ids: string[]): [Map<string, CardSnapshot>, () 
     }
 
     function applyFetched(cards: Awaited<ReturnType<typeof getCardsByIdentifiers>>) {
+      rememberForSession(cards)
       if (cards.length === 0 || cancelled) return
       const apply = async () => {
         if (cardCacheEnabled) await saveSnapshots(cards)
         if (cancelled) return
         const fresh = cards.map(toSnapshot)
-        for (const snapshot of fresh) sessionSnapshots.set(snapshot.id, snapshot)
         setSnapshots((prev) => {
           const next = new Map(prev)
           for (const snapshot of fresh) next.set(snapshot.id, snapshot)
@@ -136,9 +145,9 @@ export function useCardSnapshots(ids: string[]): [Map<string, CardSnapshot>, () 
       { force: true },
     )
     if (cards.length === 0) return
+    rememberForSession(cards)
     if (cardCacheEnabled) await saveSnapshots(cards)
     const fresh = cards.map(toSnapshot)
-    for (const snapshot of fresh) sessionSnapshots.set(snapshot.id, snapshot)
     setSnapshots((prev) => {
       const next = new Map(prev)
       for (const snapshot of fresh) next.set(snapshot.id, snapshot)

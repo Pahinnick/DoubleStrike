@@ -1,4 +1,5 @@
 import type { DragEvent } from 'react'
+import { getInPageDragData, isInPageDragOfType, setInPageDragData } from '../../utils/inPageDrag'
 
 // Separate MIME type from dragGameCard's — keeps a counter-pile drag from ever being misread as
 // a whole-card drag (or vice versa) by whichever drop handler happens to catch the bubbled event
@@ -15,25 +16,18 @@ export type DraggedCounterPile = {
   kind: 'generic' | 'pt'
 }
 
+// Goes through utils/inPageDrag so a drop Chromium delivers with an empty DataTransfer still
+// lands — see that module for the stuck-window state this covers.
 export function setCounterDragData(event: DragEvent, data: DraggedCounterPile): void {
-  event.dataTransfer.setData(COUNTER_DRAG_TYPE, JSON.stringify(data))
-  event.dataTransfer.effectAllowed = 'move'
+  setInPageDragData(event, COUNTER_DRAG_TYPE, data)
 }
 
 export function getCounterDragData(event: DragEvent): DraggedCounterPile | null {
-  const raw = event.dataTransfer.getData(COUNTER_DRAG_TYPE)
-  if (!raw) return null
-  try {
-    return JSON.parse(raw) as DraggedCounterPile
-  } catch {
-    return null
-  }
+  return getInPageDragData<DraggedCounterPile>(event, COUNTER_DRAG_TYPE)
 }
 
-/** For dragenter/dragover-time checks only (getData is blocked until drop — same restriction
- *  dragGameCard's getCurrentDragData works around, but here we only need to know a counter pile
- *  is what's being dragged, not its contents, so checking `types` is enough — no in-memory mirror
- *  needed). */
+/** For dragenter/dragover-time checks (getData is blocked until drop): is a counter pile what's
+ *  being dragged? */
 export function isDraggingCounterPile(event: DragEvent): boolean {
-  return event.dataTransfer.types.includes(COUNTER_DRAG_TYPE)
+  return isInPageDragOfType(event, COUNTER_DRAG_TYPE)
 }

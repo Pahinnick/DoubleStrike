@@ -12,7 +12,7 @@ export type DeckHistoryState = {
   future: Deck[]
 }
 
-export type DeckHistoryAction = DeckAction | { type: 'UNDO' } | { type: 'REDO' }
+export type DeckHistoryAction = DeckAction | { type: 'UNDO' } | { type: 'REDO' } | { type: 'SYNC_DECK'; deck: Deck }
 
 // Caps memory over a long editing session. 50 discrete edits back is well beyond what anyone
 // reaches for with Ctrl+Z in practice.
@@ -22,6 +22,14 @@ export function initDeckHistory(deck: Deck): DeckHistoryState {
   return { past: [], present: deck, future: [] }
 }
 
+// Stepping through history is itself a change to the deck, so the restored snapshot gets a fresh
+// updatedAt rather than the old one it was recorded with. Everything that compares updatedAt to
+// decide which copy of a deck is newer (another window's save, a saved Playtest game) would
+// otherwise see an undo as the deck travelling back in time.
+function restore(deck: Deck): Deck {
+  return { ...deck, updatedAt: new Date().toISOString() }
+}
+
 export function deckHistoryReducer(state: DeckHistoryState, action: DeckHistoryAction): DeckHistoryState {
   switch (action.type) {
     case 'UNDO': {
@@ -29,7 +37,7 @@ export function deckHistoryReducer(state: DeckHistoryState, action: DeckHistoryA
       const previous = state.past[state.past.length - 1]
       return {
         past: state.past.slice(0, -1),
-        present: previous,
+        present: restore(previous),
         future: [state.present, ...state.future],
       }
     }
@@ -39,10 +47,16 @@ export function deckHistoryReducer(state: DeckHistoryState, action: DeckHistoryA
       const next = state.future[0]
       return {
         past: [...state.past, state.present],
-        present: next,
+        present: restore(next),
         future: state.future.slice(1),
       }
     }
+
+    case 'SYNC_DECK':
+      // The same deck as saved by another window of the app (see DeckListContext). Not an edit
+      // made here, so it is not something this window's undo should step back over — and not a
+      // different deck either, so the history stays.
+      return { ...state, present: action.deck }
 
     case 'LOAD_DECK':
       // Loading/switching/creating/importing a deck starts a fresh history — undo must never

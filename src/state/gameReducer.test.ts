@@ -9,6 +9,7 @@ import {
   zoneCards,
   OPENING_HAND_SIZE,
   type GameAction,
+  isOwnCommander,
   type GameState,
 } from './gameReducer'
 
@@ -523,9 +524,9 @@ describe('gameReducer', () => {
     expect(state.cards.find((c) => c.instanceId === cardId)!.showBackFace).toBe(false)
   })
 
-  it('FLIP_CARD is a no-op for a card not on the battlefield', () => {
+  it('FLIP_CARD is a no-op for a card that is neither in play nor in hand', () => {
     const before = startedGame(20)
-    const cardId = zoneCards(before, 'hand')[0].instanceId
+    const cardId = zoneCards(before, 'library')[0].instanceId
     const state = gameReducer(before, { type: 'FLIP_CARD', instanceId: cardId })
     expect(state).toBe(before)
   })
@@ -965,5 +966,58 @@ describe('startingLifeFor', () => {
     expect(startingLifeFor({ format: 'commander' } as Deck)).toBe(40)
     expect(startingLifeFor({ format: 'modern' } as Deck)).toBe(20)
     expect(startingLifeFor({} as Deck)).toBe(20)
+  })
+})
+
+describe('gameReducer — shared-table edge cases', () => {
+  function stateWith(cards: GameState['cards']): GameState {
+    return { ...gameReducer({} as GameState, { type: 'START_GAME', cards: [], startingLife: 40 }), cards }
+  }
+
+  it('ignores a tap aimed at a card that is no longer on the battlefield', () => {
+    const state = stateWith([{ instanceId: 'a', scryfallId: 's', zone: 'hand', tapped: false }])
+    expect(gameReducer(state, { type: 'SET_TAPPED', instanceId: 'a', tapped: true })).toBe(state)
+  })
+
+  it('keeps a commander a commander, with its tax, across a give', () => {
+    const state = stateWith([])
+    const next = gameReducer(state, {
+      type: 'RECEIVE_GIVEN_CARD',
+      card: { instanceId: 'c', scryfallId: 's', ownerSeat: 2, x: 0, y: 0, tapped: false, isCommander: true, commanderTax: 4 },
+    })
+    expect(next.cards[0]).toMatchObject({ isCommander: true, commanderTax: 4, ownerSeat: 2 })
+    // Ours when it is home, not while we are only holding it for seat 2.
+    expect(isOwnCommander(next.cards[0], 2)).toBe(true)
+    expect(isOwnCommander(next.cards[0], 0)).toBe(false)
+  })
+
+  it('brings parked cards home when there is no pod, and only own-seat ones when there is', () => {
+    const cards: GameState['cards'] = [
+      { instanceId: 'a', scryfallId: 's', zone: 'battlefield', tapped: false, x: 10, y: 20, atSeat: 1 },
+      { instanceId: 'b', scryfallId: 's', zone: 'battlefield', tapped: false, x: 30, y: 40, atSeat: 3 },
+    ]
+    const state = stateWith(cards)
+    expect(gameReducer(state, { type: 'NORMALIZE_SEATS', ownSeat: null }).cards.map((c) => c.atSeat)).toEqual([undefined, undefined])
+    expect(gameReducer(state, { type: 'NORMALIZE_SEATS', ownSeat: 3 }).cards.map((c) => c.atSeat)).toEqual([1, undefined])
+    expect(gameReducer(state, { type: 'NORMALIZE_SEATS', ownSeat: 0 })).toBe(state)
+  })
+})
+
+describe('gameReducer — flipping a double-faced card in hand', () => {
+  function stateWith(cards: GameState['cards']): GameState {
+    return { ...gameReducer({} as GameState, { type: 'START_GAME', cards: [], startingLife: 40 }), cards }
+  }
+
+  it('flips in hand and stays that side up when played', () => {
+    const state = stateWith([{ instanceId: 'a', scryfallId: 's', zone: 'hand', tapped: false }])
+    const flipped = gameReducer(state, { type: 'FLIP_CARD', instanceId: 'a' })
+    expect(flipped.cards[0].showBackFace).toBe(true)
+    const played = gameReducer(flipped, { type: 'MOVE_CARD', instanceId: 'a', toZone: 'battlefield', x: 0, y: 0 })
+    expect(played.cards[0]).toMatchObject({ zone: 'battlefield', showBackFace: true })
+  })
+
+  it('does not flip a card in the library or graveyard', () => {
+    const state = stateWith([{ instanceId: 'a', scryfallId: 's', zone: 'graveyard', tapped: false }])
+    expect(gameReducer(state, { type: 'FLIP_CARD', instanceId: 'a' })).toBe(state)
   })
 })

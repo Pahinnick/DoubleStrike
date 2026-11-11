@@ -85,12 +85,22 @@ export async function getSnapshots(ids: string[]): Promise<(CardSnapshot | undef
   return getMany<CardSnapshot>(ids, cardSnapshotsStore)
 }
 
+// The "Cache fetched card data locally" setting, applied here rather than at each call site:
+// several places save snapshots (adding a card, swapping a printing, importing a deck) and the
+// ones that didn't check the setting for themselves kept writing with it switched off.
+let persistenceEnabled = true
+
+export function setCardCachePersistence(enabled: boolean): void {
+  persistenceEnabled = enabled
+}
+
 export async function saveSnapshot(card: ScryfallCard): Promise<void> {
+  if (!persistenceEnabled) return
   await set(card.id, toSnapshot(card), cardSnapshotsStore)
 }
 
 export async function saveSnapshots(cards: ScryfallCard[]): Promise<void> {
-  if (cards.length === 0) return
+  if (cards.length === 0 || !persistenceEnabled) return
   const entries: [string, CardSnapshot][] = cards.map((card) => [card.id, toSnapshot(card)])
   await setMany(entries, cardSnapshotsStore)
 }
