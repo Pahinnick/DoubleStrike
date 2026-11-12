@@ -1914,6 +1914,48 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
     return () => window.removeEventListener('keydown', onKey)
   }, [selectedIds, tapSelection])
 
+  // Q / E: tap or untap the hovered battlefield card — the keyboard version of clicking it, with
+  // the same outcomes (see handleBattlefieldCardClick): a card in an active multi-selection taps
+  // the whole group; any other card of ours taps on its own and drops the selection; a card
+  // someone else moved onto our quadrant taps through its owner, as a click on it does. Both keys
+  // sit beside W (the WASD camera keys), so either is under a finger while panning. Same
+  // event.repeat guard as T, so holding the key down doesn't flicker the card.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) {
+        return
+      }
+      if (event.repeat || event.ctrlKey || event.metaKey || event.altKey) return
+      const key = event.key.toLowerCase()
+      if ((key !== 'q' && key !== 'e') || !hoveredInstanceId) return
+      const ownCard = battlefield.find((c) => c.instanceId === hoveredInstanceId)
+      if (ownCard) {
+        event.preventDefault()
+        if (selectedIds.size > 1 && selectedIds.has(ownCard.instanceId)) {
+          tapSelection(selectedIds)
+          return
+        }
+        setSelectedIds(new Set())
+        dispatch({ type: 'SET_TAPPED', instanceId: ownCard.instanceId, tapped: !ownCard.tapped })
+        return
+      }
+      if (!inPod) return
+      for (const board of opponentBoards) {
+        const pc = board.battlefield.find((c) => c.instanceId === hoveredInstanceId)
+        if (!pc) continue
+        // Only cards sitting on our own quadrant, same as clicking: everyone else's stay theirs.
+        if (pc.atSeat !== undefined && pc.atSeat === mySeatResolved) {
+          event.preventDefault()
+          tapRemoteCard(board.playerId, pc.instanceId, !pc.tapped)
+        }
+        return
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [hoveredInstanceId, battlefield, selectedIds, tapSelection, dispatch, inPod, opponentBoards, mySeatResolved, tapRemoteCard])
+
   /** Opens a card's Scryfall page (which includes its rulings). The trimmed-down CardSnapshot
    *  this app caches deliberately drops set/collector_number (see storage/cardCache.ts), so this
    *  needs the fuller ScryfallCard — getCardById serves the in-memory search cache when possible,
@@ -3248,7 +3290,9 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
             {activeSeat === mySeatResolved ? 'Your Turn' : `${seatNameBySeat.get(activeSeat) ?? `Seat ${activeSeat + 1}`}'s Turn`}
           </span>
         )}
-        {inPod ? (
+        {/* Solo play's Next Turn lives in the quickbar above the hand, beside Actions — where
+            Pass Turn sits in a pod — not up here. */}
+        {inPod && (
           <button
             type="button"
             onClick={handleRandomizeStart}
@@ -3256,10 +3300,6 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
             title="Spin to randomly pick who goes first."
           >
             {spinSeat !== null ? 'Spinning…' : 'Who Goes First?'}
-          </button>
-        ) : (
-          <button type="button" onClick={handleNextTurn}>
-            Next Turn
           </button>
         )}
         <button
@@ -3939,10 +3979,22 @@ function PlaytestView({ onClose, closeLabel = 'Exit Playtest', tableGame = null,
               actions={trayActions}
               forceOpen={tutorial.currentStep?.view === 'playtest' ? !!tutorial.currentStep.actionsTrayOpen : undefined}
             />
+            {/* The turn button gets the Actions tab's larger look: it's the other button pressed
+                every turn. Next Turn (solo: untap + draw) or Pass Turn (pod: hand it on). */}
+            {!inPod && (
+              <button
+                type="button"
+                className="playtest__quickbar-btn playtest__quickbar-btn--turn"
+                onClick={handleNextTurn}
+                title="Untap everything and draw a card."
+              >
+                Next Turn
+              </button>
+            )}
             {inPod && (
               <button
                 type="button"
-                className="playtest__quickbar-btn"
+                className="playtest__quickbar-btn playtest__quickbar-btn--turn"
                 onClick={handlePassTurn}
                 disabled={!canPassTurn}
                 title={

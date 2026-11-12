@@ -17,7 +17,7 @@ function ExportDeckModal({ onClose }: Props) {
   const [cardsById, setCardsById] = useState<Map<string, ScryfallCard>>(new Map())
   const [status, setStatus] = useState<Status>('loading')
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
-  const [format, setFormat] = useState<ExportFormat>('archidekt')
+  const [format, setFormat] = useState<ExportFormat>('tts')
 
   const uniqueIds = useMemo(() => [...new Set(deck.cards.map((c) => c.scryfallId))], [deck.cards])
 
@@ -75,9 +75,11 @@ function ExportDeckModal({ onClose }: Props) {
           </select>
         </label>
         <p className="search-status">
-          {format === 'archidekt'
-            ? "Plain-text decklist, compatible with Archidekt's import format."
-            : 'Mainboard only — sideboard/maybeboard cards are left out since this format has no way to mark them excluded.'}
+          {format === 'tts'
+            ? "Copy this, then in Tabletop Simulator open the table's deck importer and paste it into the decklist box. Your commander lands face up, the library face down, and the sideboard in its own pile."
+            : format === 'archidekt'
+              ? "Plain-text decklist, compatible with Archidekt's import format."
+              : 'Mainboard only — sideboard/maybeboard cards are left out since this format has no way to mark them excluded.'}
         </p>
         {status === 'loading' && <p className="search-status">Resolving cards…</p>}
         {status === 'error' && (

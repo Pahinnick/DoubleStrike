@@ -119,6 +119,13 @@ src/hooks/                  useCardSearch, useCardSnapshots, useDebouncedValue, 
 **Multi-format export, `engine/deckExport.ts`.** `ExportDeckModal.tsx` has a Format dropdown
 (`EXPORT_FORMATS`) driving `formatDeckExport(format, cards, cardsById)`:
 
+- **`tts`** (`formatTtsExport`, the default) — for pasting into rikrassen's MTG Deck Importer
+  ("or enter a decklist"), the importer in the scripted 4-player tables. MTG Arena lines under
+  `Commander` / `Deck` / `Sideboard` headings. Verified against its server
+  (`importer.rikrassen.com/build`, which does the parsing): without the headings the commander is
+  shuffled into the library; with them it spawns face up beside a face-down library, the
+  sideboard is its own pile, and the server adds a Tokens pile itself. Full `Front // Back` names
+  and odd collector numbers (`PLST DMR-123`) parse fine.
 - **`archidekt`** (`formatArchidektExport`) — Archidekt's own plain-text export
   (`1x Name (set) 123 [Tag]`), round-trips with `parseArchidektExport` in `deckImport.ts`. Emits
   **exactly one tag per line**, never comma-joined — regression-tested in `deckExport.test.ts`

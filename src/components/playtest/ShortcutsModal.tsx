@@ -12,6 +12,7 @@ const KEYBOARD_SHORTCUTS: Shortcut[] = [
       'Flip the hovered double-faced card to its other face (in play or in hand — or click the ↻ button on the card); for any other card, turn it face down/up instead — or, hovering the library, flip its top card face-up/down',
   },
   { keys: 'R', description: 'Shuffle your library (while hovering the library pile)' },
+  { keys: 'Q or E', description: 'Tap/untap the hovered card in play — same as clicking it (in a multi-selection, taps the whole group)' },
   { keys: 'T', description: 'Tap/untap the current multi-selection, all together' },
   { keys: 'Ctrl+Z / Cmd+Z', description: 'Undo' },
   { keys: 'Ctrl+Y or Ctrl+Shift+Z / Cmd+Shift+Z', description: 'Redo' },

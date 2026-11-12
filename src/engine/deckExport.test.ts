@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ScryfallCard } from '../api/scryfallTypes'
 import type { DeckCard } from '../state/types'
-import { formatArchidektExport, formatArenaExport, formatDecExport, formatMtgoExport } from './deckExport'
+import { formatArchidektExport, formatArenaExport, formatDecExport, formatMtgoExport, formatTtsExport } from './deckExport'
 
 function makeCard(overrides: Partial<ScryfallCard> & { id: string; name: string }): ScryfallCard {
   return {
@@ -188,5 +188,44 @@ describe('formatDecExport', () => {
     const cards = [makeDeckCard({ scryfallId: 'a', board: 'sideboard' })]
     const byId = new Map([['a', makeCard({ id: 'a', name: 'Negate' })]])
     expect(formatDecExport(cards, byId)).toBe('')
+  })
+})
+
+describe('formatTtsExport', () => {
+  const cards = new Map(
+    [
+      makeCard({ id: 'cmd', name: "Atraxa, Praetors' Voice", set: 'one', collector_number: '196' }),
+      makeCard({ id: 'dfc', name: 'Delver of Secrets // Insectile Aberration', set: 'isd', collector_number: '51' }),
+      makeCard({ id: 'for', name: 'Forest', set: 'one', collector_number: '276' }),
+      makeCard({ id: 'stp', name: 'Swords to Plowshares', set: 'sta', collector_number: '10' }),
+      makeCard({ id: 'tok', name: 'Treasure', set: 'tsnc', collector_number: '14' }),
+    ].map((c) => [c.id, c]),
+  )
+
+  it('puts the commander, the deck and the sideboard under their own headings, which the TTS importer reads', () => {
+    const deck = [
+      makeDeckCard({ scryfallId: 'for', quantity: 30 }),
+      makeDeckCard({ scryfallId: 'dfc' }),
+      makeDeckCard({ scryfallId: 'cmd', isCommander: true }),
+      makeDeckCard({ scryfallId: 'stp', board: 'sideboard' }),
+      makeDeckCard({ scryfallId: 'tok', isToken: true }),
+    ]
+    expect(formatTtsExport(deck, cards)).toBe(
+      [
+        'Commander',
+        "1 Atraxa, Praetors' Voice (ONE) 196",
+        '',
+        'Deck',
+        '1 Delver of Secrets // Insectile Aberration (ISD) 51',
+        '30 Forest (ONE) 276',
+        '',
+        'Sideboard',
+        '1 Swords to Plowshares (STA) 10',
+      ].join('\n'),
+    )
+  })
+
+  it('leaves out headings with nothing under them', () => {
+    expect(formatTtsExport([makeDeckCard({ scryfallId: 'for', quantity: 4 })], cards)).toBe('Deck\n4 Forest (ONE) 276')
   })
 })

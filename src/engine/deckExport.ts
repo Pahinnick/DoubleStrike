@@ -2,9 +2,10 @@ import type { ScryfallCard } from '../api/scryfallTypes'
 import type { DeckCard } from '../state/types'
 import { getPrimaryTypeGroup } from './deckGrouping'
 
-export type ExportFormat = 'archidekt' | 'dec' | 'arena' | 'mtgo'
+export type ExportFormat = 'tts' | 'archidekt' | 'dec' | 'arena' | 'mtgo'
 
 export const EXPORT_FORMATS: { value: ExportFormat; label: string }[] = [
+  { value: 'tts', label: 'Tabletop Simulator (paste into importer)' },
   { value: 'archidekt', label: 'Archidekt (plain text)' },
   { value: 'dec', label: '.dec' },
   { value: 'arena', label: 'MTG Arena (.txt)' },
@@ -98,8 +99,32 @@ export function formatDecExport(cards: DeckCard[], cardsById: Map<string, Scryfa
     .join('\n')
 }
 
+/**
+ * For pasting into a Tabletop Simulator table's deck importer ("or enter a decklist" — rikrassen's
+ * MTG Deck Importer, in the scripted 4-player tables): MTG Arena lines under Commander / Deck /
+ * Sideboard headings. Checked against that importer's server: the headings are what put the
+ * commander face up in front of the player instead of shuffled into the library, and the
+ * sideboard in its own pile (it also adds a token pile for whatever the cards create). Full card
+ * names, double-faced "Front // Back" included, and set + collector number pick the exact printing.
+ */
+export function formatTtsExport(cards: DeckCard[], cardsById: Map<string, ScryfallCard>): string {
+  const line = ({ deckCard, card }: ResolvedEntry) => `${deckCard.quantity} ${card.name} (${card.set.toUpperCase()}) ${card.collector_number}`
+  const entries = resolveAndSort(cards, cardsById)
+  const sections: [string, ResolvedEntry[]][] = [
+    ['Commander', entries.filter((e) => e.deckCard.isCommander)],
+    ['Deck', entries.filter((e) => !e.deckCard.isCommander && e.deckCard.board === 'mainboard')],
+    ['Sideboard', entries.filter((e) => !e.deckCard.isCommander && e.deckCard.board === 'sideboard')],
+  ]
+  return sections
+    .filter(([, list]) => list.length > 0)
+    .map(([heading, list]) => [heading, ...list.map(line)].join('\n'))
+    .join('\n\n')
+}
+
 export function formatDeckExport(format: ExportFormat, cards: DeckCard[], cardsById: Map<string, ScryfallCard>): string {
   switch (format) {
+    case 'tts':
+      return formatTtsExport(cards, cardsById)
     case 'archidekt':
       return formatArchidektExport(cards, cardsById)
     case 'dec':
