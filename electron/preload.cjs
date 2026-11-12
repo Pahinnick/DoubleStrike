@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld('electronStorage', {
 
 contextBridge.exposeInMainWorld('electronNet', {
   fetchArchidektDeck: (deckId) => ipcRenderer.invoke('net:fetchArchidektDeck', deckId),
+  // Keep this window running at full speed in the background while in a live game.
+  setBackgroundActive: (active) => ipcRenderer.invoke('net:setBackgroundActive', !!active),
 })
 
 contextBridge.exposeInMainWorld('electronShell', {

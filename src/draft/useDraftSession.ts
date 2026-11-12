@@ -20,6 +20,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DraftConfigPayload, DraftMatchStatus } from '../net/draftProtocol'
 import { isVirtualPlayerId, PeerConnection, type ConnectionStatus } from '../net/peerConnection'
+import { useKeepActiveWhile } from '../net/keepActive'
 import { DRAFT_MAX_PLAYERS, DRAFT_SEAT_ORDER, type Seat } from '../net/protocol'
 import { chooseAutoPick, type AutoPickInfo } from './autoPick'
 import {
@@ -155,6 +156,8 @@ export function useDraftSession(localPlayerId: string, localName: string): Draft
 
   const [role, setRole] = useState<'host' | 'guest' | null>(null)
   const [status, setStatus] = useState<ConnectionStatus>('idle')
+  // In a draft room: keep the window's timers (reconnects, host picks) running in the background.
+  useKeepActiveWhile(status === 'connected' || status === 'connecting')
   const [statusDetail, setStatusDetail] = useState<string | null>(null)
   const [roomCode, setRoomCode] = useState<string | null>(null)
   const [seat, setSeat] = useState<Seat | null>(null)

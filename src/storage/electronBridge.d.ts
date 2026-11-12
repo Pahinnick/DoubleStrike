@@ -22,6 +22,9 @@ export type ElectronStorageBridge = {
 export type ElectronNetBridge = {
   /** Fetches https://archidekt.com/api/decks/{deckId}/ from the main process (bypasses CORS). */
   fetchArchidektDeck(deckId: string): Promise<unknown>
+  /** Stops (true) or restores (false) Chromium's background throttling of this window — see
+   *  src/net/keepActive.ts. Optional: absent in builds from before it existed. */
+  setBackgroundActive?(active: boolean): Promise<void>
 }
 
 export type ElectronShellBridge = {

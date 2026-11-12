@@ -17,4 +17,14 @@ function registerNetIpc() {
   })
 }
 
-module.exports = { registerNetIpc }
+// While a player is in a live game (multiplayer pod, draft, draft match), Chromium must not throttle
+// this window in the background: its reconnect backoff and board heartbeat are timers, and a
+// throttled window that's merely behind Discord could take a minute to come back after a network
+// blip, invisible to everyone else meanwhile. Switched back on as soon as they leave the game.
+function registerBackgroundIpc() {
+  ipcMain.handle('net:setBackgroundActive', (event, active) => {
+    event.sender.setBackgroundThrottling(!active)
+  })
+}
+
+module.exports = { registerNetIpc, registerBackgroundIpc }

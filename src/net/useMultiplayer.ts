@@ -12,6 +12,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { notifyWarning } from '../notifications'
+import { useKeepActiveWhile } from './keepActive'
 import { PeerConnection, type ConnectionStatus, type LocalPlayer, type PeerConnectionOptions, type RelocatedCard } from './peerConnection'
 import type { GivenCard, PublicBoard, RollResult, Seat } from './protocol'
 
@@ -138,6 +139,8 @@ export function useMultiplayer(
 
   const [role, setRole] = useState<MultiplayerRole | null>(null)
   const [status, setStatus] = useState<ConnectionStatus>('idle')
+  // In a pod (or getting back into one): don't let the window throttle its timers in the background.
+  useKeepActiveWhile(status === 'connected' || status === 'connecting')
   const [statusDetail, setStatusDetail] = useState<string | null>(null)
   const [roomCode, setRoomCode] = useState<string | null>(null)
   const [seat, setSeat] = useState<Seat | null>(null)
@@ -164,6 +167,9 @@ export function useMultiplayer(
   const ensureConnection = useCallback((options?: PeerConnectionOptions) => {
     if (connRef.current) return connRef.current
     const conn = new PeerConnection(localRef.current, options)
+    // Dev builds only: lets a tester drop this client's link on purpose from the console
+    // (e.g. `__doubleStrikeConn.simulateDrop()`) to exercise reconnect handling.
+    if (import.meta.env.DEV) (window as unknown as { __doubleStrikeConn?: PeerConnection }).__doubleStrikeConn = conn
     conn.on('status', (s, detail) => {
       setStatus(s)
       setStatusDetail(detail ?? null)

@@ -102,6 +102,19 @@ src/hooks/                  useCardSearch, useCardSnapshots, useDebouncedValue, 
    - **Real regression caught during live verification, fixed at the CSS level:** `.playtest__life-bubble`'s border only ever declared `border-width: 2px` (no `border-style`) and relied entirely on a `<button>` element's implicit non-`none` default border-style from the UA stylesheet to actually render — invisible when it worked, because it always *had* been a `<button>`. Converting the wrapper to a plain `<div>` (now needed since it holds 4 separate buttons, not one) silently dropped the border to `0px` computed width with zero visual indication in a screenshot beyond "looks a little off." Caught by explicitly checking `getComputedStyle(...).borderWidth` in the browser console before trusting a screenshot. Fixed by adding an explicit `border-style: solid;` — `.playtest__seat-bubble` (pod) was already safe since it used the `border: 2px solid ...` shorthand from the start. **Lesson: a border/outline that "just worked" on a `<button>` and needs to move to a non-form element must have its border-style/outline made explicit, not assumed** — computed-style inspection catches this class of bug far more reliably than a screenshot.
    - **Verified live**: dispatched real clicks on each of the four wedges (both the solo bubble and the pod self-bubble) and confirmed each exact delta applied via the rendered value (40→41 top, →51 right, →50 bottom, →40 left — net zero, back to 40) and confirmed the opponent-mirror bubble still renders as a plain read-only `<span>` with zero wedges. 273 tests pass, clean tsc/eslint (no new component/hook test infra exists in this codebase to unit-test — matches the project's existing pure-logic-only testing boundary).
 
+9. **A player who reconnects must re-send their board at once (2026-11).** When a guest's link
+   drops, the host forgets that guest's board and sends PLAYER_LEFT, so everyone else's table
+   empties that seat until a fresh STATE arrives. Three layers bring it back: `PeerConnection`
+   re-sends the guest's last board itself the moment a rejoin is WELCOMEd (`lastOwnBoard`, no UI
+   timer involved); `PlaytestView`'s broadcast effect also depends on `mpStatus`; and the 15 s
+   heartbeat. The UI's timers are throttled by Chromium when the window is in the background, so
+   while any game connection is live the Electron window turns that off (`src/net/keepActive.ts`
+   → `net:setBackgroundActive` → `webContents.setBackgroundThrottling(false)`). Released 1.9.0
+   had none of this: a dropped player stayed invisible until they next moved a card.
+   **To test:** in `npm run dev`, a guest's console has `__doubleStrikeConn.simulateDrop()`,
+   which kills its WebRTC link the way a network drop does. Measured: the board is back on other
+   tables in ~1.7 s, with the dropped player's tab in the background.
+
 ## Deck import — Archidekt (paste export **and** link)
 
 `ImportDeckModal.tsx` imports two ways, both feeding one pipeline (`importParsed` — resolve via Scryfall's collection endpoint, `createDeck`, then dispatch cards/categories/commander/board):

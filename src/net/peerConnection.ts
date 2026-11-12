@@ -266,6 +266,8 @@ export class PeerConnection {
 
   // Guest state: the single connection to the host.
   private hostConn: DataConnection | null = null
+  // Guest: the board we last published, re-sent the moment a rejoin is accepted (see WELCOME).
+  private lastOwnBoard: PublicBoard | null = null
   // Guest: the host has accepted us (WELCOME). Not the same as having a seat — a room with
   // `maxSpectators` lets people in to wait for one.
   private admitted = false
@@ -1208,6 +1210,14 @@ export class PeerConnection {
         // The host has now actually accepted us into the pod — this is the real "connected"
         // moment, not just the raw channel opening (see joinGame's conn.on('open') doc).
         this.emit('status', 'connected')
+        // Back after a drop: the host forgot our board when the old link died, and told everyone
+        // we'd left — so until it hears from us again, we're missing from every other player's
+        // table. Re-send the last board right here rather than waiting on the UI to notice the
+        // reconnect: its timers run late (or not at all) when the window is in the background.
+        // Only to the same seat — a board carries its seat, and a new one gets a fresh board.
+        if (this.lastOwnBoard && msg.seat !== null && this.lastOwnBoard.seat === msg.seat && this.hostConn) {
+          this.sendTo(this.hostConn, { type: 'STATE', v: PROTOCOL_VERSION, board: this.lastOwnBoard })
+        }
         break
       case 'STATE':
         this.emit('board', msg.board)
@@ -1333,8 +1343,10 @@ export class PeerConnection {
     if (this.role === 'host') {
       this.lastBoards.set(board.playerId, board)
       for (const guest of this.guests.values()) this.sendTo(guest.conn, msg)
-    } else if (this.role === 'guest' && this.hostConn) {
-      this.sendTo(this.hostConn, msg)
+    } else if (this.role === 'guest') {
+      // Kept even while the link is down, so the latest board goes out on reconnect.
+      this.lastOwnBoard = board
+      if (this.hostConn) this.sendTo(this.hostConn, msg)
     }
   }
 
@@ -1681,6 +1693,13 @@ export class PeerConnection {
     return true
   }
 
+  /** Dev/testing aid: kill this guest's link to the host the way a network drop would (the
+   *  underlying WebRTC connection dies; nothing is said to the host first), so reconnect
+   *  handling can be exercised without pulling a network cable. */
+  simulateDrop(): void {
+    this.hostConn?.peerConnection?.close()
+  }
+
   disconnect(): void {
     // Set before anything is torn down: the teardown below fires the same 'close' events an
     // unexpected drop would, and without this flag handleGuestDisconnect would dutifully start
@@ -1712,6 +1731,7 @@ export class PeerConnection {
     this.role = null
     this.ownSeat = null
     this.admitted = false
+    this.lastOwnBoard = null
     this.emit('status', 'closed')
   }
 }
