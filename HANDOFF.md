@@ -127,6 +127,19 @@ src/hooks/                  useCardSearch, useCardSnapshots, useDebouncedValue, 
 - **Browser dev (`npm run dev`):** Vite `server.proxy` forwards `/archidekt/*` → `https://archidekt.com` server-side (see `vite.config.ts`). **Changing this proxy requires a dev-server restart** — HMR won't pick up `vite.config.ts` changes.
 - A plain hosted browser build (neither) can't reach it — surfaced as "Link import only works in the desktop app."
 
+### Card synergy tabs (2026-11)
+
+Right-click a card → the suggestions area has three tabs: **Suggested cards** (shared Scryfall
+tags, as before), **Highest synergy** and **Most played with this card** — the last two from
+EDHREC's page for that card (`json.edhrec.com/pages/cards/<slug>.json`), which lists ~500 co-played
+cards with `lift` (how much more often than chance the pair appears — EDHREC's synergy measure) and
+`num_decks`/`potential_decks`. `engine/deckSynergy.ts` ranks them: synergy = ln(lift), counting
+only pairings seen in ≥ `MIN_PAIR_DECKS` decks (rare cards produce huge, meaningless lifts);
+played = co-play rate. Same commander colour-identity filter as the tag list. Fetched when the
+panel opens (`hooks/useCardCoplays.ts`), cached a week per card in IndexedDB
+(`mtgdb-edhrec-coplays`, trimmed to the ranking fields). The engine can also sum several cards'
+pages (a whole deck) — a deck-wide window was built and dropped in favour of these tabs.
+
 ### Export → Tabletop Simulator (TTS) compatibility
 
 **Multi-format export, `engine/deckExport.ts`.** `ExportDeckModal.tsx` has a Format dropdown

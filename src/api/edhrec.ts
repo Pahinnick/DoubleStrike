@@ -69,6 +69,13 @@ export async function fetchEdhrecSalt(cardName: string): Promise<number | null> 
   return typeof raw === 'number' ? raw : null
 }
 
+/** A card's whole EDHREC page — its co-played card lists are what engine/deckSynergy.ts ranks.
+ *  Raw network fetch only, on the shared rate-limited queue; null for a card EDHREC has no page
+ *  for. See storage/edhrecCoplaysCache.ts + hooks/useDeckSynergy.ts for the cached layer. */
+export async function fetchEdhrecCardPage(cardName: string): Promise<unknown | null> {
+  return fetchEdhrecPage(EDHREC_JSON_BASE, edhrecSlug(cardName))
+}
+
 type EdhrecCommanderPage = {
   container?: {
     json_dict?: {

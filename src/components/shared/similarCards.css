@@ -264,6 +264,37 @@
   gap: 0.9rem;
 }
 
+/* The tag list stays mounted (it keeps its loaded results) while an EDHREC tab is showing. */
+.similar-cards-panel__list[hidden] {
+  display: none;
+}
+
+/* The three suggestion lists: Suggested cards / Highest synergy / Most played with this card. */
+.similar-cards-panel__views {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.similar-cards-panel__view {
+  padding: 0.35rem 0.8rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.similar-cards-panel__view.is-active {
+  color: var(--bg-app);
+  background-color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Spans the whole grid row, above the tiles. */
+.similar-cards-panel__view-hint {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
 .similar-card-tile {
   display: flex;
   flex-direction: column;

@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { getCardPrints, getCardsByIdentifiers, getDisplayImage, ScryfallApiError } from '../../api/scryfall'
 import type { ScryfallCard } from '../../api/scryfallTypes'
+import { rankDeckSynergy, sortSynergyCandidates, type SynergyCandidate } from '../../engine/deckSynergy'
 import { findSimilarCards, getTagsForCard } from '../../engine/similarCards'
+import { useCardCoplays } from '../../hooks/useCardCoplays'
 import { SIMILAR_SORT_OPTIONS, sortSimilarMatches, type SimilarSort } from '../../engine/similarCardSort'
 import { useCommanderColorIdentity } from '../../hooks/useCommanderColorIdentity'
 import { useEscapeToClose } from '../../hooks/useEscapeToClose'
@@ -22,6 +24,33 @@ type Status = 'idle' | 'loading' | 'error' | 'ready'
 type Match = { card: ScryfallCard; matchCount: number; matchedTags: string[] }
 
 const MAX_MATCHES = 75
+
+/** The suggestions area's three lists: cards sharing this card's tags, and two from EDHREC's page
+ *  for this card (see engine/deckSynergy.ts) — the strongest pairings, and the most common ones. */
+type SuggestionView = 'tags' | 'synergy' | 'played'
+
+const SUGGESTION_VIEWS: { value: SuggestionView; label: string; hint?: string }[] = [
+  { value: 'tags', label: 'Suggested cards' },
+  {
+    value: 'synergy',
+    label: 'Highest synergy',
+    hint: 'Cards far more likely than chance to be in a deck with this one — combo and theme partners, from EDHREC.',
+  },
+  {
+    value: 'played',
+    label: 'Most played with this card',
+    hint: 'What decks running this card most often include alongside it, from EDHREC.',
+  },
+]
+
+function edhrecCaptions(candidate: SynergyCandidate, view: SuggestionView): string[] {
+  const pct = candidate.playRate * 100
+  const share = `In ${pct >= 1 ? Math.round(pct) : '<1'}% of its decks`
+  if (view === 'played') return [share]
+  // One source card, so the synergy score is exactly ln(lift).
+  // Short enough for a ~170px tile; the tab's hint line says what it's more likely than.
+  return [`${Math.exp(candidate.synergy).toFixed(1)}× more likely`, share]
+}
 
 type Props = {
   onAddTagToSearch: (slug: string) => void
@@ -44,6 +73,33 @@ function SimilarCardsView({ onAddTagToSearch }: Props) {
   const [prints, setPrints] = useState<ScryfallCard[]>([])
   const [printsStatus, setPrintsStatus] = useState<Status>('idle')
   const [selectedPrint, setSelectedPrint] = useState<ScryfallCard | null>(null)
+
+  const [view, setView] = useState<SuggestionView>('tags')
+  // Fetched as soon as a card opens (one cached EDHREC request), so switching tabs is instant.
+  const coplays = useCardCoplays(openCard?.name ?? null, Boolean(openCard))
+  const edhrecRanked = useMemo(() => {
+    if (!openCard || view === 'tags' || coplays.coplays.length === 0) return []
+    return sortSynergyCandidates(rankDeckSynergy([{ name: openCard.name, coplays: coplays.coplays }], new Set()), view).slice(0, MAX_MATCHES)
+  }, [openCard, view, coplays.coplays])
+  const [edhrecCards, setEdhrecCards] = useState<Map<string, ScryfallCard>>(new Map())
+  const edhrecIdsKey = edhrecRanked.map((c) => c.scryfallId).join(',')
+  // Card data for the EDHREC tab on screen: EDHREC hands over Scryfall ids directly, resolved
+  // through the same cached collection endpoint as everything else.
+  useEffect(() => {
+    if (edhrecIdsKey.length === 0) return
+    let cancelled = false
+    void getCardsByIdentifiers(edhrecIdsKey.split(',').map((id) => ({ id }))).then((resolved) => {
+      if (cancelled) return
+      setEdhrecCards((prev) => {
+        const next = new Map(prev)
+        for (const card of resolved) next.set(card.id, card)
+        return next
+      })
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [edhrecIdsKey])
 
   const saltLookupNames = useMemo(() => (openCard ? [openCard.name] : []), [openCard])
   const [saltScores] = useSaltScores(saltLookupNames)
@@ -111,6 +167,7 @@ function SimilarCardsView({ onAddTagToSearch }: Props) {
     setActiveTag(null)
     setSelectedPrint(null)
     setSort('match')
+    setView('tags')
   }, [openCard])
 
   // Every printing of the open card, for the art-selection row.
@@ -191,6 +248,13 @@ function SimilarCardsView({ onAddTagToSearch }: Props) {
   // Capped at MAX_MATCHES (75) upstream, so re-sorting on every render is cheap enough not to
   // need memoizing — and it can't be memoized here anyway, below the `if (!openCard)` return.
   const visibleMatches = sortSimilarMatches(filteredMatches, sort)
+  // The EDHREC tabs, kept to the same colour identity as the tag list.
+  const edhrecVisible = edhrecRanked.flatMap((candidate) => {
+    const card = edhrecCards.get(candidate.scryfallId)
+    if (!card) return []
+    if (commanderIdentity && !card.color_identity.every((c) => commanderIdentity.has(c as Color))) return []
+    return [{ candidate, card }]
+  })
 
   return createPortal(
     <div className="similar-cards-overlay" onClick={() => setOpenCard(null)}>
@@ -228,7 +292,11 @@ function SimilarCardsView({ onAddTagToSearch }: Props) {
                         type="button"
                         className="tag-chip__label"
                         title="Filter the list below to this tag"
-                        onClick={() => setActiveTag((current) => (current === tag.slug ? null : tag.slug))}
+                        onClick={() => {
+                          // Tags only narrow the tag-based list, so a click brings that list up.
+                          setView('tags')
+                          setActiveTag((current) => (current === tag.slug ? null : tag.slug))
+                        }}
                       >
                         {label}
                       </button>
@@ -308,8 +376,21 @@ function SimilarCardsView({ onAddTagToSearch }: Props) {
 
         <div className="similar-cards-panel__suggestions">
           <div className="similar-cards-panel__suggestions-header">
-            <h3>Suggested cards</h3>
-            {visibleMatches.length > 1 && (
+            <div className="similar-cards-panel__views" role="tablist" aria-label="Suggestions">
+              {SUGGESTION_VIEWS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="tab"
+                  aria-selected={view === option.value}
+                  className={`similar-cards-panel__view ${view === option.value ? 'is-active' : ''}`}
+                  onClick={() => setView(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            {view === 'tags' && visibleMatches.length > 1 && (
               <label className="similar-cards-panel__sort">
                 Sort by
                 <select value={sort} onChange={(event) => setSort(event.target.value as SimilarSort)}>
@@ -322,7 +403,27 @@ function SimilarCardsView({ onAddTagToSearch }: Props) {
               </label>
             )}
           </div>
-          <div className="similar-cards-panel__list">
+          {view !== 'tags' && (
+            <div className="similar-cards-panel__list">
+              <p className="search-status similar-cards-panel__view-hint">{SUGGESTION_VIEWS.find((v) => v.value === view)?.hint}</p>
+              {coplays.status === 'loading' && <p className="search-status">Loading from EDHREC…</p>}
+              {coplays.status === 'error' && <p className="search-status search-status--error">Couldn't reach EDHREC — check your connection.</p>}
+              {coplays.status === 'empty' && <p className="search-status">EDHREC has no data for this card yet.</p>}
+              {coplays.status === 'ready' && edhrecVisible.length === 0 && (
+                <p className="search-status">
+                  {edhrecRanked.length === 0
+                    ? 'No strong pairings for this card.'
+                    : edhrecRanked.every((c) => edhrecCards.has(c.scryfallId))
+                      ? "None of these fit your commander's color identity."
+                      : 'Loading cards…'}
+                </p>
+              )}
+              {edhrecVisible.map(({ candidate, card }) => (
+                <SimilarCardRow key={card.id} card={card} matchCount={0} captionLines={edhrecCaptions(candidate, view)} onAdd={() => addCard(card)} />
+              ))}
+            </div>
+          )}
+          <div className="similar-cards-panel__list" hidden={view !== 'tags'}>
             {matchesStatus === 'loading' && <p className="search-status">Finding similar cards…</p>}
             {matchesStatus === 'error' && <p className="search-status search-status--error">Couldn't load similar cards.</p>}
             {matchesStatus === 'ready' && visibleMatches.length === 0 && cardTags.length > 0 && (

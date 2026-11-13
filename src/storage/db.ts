@@ -13,6 +13,8 @@ export const commanderPopularityStore = createStore('mtgdb-commander-popularity'
 // EDHREC's per-commander card recommendations, keyed by commander slug. Additive store, no
 // SCHEMA_VERSION bump needed.
 export const edhrecRecommendationsStore = createStore('mtgdb-edhrec-recommendations', 'recommendations')
+// EDHREC's co-played cards per card (for deck synergy suggestions), keyed by card slug. Additive.
+export const edhrecCoplaysStore = createStore('mtgdb-edhrec-coplays', 'coplays')
 // Draft mode — saved cubes, and later a resumable in-progress draft session. Additive store, no SCHEMA_VERSION bump needed.
 export const cubesStore = createStore('mtgdb-cubes', 'cubes')
 
