@@ -1,7 +1,7 @@
 {
   "name": "doublestrike",
   "private": true,
-  "version": "1.9.3",
+  "version": "1.9.4",
   "description": "DoubleStrike — Magic: The Gathering deck builder and playtest VTT",
   "author": "Phinnick",
   "license": "MIT",
